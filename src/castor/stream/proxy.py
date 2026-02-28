@@ -106,7 +106,19 @@ class SyscallProxy:
             )
             return response.model_dump()
 
-        result = await self._dam.execute(tool_name, validated)
+        try:
+            result = await self._dam.execute(tool_name, validated)
+        except BaseException:
+            # Refund the budget — execution was interrupted (CancelledError from
+            # preemption) or failed (tool exception).  Without this, the record
+            # is never logged, so replay will re-attempt the syscall and deduct
+            # again, causing a permanent budget leak.
+            self._cap_mgr.refund(
+                self.checkpoint.capabilities,
+                tool_meta.consumes,
+                tool_meta.cost_per_use,
+            )
+            raise
 
         self._append_record(SyscallRecord(request=request, response=result))
         return result

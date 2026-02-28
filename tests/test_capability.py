@@ -113,6 +113,29 @@ class TestDelegate:
         assert child["api"].max_budget == 30.0
 
 
+class TestRefund:
+    def test_refund_reverses_deduction(self, mgr):
+        caps = mgr.create_capabilities({"api": 10.0})
+        mgr.deduct(caps, "api", 3.0)
+        mgr.refund(caps, "api", 3.0)
+        assert caps["api"].current_usage == 0.0
+
+    def test_refund_partial(self, mgr):
+        caps = mgr.create_capabilities({"api": 10.0})
+        mgr.deduct(caps, "api", 5.0)
+        mgr.refund(caps, "api", 2.0)
+        assert caps["api"].current_usage == 3.0
+
+    def test_refund_clamps_at_zero(self, mgr):
+        caps = mgr.create_capabilities({"api": 10.0})
+        mgr.refund(caps, "api", 5.0)
+        assert caps["api"].current_usage == 0.0
+
+    def test_refund_missing_resource_is_noop(self, mgr):
+        caps = mgr.create_capabilities({"api": 10.0})
+        mgr.refund(caps, "nonexistent", 5.0)  # should not raise
+
+
 class TestReclaim:
     def test_reclaim_unused_budget(self, mgr):
         parent = mgr.create_capabilities({"api": 100.0})

@@ -1,5 +1,7 @@
 """Tests for SyscallProxy — the replay gateway."""
 
+import asyncio
+
 import pytest
 
 from castor.capability.manager import CapabilityManager
@@ -196,6 +198,63 @@ class TestValidationError:
         assert result["status"] == "VALIDATION_ERROR"
         assert "query" in result["feedback_message"]
         # Logged so replay can serve it
+        assert len(checkpoint.syscall_log) == 1
+
+
+class TestBudgetRefundOnFailure:
+    """Budget must be refunded if tool execution fails or is cancelled."""
+
+    async def test_refund_on_tool_exception(self, registry, dam, cap_mgr):
+        @castor_tool(consumes="test", cost_per_use=2.0, registry=registry)
+        async def flaky_tool(query: str) -> str:
+            raise RuntimeError("network timeout")
+
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = SyscallProxy(checkpoint, dam, cap_mgr)
+
+        with pytest.raises(RuntimeError, match="network timeout"):
+            await proxy.syscall("flaky_tool", {"query": "test"})
+
+        # Budget must be fully refunded — no record logged, no leak
+        assert checkpoint.capabilities["test"].current_usage == 0.0
+        assert len(checkpoint.syscall_log) == 0
+
+    async def test_refund_on_cancellation(self, registry, dam, cap_mgr):
+        """Simulates preemption via asyncio.CancelledError during tool exec."""
+        cancel_event = asyncio.Event()
+
+        @castor_tool(consumes="test", cost_per_use=5.0, registry=registry)
+        async def slow_tool(query: str) -> str:
+            cancel_event.set()
+            await asyncio.sleep(60)  # will be cancelled
+            return "never reached"
+
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = SyscallProxy(checkpoint, dam, cap_mgr)
+
+        async def run_syscall():
+            await proxy.syscall("slow_tool", {"query": "test"})
+
+        task = asyncio.create_task(run_syscall())
+        await cancel_event.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # Budget must be fully refunded after cancellation
+        assert checkpoint.capabilities["test"].current_usage == 0.0
+        assert len(checkpoint.syscall_log) == 0
+
+    async def test_no_refund_on_success(self, registry, dam, cap_mgr):
+        """Sanity check: successful execution keeps the deduction."""
+        register_search(registry)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = SyscallProxy(checkpoint, dam, cap_mgr)
+
+        await proxy.syscall("search", {"query": "hello"})
+
+        assert checkpoint.capabilities["test"].current_usage == 1.0
         assert len(checkpoint.syscall_log) == 1
 
 

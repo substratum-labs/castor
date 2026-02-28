@@ -96,6 +96,14 @@ class CapabilityManager:
 
         return child_caps
 
+    def refund(
+        self, capabilities: dict[str, Capability], resource_type: str, cost: float
+    ) -> None:
+        """Reverse a prior deduction (e.g. when tool execution is interrupted)."""
+        cap = capabilities.get(resource_type)
+        if cap is not None:
+            cap.current_usage = max(0.0, cap.current_usage - cost)
+
     def reclaim(
         self,
         parent_caps: dict[str, Capability],
