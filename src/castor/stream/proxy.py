@@ -32,6 +32,16 @@ class SyscallProxy:
     """Injected into every agent function. All side effects go through this.
 
     Decides: replay from cache, execute (Fast Path), or suspend (Slow Path).
+
+    WARNING: Every non-deterministic operation — network calls, LLM inference,
+    file I/O, random number generation — MUST be routed through
+    ``await proxy.syscall(tool_name, args)``.  Direct calls bypass the
+    ``syscall_log`` and will break replay determinism: on resume the call
+    re-executes live, produces a different result, and the agent issues a
+    divergent syscall sequence (``ReplayDivergenceError``).
+
+    For LLM inference specifically, use ``castor.llm.LLMSyscall`` to wrap
+    your provider client as a registered Castor tool.
     """
 
     def __init__(

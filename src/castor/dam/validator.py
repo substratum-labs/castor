@@ -81,7 +81,8 @@ def _build_input_model(meta: ToolMetadata) -> type:
     """Build a Pydantic model from a tool function's signature."""
     func = meta.func
     sig = inspect.signature(func)
-    hints = {k: v for k, v in func.__annotations__.items() if k != "return"}
+    annotations = getattr(func, "__annotations__", None) or {}
+    hints = {k: v for k, v in annotations.items() if k != "return"}
 
     field_definitions: dict[str, Any] = {}
     for param_name, param in sig.parameters.items():

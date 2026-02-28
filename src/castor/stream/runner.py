@@ -19,6 +19,11 @@ class AgentRunner:
     - Normal completion (agent returns a result)
     - Cooperative suspend (SuspendInterrupt from HITL slow path)
     - Preemption (CancelledError from kernel's task.cancel())
+
+    WARNING: Agent functions MUST NOT make direct network or LLM client calls.
+    All non-deterministic operations must go through ``proxy.syscall()``.
+    Direct calls bypass the syscall log and break checkpoint/replay
+    determinism.  See ``castor.llm.LLMSyscall`` for an LLM-specific wrapper.
     """
 
     def __init__(self, dam: CastorDam, capability_manager: CapabilityManager) -> None:

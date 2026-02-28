@@ -57,7 +57,8 @@ def _generate_schema(func: Callable) -> dict[str, Any]:
     to build a schema. Parameters without defaults become required fields.
     """
     sig = inspect.signature(func)
-    hints = {k: v for k, v in func.__annotations__.items() if k != "return"}
+    annotations = getattr(func, "__annotations__", None) or {}
+    hints = {k: v for k, v in annotations.items() if k != "return"}
 
     field_definitions: dict[str, Any] = {}
     for param_name, param in sig.parameters.items():

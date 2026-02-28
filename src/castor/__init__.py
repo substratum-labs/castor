@@ -6,6 +6,7 @@ __version__ = "0.1.0"
 from castor.capability.manager import CapabilityManager
 from castor.dam.decorator import castor_tool
 from castor.dam.validator import CastorDam
+from castor.llm.wrapper import LLMSyscall
 from castor.models.capability import Capability, SyscallRequest, SyscallResponse
 from castor.models.checkpoint import (
     AgentCheckpoint,
@@ -25,6 +26,7 @@ __all__ = [
     "CastorDam",
     "CheckpointStore",
     "HITLHandler",
+    "LLMSyscall",
     "SuspendInterrupt",
     "SyscallProxy",
     "SyscallRecord",
