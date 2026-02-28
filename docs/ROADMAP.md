@@ -155,16 +155,20 @@ Ideas discussed but not yet designed. Each would require its own design document
 - Property-based testing with Hypothesis for invariant validation
 - Move from "inspired by L4" to "verified like seL4" for critical properties
 
-### LLM Provider Abstraction
+### Integration & Interoperability
 
-- Unified tool-calling interface across providers (OpenAI, Anthropic, local models)
-- Provider-specific streaming adapters
-- Model-agnostic agent functions (no provider lock-in)
+Castor is a microkernel, not an agent framework. It provides core primitives (capability security, checkpoint/replay, HITL) that existing agent frameworks and custom agents integrate with.
 
-### SDK & Developer Experience
+- Adapter layer for popular agent frameworks (LangChain, CrewAI, AutoGen) to route tool calls through `SyscallProxy`
+- Provider-agnostic design: agent functions bring their own LLM client — Castor never touches inference
+- Example integrations showing how to wrap an existing agent loop with Castor's kernel
+- `pip install castor` with zero mandatory dependencies beyond Pydantic + SQLAlchemy
 
-- `castor init`: scaffold a new agent project
-- `castor run`: execute an agent with interactive HITL prompts
-- `castor replay`: replay a checkpoint for debugging
-- `castor inspect`: view an agent's syscall log and capability state
-- Documentation, tutorials, and example agents
+### Debugging & Introspection
+
+Utilities for kernel operators and framework integrators — not end-user CLI tooling.
+
+- `castor.replay(checkpoint)`: programmatic replay of a checkpoint for debugging
+- `castor.inspect(checkpoint)`: dump syscall log and capability state
+- Documentation for framework authors: how to integrate checkpoint/replay into your agent loop
+- Example agents demonstrating HITL, preemption, and sub-agent patterns
