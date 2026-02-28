@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -13,26 +13,26 @@ class SyscallRecord(BaseModel):
     request: dict[str, Any]
     response: Any
     was_hitl: bool = False
-    child_checkpoint: Optional[AgentCheckpoint] = None
+    child_checkpoint: AgentCheckpoint | None = None
 
 
 class AgentCheckpoint(BaseModel):
     pid: str
-    parent_pid: Optional[str] = None
+    parent_pid: str | None = None
     status: Literal["RUNNING", "SUSPENDED_FOR_HITL", "PREEMPTED", "COMPLETED", "FAILED"]
     agent_function_name: str
     capabilities: dict[str, Capability]
     syscall_log: list[SyscallRecord] = []
-    pending_hitl: Optional[dict[str, Any]] = None
+    pending_hitl: dict[str, Any] | None = None
     context_history: list[dict[str, Any]] = []
 
     # Preemption context (informational, not part of deterministic replay)
-    preemption_reason: Optional[str] = None
-    preemption_payload: Optional[dict[str, Any]] = None
-    partial_work: Optional[str] = None
+    preemption_reason: str | None = None
+    preemption_payload: dict[str, Any] | None = None
+    partial_work: str | None = None
 
 
-class SuspendInterrupt(Exception):
+class SuspendInterrupt(Exception):  # noqa: N818 — intentional: interrupt, not error
     """Raised by SyscallProxy to unwind the coroutine stack when HITL is needed."""
 
     def __init__(self, checkpoint: AgentCheckpoint):
