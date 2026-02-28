@@ -1,6 +1,6 @@
 """Capability and Syscall data models."""
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -26,6 +26,6 @@ class SyscallResponse(BaseModel):
         "SUSPENDED",
         "INSUFFICIENT_CAPABILITY",
     ]
-    result_payload: Optional[Any] = None
-    feedback_message: Optional[str] = None
-    human_feedback: Optional[str] = None
+    result_payload: Any | None = None
+    feedback_message: str | None = None
+    human_feedback: str | None = None
