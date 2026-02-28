@@ -4,59 +4,67 @@
 
 The goal of Phase 1 is to validate the architecture, API ergonomics, and core execution model in Python. All four kernel subsystems are implemented, tested, and usable via `import castor`.
 
-### Milestone 1: Core Kernel (Dam + Capability)
+### Milestone 1: Core Kernel (Dam + Capability) — COMPLETE
 
 The foundation — tool registration, validation, and budget management.
 
-**Castor Dam (Tool Registry & Validation)**
-- [ ] `@castor_tool` decorator: registers functions with Pydantic schemas
-- [ ] Auto-generate input schema from function signature + type hints
-- [ ] Tool registry: register, lookup, list tools
-- [ ] Input validation via Pydantic: reject malformed LLM output
-- [ ] Error-to-feedback: catch `ValidationError`, return natural language `SyscallResponse` for LLM self-correction
-- [ ] Tool metadata: `consumes`, `cost_per_use`, `destructive`, `requires_hitl`
+**Castor Dam (Tool Registry & Validation)** — `src/castor/dam/`
+- [x] `@castor_tool` decorator: registers functions with Pydantic schemas (`decorator.py`)
+- [x] Auto-generate input schema from function signature + type hints via `pydantic.create_model()`
+- [x] Tool registry: register, lookup, list tools (`registry.py`, `ToolRegistry`)
+- [x] Input validation via Pydantic: reject malformed LLM output (`validator.py`, `CastorDam.validate()`)
+- [x] Error-to-feedback: catch `ValidationError`, return natural language `SyscallResponse` for LLM self-correction (`CastorDam.format_validation_error()`)
+- [x] Tool metadata: `consumes`, `cost_per_use`, `destructive`, `requires_hitl` (`ToolMetadata`)
 
-**Capability Manager (Budget Tracking)**
-- [ ] Capability creation: initialize root budgets for an agent
-- [ ] Budget deduction: deduct cost on tool execution
-- [ ] Budget check: reject syscall if insufficient budget
-- [ ] Capability delegation: parent partitions budget subset to child
-- [ ] Capability reclamation: return unused child budget to parent on completion
-- [ ] `CapabilityExhaustedInterrupt`: signal when budget is depleted
+**Capability Manager (Budget Tracking)** — `src/castor/capability/`
+- [x] Capability creation: initialize root budgets for an agent (`CapabilityManager.create_capabilities()`)
+- [x] Budget deduction: deduct cost on tool execution (`CapabilityManager.deduct()`)
+- [x] Budget check: reject syscall if insufficient budget (`CapabilityManager.check()`)
+- [x] Capability delegation: parent partitions budget subset to child (`CapabilityManager.delegate()`)
+- [x] Capability reclamation: return unused child budget to parent on completion (`CapabilityManager.reclaim()`)
+- [x] `CapabilityExhaustedError`: signal when budget is depleted
 
-### Milestone 2: Scheduler (Stream)
+### Milestone 2: Scheduler (Stream) — COMPLETE
 
 The execution engine — checkpoint/replay, HITL, and preemption.
 
-**SyscallProxy (The Replay Gateway)**
-- [ ] Replay path: serve cached responses from `syscall_log`
-- [ ] Replay assertion: detect divergence between expected and actual requests
-- [ ] Fast path: validate → deduct capability → execute → log
-- [ ] Slow path: set `pending_hitl`, raise `SuspendInterrupt`
-- [ ] Integration with Dam (validation) and Capability Manager (deduction)
+**SyscallProxy (The Replay Gateway)** — `src/castor/stream/proxy.py`
+- [x] Replay path: serve cached responses from `syscall_log`
+- [x] Replay assertion: detect divergence between expected and actual requests (`ReplayDivergenceError`)
+- [x] Fast path: validate → deduct capability → execute → log
+- [x] Slow path: set `pending_hitl`, raise `SuspendInterrupt`
+- [x] Integration with Dam (validation) and Capability Manager (deduction)
+- [x] Validation errors returned as `SyscallResponse` feedback (not exceptions)
+- [x] Capability exhaustion returned as `INSUFFICIENT_CAPABILITY` feedback
 
-**AgentRunner (Kernel Executor)**
-- [ ] Run agent function as `asyncio.Task`
-- [ ] Handle three exit modes: completion, `SuspendInterrupt`, `CancelledError`
-- [ ] Preemption via `task.cancel()` with reason/payload
-- [ ] Checkpoint persistence to SQLite (serialize `AgentCheckpoint`)
-- [ ] Checkpoint loading from SQLite (deserialize and resume)
+**AgentRunner (Kernel Executor)** — `src/castor/stream/runner.py`
+- [x] Run agent function as `asyncio.Task` (`run_as_task()`)
+- [x] Handle three exit modes: completion, `SuspendInterrupt`, `CancelledError`
+- [x] Preemption via `task.cancel()` with reason/payload (`preempt()`)
+- [x] Checkpoint persistence to SQLite (`CheckpointStore.save()`)
+- [x] Checkpoint loading from SQLite (`CheckpointStore.load()`)
 
-**HITL Feedback Loop**
-- [ ] Approve: execute pending syscall, log with `was_hitl=True`, replay
-- [ ] Reject: log with `HITL_REJECTED` response, replay (LLM re-plans)
-- [ ] Approve with modification: log as `HITL_MODIFIED` with human feedback, replay (LLM re-plans with feedback)
+**CheckpointStore (SQLite Persistence)** — `src/castor/stream/persistence.py`
+- [x] Save/load `AgentCheckpoint` via `model_dump_json()` / `model_validate_json()`
+- [x] SQLAlchemy ORM with upsert pattern
+- [x] Nested checkpoint support (child_checkpoint round-trips correctly)
+- [x] Delete and list operations
 
-**Sub-Agent Spawning**
+**HITL Feedback Loop** — `src/castor/stream/hitl.py`
+- [x] Approve: execute pending syscall, log with `was_hitl=True`, replay
+- [x] Reject: log with `HITL_REJECTED` response, replay (LLM re-plans)
+- [x] Approve with modification: log as `HITL_MODIFIED` with human feedback, replay (LLM re-plans with feedback)
+
+**Sub-Agent Spawning** — NOT YET IMPLEMENTED (data model ready)
 - [ ] `spawn_agent` syscall: synchronous (blocking) child execution
 - [ ] Capability delegation to child, reclamation on completion
 - [ ] Child HITL propagation: child suspension bubbles to parent
 - [ ] `spawn_agent_async` / `join_agent`: non-blocking fan-out/fan-in
-- [ ] Nested checkpoint storage: child checkpoint inside parent's `SyscallRecord`
+- [x] Nested checkpoint storage: child checkpoint inside parent's `SyscallRecord` (model support complete)
 
-### Milestone 3: Context Manager (Lodge)
+### Milestone 3: Context Manager (Lodge) — NOT STARTED
 
-Context window management — the memory pager.
+Context window management — the memory pager. Architecturally independent; design discussion pending.
 
 - [ ] Token counting for agent `context_history`
 - [ ] Pinning: mark system instructions as non-evictable
@@ -65,14 +73,19 @@ Context window management — the memory pager.
 - [ ] Page out: summarize/compress old messages, store in local DB
 - [ ] Page in: retrieve relevant context via search when needed
 
-### Milestone 4: Integration & Testing
+### Milestone 4: Integration & Testing — PARTIALLY COMPLETE
 
-- [ ] End-to-end test: multi-agent workflow with HITL suspension and resume
-- [ ] Preemption test: cancel mid-execution, verify checkpoint consistency, resume
-- [ ] Replay determinism test: verify same syscall sequence on replay
-- [ ] Capability delegation test: parent → child budget flow
-- [ ] Error feedback test: validation failure → LLM self-correction
+- [x] End-to-end test: HITL suspension, approve, and resume via replay
+- [x] Preemption test: cancel mid-execution, verify checkpoint consistency, resume
+- [x] Replay determinism test: verify same syscall sequence on replay
+- [ ] Capability delegation test: parent → child budget flow (requires sub-agent spawning)
+- [x] Error feedback test: validation failure → LLM self-correction
+- [x] HITL reject test: agent re-plans after rejection
+- [x] HITL modify test: agent receives feedback and issues revised syscall
+- [x] Capability exhaustion test: budget depletes mid-run
 - [ ] CLI or simple API for human approval (webhook or interactive prompt)
+
+**Test coverage:** 90 tests across 8 test files, 0 lint errors.
 
 ---
 
