@@ -118,12 +118,17 @@ class AgentCheckpoint(BaseModel):
     """
     pid: str
     parent_pid: Optional[str] = None
-    status: Literal["RUNNING", "SUSPENDED_FOR_HITL", "COMPLETED", "FAILED"]
+    status: Literal["RUNNING", "SUSPENDED_FOR_HITL", "PREEMPTED", "COMPLETED", "FAILED"]
     agent_function_name: str           # Registry key to look up the function on replay
     capabilities: Dict[str, Capability]
     syscall_log: List[SyscallRecord] = []              # The replay journal
     pending_hitl: Optional[Dict[str, Any]] = None      # The blocked syscall (Slow Path)
     context_history: List[Dict[str, Any]] = []         # LLM message history (for Lodge)
+
+    # Preemption context (informational, not part of deterministic replay)
+    preemption_reason: Optional[str] = None            # e.g., "HUMAN_ABORT", "BUDGET_EXHAUSTED"
+    preemption_payload: Optional[Dict[str, Any]] = None  # Data from the interrupter
+    partial_work: Optional[str] = None                 # Mid-thought output saved as hint
 ```
 
 ### 3.3 Suspend Interrupt
@@ -181,7 +186,46 @@ class SyscallProxy:
         return result
 ```
 
-### 3.5 Tool Registration Interface
+### 3.5 Agent Runner (The Kernel-Side Executor)
+
+```python
+import asyncio
+
+class AgentRunner:
+    """
+    Runs an agent function as an asyncio.Task. Handles three exit modes:
+    - Normal completion (agent returns a result)
+    - Cooperative suspend (SuspendInterrupt from HITL slow path)
+    - Preemption (CancelledError from kernel's task.cancel())
+    """
+    def __init__(self):
+        self._task: asyncio.Task | None = None
+        self._current_checkpoint: AgentCheckpoint | None = None
+
+    async def run(self, agent_fn, checkpoint: AgentCheckpoint):
+        self._current_checkpoint = checkpoint
+        proxy = SyscallProxy(checkpoint)
+        try:
+            result = await agent_fn(proxy)
+            checkpoint.status = "COMPLETED"
+        except SuspendInterrupt:
+            pass  # Cooperative suspend — checkpoint already set by proxy
+        except asyncio.CancelledError:
+            checkpoint.status = "PREEMPTED"
+            # checkpoint.syscall_log is consistent up to last completed syscall
+            # Preemption context (reason, payload) was set before cancel()
+
+    def preempt(self, reason: str, payload: dict | None = None):
+        """Kernel calls this to preempt the agent immediately."""
+        if self._task and not self._task.done():
+            self._current_checkpoint.preemption_reason = reason
+            self._current_checkpoint.preemption_payload = payload
+            self._task.cancel()
+```
+
+See `docs/PREEMPTIVE_SCHEDULING.md` for the full preemption design, including how `CancelledError` propagates through the call stack and tool interruptability.
+
+### 3.6 Tool Registration Interface
 
 ```python
 from typing import Callable

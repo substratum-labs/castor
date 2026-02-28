@@ -30,14 +30,16 @@ It aims to solve the most fatal engineering pain points in the current Agent eco
 - In case of type mismatch, it automatically generates standardized error feedback to the LLM to trigger Self-Correction, rather than causing a system runtime crash.
 - Tools must declare the Capability they consume upon registration (e.g., `@castor_tool(consumes="disk_delete", cost=1)`).
 
-### 3.2 Castor Stream (Preemptive Asynchronous Scheduler)
+### 3.2 Castor Stream (Preemptive Checkpoint/Replay Scheduler)
 
-**Requirement:** Replaces traditional `while True` loops to implement controllable coroutine scheduling.
+**Requirement:** Replaces traditional `while True` loops to implement controllable agent scheduling with preemptive interruption and deterministic replay.
 
 **Features:**
 
-- **State Serialization:** When a high-risk operation is triggered, the engine instantly suspends the current coroutine, packaging and serializing local variables, the chain of thought, and the call stack to disk, freeing up memory.
-- **Resume (Breakpoint Continuation):** Upon receiving a Webhook containing human approval results, it deserializes the state snapshot, injects human feedback, and resumes execution.
+- **Checkpoint/Replay Execution Model:** Agent state is captured as a replay log of completed syscalls (`syscall_log`), not as serialized coroutine frames (which Python cannot pickle). When a high-risk operation is triggered, the engine raises a `SuspendInterrupt` exception that unwinds the coroutine stack. The checkpoint (a plain Pydantic model) is persisted to SQLite.
+- **Resume via Replay:** Upon receiving human approval, the engine re-executes the agent function from the top with a fresh `SyscallProxy` that serves cached responses from the `syscall_log`, fast-forwarding to the suspension point, then continues live execution.
+- **Preemptive Scheduling:** The kernel can preempt any running agent at any time via `asyncio.Task.cancel()`. The checkpoint is always consistent up to the last completed syscall. Resume uses the same replay mechanism as HITL suspension.
+- **HITL Feedback Loop:** Humans can approve, reject, or approve-with-modification. Modifications are logged as `HITL_MODIFIED` with natural language feedback — the LLM re-plans rather than the kernel mutating arguments, preserving replay determinism.
 
 ### 3.3 Castor Lodge (Context & Memory Pager)
 

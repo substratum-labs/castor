@@ -48,12 +48,7 @@ This was arguably the single hardest technical challenge in Castor, and it was a
 
 The documents called Castor Stream a "preemptive" scheduler, but what was described is interruption at syscall boundaries (tool call points). True preemption means interrupting at arbitrary execution points — mid-computation, mid-thought.
 
-In practice, the LLM can only be "interrupted" between inference calls (between tool calls or between generation steps). This is cooperative scheduling — the agent yields control at defined points (syscalls), and the kernel decides whether to proceed or suspend.
-
-Open questions:
-- Can a human abort a running LLM inference mid-stream? Or only before the next tool executes?
-- If the LLM enters an infinite reasoning loop without making syscalls, is there a watchdog?
-- What happens if a tool execution itself hangs?
+**Resolution:** The checkpoint/replay model gives preemption for free. `asyncio.Task.cancel()` injects `CancelledError` at the next `await` point — which, for I/O-bound LLM agents, is effectively immediate (LLM streaming has `await` points at every chunk). The checkpoint is always consistent up to the last completed syscall; resume uses the same replay mechanism as HITL suspension. Preemption context (reason, payload, partial work) is saved as metadata on the checkpoint so the agent can adapt on resume. Tool interruptability is the kernel's responsibility, not the tool author's. See `docs/PREEMPTIVE_SCHEDULING.md` for the full design.
 
 ### 3. Context Paging Is Lossy — Unlike Real Memory
 
@@ -95,7 +90,7 @@ Several production-critical topics were absent from all three documents:
 
 - **Observability:** No mention of logging, tracing, or metrics. For debugging a suspended-then-resumed agent flow, distributed tracing (e.g., OpenTelemetry spans per syscall) would be invaluable.
 - **Crash recovery:** If the kernel process itself dies mid-execution, how is state recovered? Is there a WAL (Write-Ahead Log)? Are state writes to SQLite transactional?
-- **Tool execution timeouts:** What if a tool (e.g., a network call) takes 10 minutes? Is there a watchdog timer?
+- **Tool execution timeouts:** What if a tool (e.g., a network call) takes 10 minutes? *(Partially addressed: preemption via `task.cancel()` can interrupt any tool with `await` points. CPU-bound tools run in `ProcessPoolExecutor` with killable workers. See `docs/PREEMPTIVE_SCHEDULING.md`.)*
 - **Multi-tenancy:** Is Castor designed for one agent tree per process, or can it multiplex independent sessions?
 - **Testing:** How do you test the kernel? Mock tools? Simulated HITL flows? Deterministic replay of recorded logs?
 
@@ -124,3 +119,6 @@ Phase 2 proposes rewriting the core in Rust with PyO3 bindings. Open questions:
 | Coroutine serialization | Checkpoint/Replay (Approach B) | LLM agents are linear; replay is natural; determinism constraint is free |
 | HITL with modification | Log as HITL_MODIFIED, let LLM re-plan | Preserves replay integrity; human uses natural language, not JSON |
 | Canonical data models | DDD is the source of truth | ADD models are superseded by revised DDD Section 3 |
+| Preemption mechanism | `asyncio.Task.cancel()` + checkpoint/replay | True preemption with zero agent complexity; checkpoint always consistent |
+| Tool interruptability | Kernel's responsibility | Async I/O: native. Subprocess: `proc.kill()`. CPU-bound: `ProcessPoolExecutor` + kill |
+| Preemption context | Metadata on checkpoint (not in syscall_log) | Agent-aware resume without breaking replay determinism |

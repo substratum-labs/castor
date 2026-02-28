@@ -19,12 +19,17 @@ class SyscallRecord(BaseModel):
 class AgentCheckpoint(BaseModel):
     pid: str
     parent_pid: Optional[str] = None
-    status: Literal["RUNNING", "SUSPENDED_FOR_HITL", "COMPLETED", "FAILED"]
+    status: Literal["RUNNING", "SUSPENDED_FOR_HITL", "PREEMPTED", "COMPLETED", "FAILED"]
     agent_function_name: str
     capabilities: dict[str, Capability]
     syscall_log: list[SyscallRecord] = []
     pending_hitl: Optional[dict[str, Any]] = None
     context_history: list[dict[str, Any]] = []
+
+    # Preemption context (informational, not part of deterministic replay)
+    preemption_reason: Optional[str] = None
+    preemption_payload: Optional[dict[str, Any]] = None
+    partial_work: Optional[str] = None
 
 
 class SuspendInterrupt(Exception):

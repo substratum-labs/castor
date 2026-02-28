@@ -24,12 +24,14 @@ A strongly-typed boundary layer built on top of **Pydantic V2**.
 - **Responsibility:** Converts untrusted JSON strings from the LLM into validated Python objects.
 - **Mechanism:** Uses a `@castor_tool` decorator. It validates input schemas and registers the required Capability cost for the tool. If validation fails, it generates a standardized `SchemaValidationError` to be fed back to the LLM for self-correction.
 
-### 2.3 Castor Stream (Preemptive Async Scheduler)
+### 2.3 Castor Stream (Preemptive Checkpoint/Replay Scheduler)
 
-The heart of the OS, managing the lifecycle of Agent Tasks using `asyncio`.
+The heart of the OS, managing the lifecycle of Agent processes using `asyncio`.
 
-- **Responsibility:** Executes the Directed Acyclic Graph (DAG) or State Machine of the agent's workflow.
-- **Mechanism:** Supports pausing (suspend) and resuming (resume) coroutines. It serializes the `TaskState` (including local variables, history, and the pending Syscall) to a local SQLite/PostgreSQL database when a hardware interrupt (HITL approval required) occurs.
+- **Responsibility:** Executes and manages agent lifecycle — running, suspending, preempting, and resuming agent processes.
+- **Mechanism:** Uses a **checkpoint/replay** execution model. Agent state is a replay log of completed syscalls, not serialized coroutine frames (Python coroutines cannot be pickled). Each agent function receives a `SyscallProxy` that decides whether to serve cached responses (replay) or execute live. On suspension (HITL) or preemption (`asyncio.Task.cancel()`), the `AgentCheckpoint` (a Pydantic model) is persisted to SQLite. Resume re-runs the agent function from the top, fast-forwarding through cached syscalls.
+
+See the DDD Section 2.3 for the full checkpoint/replay design and `docs/PREEMPTIVE_SCHEDULING.md` for the preemption mechanism.
 
 ### 2.4 Castor Lodge (Context Pager)
 
@@ -53,33 +55,39 @@ When the LLM decides to take an action, the following flow occurs:
    - **The Slow Path (Preempted):** If the tool is marked as `destructive=True` or exceeds the budget, Castor Stream fires an interrupt.
 
 4. **Suspension & HITL (Slow Path Only):**
-   - The current state is serialized to the database (`status = PENDING_APPROVAL`).
-   - Memory is freed. A Webhook or CLI prompt is dispatched to the human.
+   - `SyscallProxy` raises `SuspendInterrupt`, which unwinds the coroutine stack.
+   - The `AgentCheckpoint` (containing the `syscall_log` of all completed syscalls) is persisted to SQLite (`status = SUSPENDED_FOR_HITL`).
+   - A Webhook or CLI prompt is dispatched to the human.
 
 5. **Resume & Execution:**
-   - The human approves the action (injecting a `GrantToken`).
-   - Castor Stream deserializes the state, restores the coroutine, and physically executes the Python function.
+   - The human approves (or rejects, or modifies) the action.
+   - Castor Stream loads the `AgentCheckpoint` from SQLite and **replays** the agent function from the top. The `SyscallProxy` serves cached responses for all previously-completed syscalls, fast-forwarding to the suspension point, then continues live execution.
 
-## 4. Initial Data Models (Phase 1 - Python)
+## 4. Data Models (Phase 1 - Python)
 
-To guide the coding agent, here are the foundational schemas (using pseudo-Python/Pydantic):
+> **Note:** The DDD (Section 3) is the canonical source of truth for data models. The schemas below are a high-level summary. See `src/castor/models/` for the implementation.
 
 ```python
-class CapabilityToken(BaseModel):
-    id: str
+class Capability(BaseModel):
     resource_type: str  # e.g., "email_deletion", "api_spend"
     max_budget: float
     current_usage: float = 0.0
 
 class SyscallRequest(BaseModel):
+    caller_pid: str
     tool_name: str
-    arguments: dict
-    process_id: str
+    arguments: dict[str, Any]
 
-class TaskState(BaseModel):
-    process_id: str
-    status: Literal["RUNNING", "SUSPENDED", "COMPLETED", "FAILED"]
-    context_history: list[dict] # The LLM message history
-    pending_syscall: Optional[SyscallRequest]
-    serialized_locals: bytes    # The pickled or JSON state of the coroutine
+class SyscallRecord(BaseModel):
+    request: dict[str, Any]     # {"tool_name": ..., "arguments": ...}
+    response: Any               # The tool's return value or HITL feedback
+    was_hitl: bool = False
+
+class AgentCheckpoint(BaseModel):
+    pid: str
+    status: Literal["RUNNING", "SUSPENDED_FOR_HITL", "PREEMPTED", "COMPLETED", "FAILED"]
+    agent_function_name: str
+    capabilities: dict[str, Capability]
+    syscall_log: list[SyscallRecord] = []   # The replay journal
+    pending_hitl: Optional[dict[str, Any]] = None
 ```
