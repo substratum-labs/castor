@@ -76,7 +76,7 @@ class SyscallProxy:
             # Return validation error as a response (not an exception)
             # so the LLM can self-correct
             response = self._dam.format_validation_error(tool_name, e)
-            self.checkpoint.syscall_log.append(
+            self._append_record(
                 SyscallRecord(request=request, response=response.model_dump())
             )
             return response.model_dump()
@@ -101,14 +101,17 @@ class SyscallProxy:
                 status="INSUFFICIENT_CAPABILITY",
                 feedback_message=str(e),
             )
-            self.checkpoint.syscall_log.append(
+            self._append_record(
                 SyscallRecord(request=request, response=response.model_dump())
             )
             return response.model_dump()
 
         result = await self._dam.execute(tool_name, validated)
 
-        self.checkpoint.syscall_log.append(
-            SyscallRecord(request=request, response=result)
-        )
+        self._append_record(SyscallRecord(request=request, response=result))
         return result
+
+    def _append_record(self, record: SyscallRecord) -> None:
+        """Append a record to the log and advance replay index to stay in sync."""
+        self.checkpoint.syscall_log.append(record)
+        self._replay_index = len(self.checkpoint.syscall_log)
