@@ -1,5 +1,9 @@
 # Castor
 
+<p align="center">
+  <img src="assets/logo.png" alt="Castor Logo" width="300" />
+</p>
+
 A secure microkernel for LLM Agents. Castor cages LLMs inside a deterministic execution engine with strongly-typed tool validation, capability-based security budgets, and preemptive human-in-the-loop (HITL) interrupts.
 
 Castor is a **kernel**, not an agent framework. It provides core primitives that agent frameworks and custom agents integrate with. Your agent brings its own LLM client — Castor controls the side effects.
