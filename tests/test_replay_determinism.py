@@ -123,9 +123,7 @@ class TestLLMReplayDeterminism:
         assert llm_record.request["tool_name"] == "llm_inference"
         assert llm_record.response == "Generated plan: delete /tmp/old"
 
-    async def test_llm_response_survives_full_replay(
-        self, registry, dam, cap_mgr
-    ):
+    async def test_llm_response_survives_full_replay(self, registry, dam, cap_mgr):
         """Run agent to completion, then replay entirely from cache."""
         call_count = 0
 
