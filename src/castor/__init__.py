@@ -15,6 +15,7 @@ from castor.models.checkpoint import (
     SuspendInterrupt,
     SyscallRecord,
 )
+from castor.stream.agent_registry import AgentNotFoundError, AgentRegistry, castor_agent
 from castor.stream.hitl import HITLHandler
 from castor.stream.persistence import CheckpointStore
 from castor.stream.proxy import SyscallProxy
@@ -22,6 +23,8 @@ from castor.stream.runner import AgentRunner
 
 __all__ = [
     "AgentCheckpoint",
+    "AgentNotFoundError",
+    "AgentRegistry",
     "AgentRunner",
     "Capability",
     "CapabilityManager",
@@ -36,5 +39,6 @@ __all__ = [
     "SyscallRecord",
     "SyscallRequest",
     "SyscallResponse",
+    "castor_agent",
     "castor_tool",
 ]

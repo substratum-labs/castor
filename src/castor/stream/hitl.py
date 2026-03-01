@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from castor.capability.manager import CapabilityManager
 from castor.dam.validator import CastorDam
-from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
+from castor.models.checkpoint import AgentCheckpoint, SuspendInterrupt, SyscallRecord
+
+if TYPE_CHECKING:
+    from castor.lodge.core import CastorLodge
+    from castor.stream.agent_registry import AgentRegistry
 
 
 class HITLHandler:
@@ -95,3 +101,130 @@ class HITLHandler:
         )
         checkpoint.pending_hitl = None
         checkpoint.status = "RUNNING"
+
+    # ── Child HITL (spawn_agent propagation) ──
+
+    def is_child_hitl(self, checkpoint: AgentCheckpoint) -> bool:
+        """Check if the pending HITL belongs to a child spawn."""
+        if checkpoint.pending_hitl is None:
+            return False
+        return checkpoint.pending_hitl.get("tool_name") == "spawn_agent"
+
+    async def approve_child_hitl(
+        self,
+        checkpoint: AgentCheckpoint,
+        dam: CastorDam,
+        capability_manager: CapabilityManager,
+        agent_registry: AgentRegistry,
+        lodge: CastorLodge | None = None,
+    ) -> None:
+        """Approve HITL on a child's suspended syscall, then resume child."""
+        if not self.is_child_hitl(checkpoint):
+            raise ValueError("No child spawn HITL pending — use approve()")
+
+        child_cp = self._get_child_checkpoint(checkpoint)
+        await self.approve(child_cp, dam, capability_manager)
+        await self._resume_child(
+            checkpoint,
+            child_cp,
+            dam,
+            capability_manager,
+            agent_registry,
+            lodge=lodge,
+        )
+
+    async def reject_child_hitl(
+        self,
+        checkpoint: AgentCheckpoint,
+        feedback: str,
+        dam: CastorDam,
+        capability_manager: CapabilityManager,
+        agent_registry: AgentRegistry,
+        lodge: CastorLodge | None = None,
+    ) -> None:
+        """Reject a child's pending HITL and resume child."""
+        if not self.is_child_hitl(checkpoint):
+            raise ValueError("No child spawn HITL pending — use reject()")
+
+        child_cp = self._get_child_checkpoint(checkpoint)
+        self.reject(child_cp, feedback)
+        await self._resume_child(
+            checkpoint,
+            child_cp,
+            dam,
+            capability_manager,
+            agent_registry,
+            lodge=lodge,
+        )
+
+    async def modify_child_hitl(
+        self,
+        checkpoint: AgentCheckpoint,
+        feedback: str,
+        dam: CastorDam,
+        capability_manager: CapabilityManager,
+        agent_registry: AgentRegistry,
+        lodge: CastorLodge | None = None,
+    ) -> None:
+        """Modify a child's pending HITL and resume child."""
+        if not self.is_child_hitl(checkpoint):
+            raise ValueError("No child spawn HITL pending — use modify()")
+
+        child_cp = self._get_child_checkpoint(checkpoint)
+        self.modify(child_cp, feedback)
+        await self._resume_child(
+            checkpoint,
+            child_cp,
+            dam,
+            capability_manager,
+            agent_registry,
+            lodge=lodge,
+        )
+
+    def _get_child_checkpoint(self, checkpoint: AgentCheckpoint) -> AgentCheckpoint:
+        """Extract child checkpoint from parent's last syscall record."""
+        last = checkpoint.syscall_log[-1]
+        if last.child_checkpoint is None:
+            raise ValueError("No child checkpoint in last syscall record")
+        return last.child_checkpoint
+
+    async def _resume_child(
+        self,
+        parent_cp: AgentCheckpoint,
+        child_cp: AgentCheckpoint,
+        dam: CastorDam,
+        capability_manager: CapabilityManager,
+        agent_registry: AgentRegistry,
+        lodge: CastorLodge | None = None,
+    ) -> None:
+        """Replay a child agent after its HITL was resolved."""
+        from castor.stream.proxy import SyscallProxy
+
+        agent_fn = agent_registry.get(child_cp.agent_function_name)
+        kernel_tool_names = lodge.kernel_tool_names if lodge else set()
+        child_proxy = SyscallProxy(
+            checkpoint=child_cp,
+            dam=dam,
+            capability_manager=capability_manager,
+            lodge=lodge,
+            kernel_tool_names=kernel_tool_names,
+            agent_registry=agent_registry,
+        )
+
+        try:
+            child_result = await agent_fn(child_proxy)
+            child_cp.result = child_result
+            child_cp.status = "COMPLETED"
+        except SuspendInterrupt:
+            # Child suspended again — parent stays suspended
+            last = parent_cp.syscall_log[-1]
+            last.child_checkpoint = child_cp
+            return
+
+        # Child completed — reclaim budget and update parent
+        capability_manager.reclaim(parent_cp.capabilities, child_cp.capabilities)
+        last = parent_cp.syscall_log[-1]
+        last.response = child_cp.result
+        last.child_checkpoint = child_cp
+        parent_cp.pending_hitl = None
+        parent_cp.status = "RUNNING"

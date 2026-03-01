@@ -11,6 +11,7 @@ from castor.dam.validator import CastorDam
 
 if TYPE_CHECKING:
     from castor.lodge.core import CastorLodge
+    from castor.stream.agent_registry import AgentRegistry
 from castor.models.capability import SyscallResponse
 from castor.models.checkpoint import (
     AgentCheckpoint,
@@ -55,6 +56,7 @@ class SyscallProxy:
         lodge: CastorLodge | None = None,
         llm_tool_names: set[str] | None = None,
         kernel_tool_names: set[str] | None = None,
+        agent_registry: AgentRegistry | None = None,
     ) -> None:
         self.checkpoint = checkpoint
         self._dam = dam
@@ -62,6 +64,7 @@ class SyscallProxy:
         self._lodge = lodge
         self._llm_tool_names = llm_tool_names or {"llm_inference"}
         self._kernel_tool_names = kernel_tool_names or set()
+        self._agent_registry = agent_registry
         self._replay_index = 0
 
     @property
@@ -103,6 +106,10 @@ class SyscallProxy:
                 raise ReplayDivergenceError(self._replay_index, record.request, request)
             self._replay_index += 1
             return record.response
+
+        # ── Spawn intercept: kernel-internal, bypasses Dam ──
+        if tool_name == "spawn_agent":
+            return await self._handle_spawn(request, arguments)
 
         # ── New syscall: validate via Dam ──
         try:
@@ -157,6 +164,100 @@ class SyscallProxy:
 
         self._append_record(SyscallRecord(request=request, response=result))
         return result
+
+    async def _handle_spawn(
+        self,
+        request: dict[str, Any],
+        arguments: dict[str, Any],
+    ) -> Any:
+        """Handle spawn_agent: delegate caps, run child, reclaim."""
+        if self._agent_registry is None:
+            raise RuntimeError("spawn_agent requires an AgentRegistry on SyscallProxy")
+
+        agent_name: str = arguments["agent_name"]
+        requested_caps: dict[str, float] = arguments.get("capabilities", {})
+
+        # 1. Look up agent function
+        agent_fn = self._agent_registry.get(agent_name)
+
+        # 2. Delegate capabilities from parent to child
+        child_caps = self._cap_mgr.delegate(
+            self.checkpoint.capabilities, requested_caps
+        )
+
+        # 3. Deterministic child PID
+        spawn_count = sum(
+            1
+            for r in self.checkpoint.syscall_log
+            if r.request.get("tool_name") == "spawn_agent"
+        )
+        child_pid = f"{self.checkpoint.pid}::{agent_name}-{spawn_count}"
+
+        # 4. Create child checkpoint
+        child_cp = AgentCheckpoint(
+            pid=child_pid,
+            parent_pid=self.checkpoint.pid,
+            status="RUNNING",
+            agent_function_name=agent_name,
+            capabilities=child_caps,
+        )
+
+        # 5. Run child with its own proxy
+        child_kernel_tools = self._lodge.kernel_tool_names if self._lodge else set()
+        child_proxy = SyscallProxy(
+            checkpoint=child_cp,
+            dam=self._dam,
+            capability_manager=self._cap_mgr,
+            lodge=self._lodge,
+            llm_tool_names=self._llm_tool_names,
+            kernel_tool_names=child_kernel_tools,
+            agent_registry=self._agent_registry,
+        )
+
+        try:
+            child_result = await agent_fn(child_proxy)
+            child_cp.result = child_result
+            child_cp.status = "COMPLETED"
+        except SuspendInterrupt:
+            self._propagate_child_suspension(request, child_cp)
+            raise SuspendInterrupt(self.checkpoint)
+        except BaseException:
+            # Child raised unexpectedly — reclaim delegated budget to prevent leak
+            self._cap_mgr.reclaim(self.checkpoint.capabilities, child_cp.capabilities)
+            raise
+
+        # 6. Reclaim unused child budget
+        self._cap_mgr.reclaim(self.checkpoint.capabilities, child_cp.capabilities)
+
+        # 7. Log and return
+        self._append_record(
+            SyscallRecord(
+                request=request,
+                response=child_result,
+                child_checkpoint=child_cp,
+            )
+        )
+        return child_result
+
+    def _propagate_child_suspension(
+        self,
+        request: dict[str, Any],
+        child_cp: AgentCheckpoint,
+    ) -> None:
+        """Propagate child HITL suspension to parent."""
+        self._append_record(
+            SyscallRecord(
+                request=request,
+                response=None,
+                child_checkpoint=child_cp,
+            )
+        )
+        self.checkpoint.pending_hitl = {
+            "tool_name": "spawn_agent",
+            "arguments": request["arguments"],
+            "child_pid": child_cp.pid,
+        }
+        self.checkpoint.status = "SUSPENDED_FOR_HITL"
 
     def _append_record(self, record: SyscallRecord) -> None:
         """Append a record to the log and advance replay index to stay in sync."""

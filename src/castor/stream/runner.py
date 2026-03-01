@@ -13,6 +13,7 @@ from castor.stream.proxy import SyscallProxy
 
 if TYPE_CHECKING:
     from castor.lodge.core import CastorLodge
+    from castor.stream.agent_registry import AgentRegistry
 
 
 class AgentRunner:
@@ -34,10 +35,12 @@ class AgentRunner:
         dam: CastorDam,
         capability_manager: CapabilityManager,
         lodge: CastorLodge | None = None,
+        agent_registry: AgentRegistry | None = None,
     ) -> None:
         self._dam = dam
         self._cap_mgr = capability_manager
         self._lodge = lodge
+        self._agent_registry = agent_registry
         self._task: asyncio.Task | None = None
         self._current_checkpoint: AgentCheckpoint | None = None
 
@@ -59,10 +62,11 @@ class AgentRunner:
             self._cap_mgr,
             lodge=self._lodge,
             kernel_tool_names=kernel_tools,
+            agent_registry=self._agent_registry,
         )
 
         try:
-            await agent_fn(proxy)
+            checkpoint.result = await agent_fn(proxy)
             checkpoint.status = "COMPLETED"
         except SuspendInterrupt:
             # Cooperative suspend — checkpoint already set by proxy

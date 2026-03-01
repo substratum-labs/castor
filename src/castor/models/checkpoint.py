@@ -34,6 +34,7 @@ class AgentCheckpoint(BaseModel):
     syscall_log: list[SyscallRecord] = []
     pending_hitl: dict[str, Any] | None = None
     context_history: list[CastorMessage | dict[str, Any]] = []
+    result: Any | None = None
 
     # Preemption context (informational, not part of deterministic replay)
     preemption_reason: str | None = None

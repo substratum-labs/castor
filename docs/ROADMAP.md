@@ -58,12 +58,16 @@ The execution engine — checkpoint/replay, HITL, and preemption.
 - [x] Reject: log with `HITL_REJECTED` response, replay (LLM re-plans)
 - [x] Approve with modification: log as `HITL_MODIFIED` with human feedback, replay (LLM re-plans with feedback)
 
-**Sub-Agent Spawning** — NOT YET IMPLEMENTED (data model ready)
-- [ ] `spawn_agent` syscall: synchronous (blocking) child execution
-- [ ] Capability delegation to child, reclamation on completion
-- [ ] Child HITL propagation: child suspension bubbles to parent
+**Sub-Agent Spawning** — `src/castor/stream/agent_registry.py`, `proxy.py`, `hitl.py`
+- [x] `AgentRegistry`: register/lookup agent functions by name, `@castor_agent` decorator
+- [x] `spawn_agent` syscall: synchronous (blocking) child execution via `SyscallProxy._handle_spawn()`
+- [x] Capability delegation to child, reclamation on completion
+- [x] Deterministic child PID: `parent_pid::agent_name-N`
+- [x] Child HITL propagation: child suspension bubbles to parent (`_propagate_child_suspension`)
+- [x] Child HITL resolution: `approve_child_hitl`, `reject_child_hitl`, `modify_child_hitl` on `HITLHandler`
+- [x] `AgentRunner` wired with `AgentRegistry` for spawn support
+- [x] Nested checkpoint storage: child checkpoint inside parent's `SyscallRecord`
 - [ ] `spawn_agent_async` / `join_agent`: non-blocking fan-out/fan-in
-- [x] Nested checkpoint storage: child checkpoint inside parent's `SyscallRecord` (model support complete)
 
 ### Milestone 3: Context Manager (Lodge) — COMPLETE
 
@@ -99,7 +103,7 @@ Context window memory management — the agentic MMU. Monitors token usage, evic
 - [x] End-to-end test: HITL suspension, approve, and resume via replay
 - [x] Preemption test: cancel mid-execution, verify checkpoint consistency, resume
 - [x] Replay determinism test: verify same syscall sequence on replay
-- [ ] Capability delegation test: parent → child budget flow (requires sub-agent spawning)
+- [x] Capability delegation test: parent → child budget flow
 - [x] Error feedback test: validation failure → LLM self-correction
 - [x] HITL reject test: agent re-plans after rejection
 - [x] HITL modify test: agent receives feedback and issues revised syscall
@@ -109,7 +113,7 @@ Context window memory management — the agentic MMU. Monitors token usage, evic
 - [x] Lodge replay determinism test: `driver.ingest` not called on replay after HITL approve
 - [ ] CLI or simple API for human approval (webhook or interactive prompt)
 
-**Test coverage:** 121 tests across 10 test files, 0 lint errors.
+**Test coverage:** 142 tests across 11 test files, 0 lint errors.
 
 ---
 
