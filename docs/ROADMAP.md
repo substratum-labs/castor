@@ -36,6 +36,9 @@ The execution engine — checkpoint/replay, HITL, and preemption.
 - [x] Integration with Dam (validation) and Capability Manager (deduction)
 - [x] Validation errors returned as `SyscallResponse` feedback (not exceptions)
 - [x] Capability exhaustion returned as `INSUFFICIENT_CAPABILITY` feedback
+- [x] Transactional budget: `deduct` → `execute` → `refund()` on failure (prevents budget leaks)
+- [x] LLM replay safety: `LLMSyscall` wrapper routes inference through `proxy.syscall()` (`castor.llm.wrapper`)
+- [x] Kernel-internal replay skip: `kernel_tool_names` auto-consumed during replay for Lodge page-out records
 
 **AgentRunner (Kernel Executor)** — `src/castor/stream/runner.py`
 - [x] Run agent function as `asyncio.Task` (`run_as_task()`)
@@ -62,16 +65,34 @@ The execution engine — checkpoint/replay, HITL, and preemption.
 - [ ] `spawn_agent_async` / `join_agent`: non-blocking fan-out/fan-in
 - [x] Nested checkpoint storage: child checkpoint inside parent's `SyscallRecord` (model support complete)
 
-### Milestone 3: Context Manager (Lodge) — NOT STARTED
+### Milestone 3: Context Manager (Lodge) — COMPLETE
 
-Context window management — the memory pager. Architecturally independent; design discussion pending.
+Context window memory management — the agentic MMU. Monitors token usage, evicts unpinned messages to cold storage, and provides page-in search.
 
-- [ ] Token counting for agent `context_history`
-- [ ] Pinning: mark system instructions as non-evictable
-- [ ] Paging threshold: detect when context approaches max tokens
-- [ ] Eviction policy: select which messages to page out
-- [ ] Page out: summarize/compress old messages, store in local DB
-- [ ] Page in: retrieve relevant context via search when needed
+**CastorLodge (MMU Controller)** — `src/castor/lodge/core.py`
+- [x] Token counting: sum `CastorMessage.token_count` fields with fallback to `TokenCounter` estimation
+- [x] Pinning: `CastorMessage.pinned=True` messages are never evicted (system prompts, HITL records)
+- [x] Watermark threshold: configurable high-water mark triggers eviction
+- [x] FIFO eviction: select oldest unpinned messages until total tokens <= watermark
+- [x] Eviction via syscall: `sys_kernel_page_out` routed through `proxy.syscall()` for replay safety
+- [x] Kernel-internal replay skip: `kernel_tool_names` auto-consumed during replay (side-effects already applied)
+- [x] Eviction hook: fires in `SyscallProxy` before LLM tool calls (live execution only)
+- [x] `search_memory` tool: agent-facing page-in via `proxy.syscall()`, replay-safe
+
+**SemanticMemoryDriver (HAL)** — `src/castor/lodge/driver.py`
+- [x] Abstract base class: `ingest()` and `search()` methods
+- [x] Strategy/mechanism separation: Lodge core never imports concrete drivers
+
+**TokenCounter Protocol** — `src/castor/lodge/token_counter.py`
+- [x] `TokenCounter` protocol: pluggable tokenizer interface
+- [x] `CharCountEstimator`: default `len(text) // 4` estimator (no tiktoken dependency)
+
+**InMemoryDriver (Mock)** — `src/castor/lodge/drivers/mock_driver.py`
+- [x] Dict-based storage with substring search for testing
+
+**CastorMessage** — `src/castor/models/checkpoint.py`
+- [x] Pydantic model with `role`, `content`, `pinned`, `token_count` fields
+- [x] `context_history` upgraded to `list[CastorMessage | dict[str, Any]]`
 
 ### Milestone 4: Integration & Testing — PARTIALLY COMPLETE
 
@@ -83,9 +104,12 @@ Context window management — the memory pager. Architecturally independent; des
 - [x] HITL reject test: agent re-plans after rejection
 - [x] HITL modify test: agent receives feedback and issues revised syscall
 - [x] Capability exhaustion test: budget depletes mid-run
+- [x] Lodge eviction + page-in integration test: large context triggers eviction, `search_memory` retrieves
+- [x] Lodge pinned survival test: pinned messages survive extreme eviction
+- [x] Lodge replay determinism test: `driver.ingest` not called on replay after HITL approve
 - [ ] CLI or simple API for human approval (webhook or interactive prompt)
 
-**Test coverage:** 90 tests across 8 test files, 0 lint errors.
+**Test coverage:** 121 tests across 10 test files, 0 lint errors.
 
 ---
 

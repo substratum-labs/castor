@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
 from castor.capability.manager import CapabilityExhaustedError, CapabilityManager
 from castor.dam.validator import CastorDam
+
+if TYPE_CHECKING:
+    from castor.lodge.core import CastorLodge
 from castor.models.capability import SyscallResponse
 from castor.models.checkpoint import (
     AgentCheckpoint,
@@ -49,10 +52,16 @@ class SyscallProxy:
         checkpoint: AgentCheckpoint,
         dam: CastorDam,
         capability_manager: CapabilityManager,
+        lodge: CastorLodge | None = None,
+        llm_tool_names: set[str] | None = None,
+        kernel_tool_names: set[str] | None = None,
     ) -> None:
         self.checkpoint = checkpoint
         self._dam = dam
         self._cap_mgr = capability_manager
+        self._lodge = lodge
+        self._llm_tool_names = llm_tool_names or {"llm_inference"}
+        self._kernel_tool_names = kernel_tool_names or set()
         self._replay_index = 0
 
     @property
@@ -71,7 +80,23 @@ class SyscallProxy:
         """
         request = {"tool_name": tool_name, "arguments": arguments}
 
+        # ── Lodge eviction hook: run before LLM tools (live execution only) ──
+        if (
+            self._lodge is not None
+            and not self.is_replaying
+            and tool_name in self._llm_tool_names
+        ):
+            await self._lodge.check_and_evict(self, self.checkpoint)
+
         # ── Replay: return cached response instantly ──
+        # Skip kernel-internal records (e.g. sys_kernel_page_out) whose
+        # side-effects are already applied to the checkpoint state.
+        while self._replay_index < len(self.checkpoint.syscall_log):
+            record = self.checkpoint.syscall_log[self._replay_index]
+            if record.request.get("tool_name") not in self._kernel_tool_names:
+                break
+            self._replay_index += 1
+
         if self._replay_index < len(self.checkpoint.syscall_log):
             record = self.checkpoint.syscall_log[self._replay_index]
             if record.request != request:

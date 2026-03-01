@@ -7,9 +7,11 @@ from castor.capability.manager import CapabilityManager
 from castor.dam.decorator import castor_tool
 from castor.dam.validator import CastorDam
 from castor.llm.wrapper import LLMSyscall
+from castor.lodge.core import CastorLodge
 from castor.models.capability import Capability, SyscallRequest, SyscallResponse
 from castor.models.checkpoint import (
     AgentCheckpoint,
+    CastorMessage,
     SuspendInterrupt,
     SyscallRecord,
 )
@@ -24,6 +26,8 @@ __all__ = [
     "Capability",
     "CapabilityManager",
     "CastorDam",
+    "CastorLodge",
+    "CastorMessage",
     "CheckpointStore",
     "HITLHandler",
     "LLMSyscall",

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from castor.capability.manager import CapabilityManager
 from castor.dam.validator import CastorDam
 from castor.models.checkpoint import AgentCheckpoint, SuspendInterrupt
 from castor.stream.proxy import SyscallProxy
+
+if TYPE_CHECKING:
+    from castor.lodge.core import CastorLodge
 
 
 class AgentRunner:
@@ -26,9 +29,15 @@ class AgentRunner:
     determinism.  See ``castor.llm.LLMSyscall`` for an LLM-specific wrapper.
     """
 
-    def __init__(self, dam: CastorDam, capability_manager: CapabilityManager) -> None:
+    def __init__(
+        self,
+        dam: CastorDam,
+        capability_manager: CapabilityManager,
+        lodge: CastorLodge | None = None,
+    ) -> None:
         self._dam = dam
         self._cap_mgr = capability_manager
+        self._lodge = lodge
         self._task: asyncio.Task | None = None
         self._current_checkpoint: AgentCheckpoint | None = None
 
@@ -43,7 +52,14 @@ class AgentRunner:
         """
         self._current_checkpoint = checkpoint
         checkpoint.status = "RUNNING"
-        proxy = SyscallProxy(checkpoint, self._dam, self._cap_mgr)
+        kernel_tools = self._lodge.kernel_tool_names if self._lodge else set()
+        proxy = SyscallProxy(
+            checkpoint,
+            self._dam,
+            self._cap_mgr,
+            lodge=self._lodge,
+            kernel_tool_names=kernel_tools,
+        )
 
         try:
             await agent_fn(proxy)

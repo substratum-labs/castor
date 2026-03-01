@@ -9,6 +9,15 @@ from pydantic import BaseModel
 from castor.models.capability import Capability
 
 
+class CastorMessage(BaseModel):
+    """A message in the agent's context history with Lodge metadata."""
+
+    role: str
+    content: str
+    pinned: bool = False
+    token_count: int = 0
+
+
 class SyscallRecord(BaseModel):
     request: dict[str, Any]
     response: Any
@@ -24,7 +33,7 @@ class AgentCheckpoint(BaseModel):
     capabilities: dict[str, Capability]
     syscall_log: list[SyscallRecord] = []
     pending_hitl: dict[str, Any] | None = None
-    context_history: list[dict[str, Any]] = []
+    context_history: list[CastorMessage | dict[str, Any]] = []
 
     # Preemption context (informational, not part of deterministic replay)
     preemption_reason: str | None = None
