@@ -25,6 +25,9 @@ dependencies = [
     "sqlalchemy>=2.0",
 ]
 
+[project.scripts]
+castor = "castor.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/substrate-lab/castor"
 Repository = "https://github.com/substrate-lab/castor"

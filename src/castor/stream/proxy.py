@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -66,6 +67,9 @@ class SyscallProxy:
         self._kernel_tool_names = kernel_tool_names or set()
         self._agent_registry = agent_registry
         self._replay_index = 0
+        # Async spawn tracking (live execution only, not persisted)
+        self._async_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._async_checkpoints: dict[str, AgentCheckpoint] = {}
 
     @property
     def is_replaying(self) -> bool:
@@ -107,9 +111,13 @@ class SyscallProxy:
             self._replay_index += 1
             return record.response
 
-        # ── Spawn intercept: kernel-internal, bypasses Dam ──
+        # ── Spawn/join intercepts: kernel-internal, bypass Dam ──
         if tool_name == "spawn_agent":
             return await self._handle_spawn(request, arguments)
+        if tool_name == "spawn_agent_async":
+            return await self._handle_spawn_async(request, arguments)
+        if tool_name == "join_agent":
+            return await self._handle_join(request, arguments)
 
         # ── New syscall: validate via Dam ──
         try:
@@ -185,11 +193,11 @@ class SyscallProxy:
             self.checkpoint.capabilities, requested_caps
         )
 
-        # 3. Deterministic child PID
+        # 3. Deterministic child PID (count both sync and async spawns)
         spawn_count = sum(
             1
             for r in self.checkpoint.syscall_log
-            if r.request.get("tool_name") == "spawn_agent"
+            if r.request.get("tool_name") in {"spawn_agent", "spawn_agent_async"}
         )
         child_pid = f"{self.checkpoint.pid}::{agent_name}-{spawn_count}"
 
@@ -239,6 +247,129 @@ class SyscallProxy:
         )
         return child_result
 
+    async def _handle_spawn_async(
+        self,
+        request: dict[str, Any],
+        arguments: dict[str, Any],
+    ) -> str:
+        """Handle spawn_agent_async: delegate caps, launch child task, return handle."""
+        if self._agent_registry is None:
+            raise RuntimeError(
+                "spawn_agent_async requires an AgentRegistry on SyscallProxy"
+            )
+
+        agent_name: str = arguments["agent_name"]
+        requested_caps: dict[str, float] = arguments.get("capabilities", {})
+
+        # 1. Look up agent function
+        agent_fn = self._agent_registry.get(agent_name)
+
+        # 2. Delegate capabilities from parent to child
+        child_caps = self._cap_mgr.delegate(
+            self.checkpoint.capabilities, requested_caps
+        )
+
+        try:
+            # 3. Deterministic child PID (count both sync and async spawns)
+            spawn_count = sum(
+                1
+                for r in self.checkpoint.syscall_log
+                if r.request.get("tool_name") in {"spawn_agent", "spawn_agent_async"}
+            )
+            child_pid = f"{self.checkpoint.pid}::{agent_name}-{spawn_count}"
+
+            # 4. Create child checkpoint
+            child_cp = AgentCheckpoint(
+                pid=child_pid,
+                parent_pid=self.checkpoint.pid,
+                status="RUNNING",
+                agent_function_name=agent_name,
+                capabilities=child_caps,
+            )
+
+            # 5. Launch child as background task
+            child_kernel_tools = (
+                self._lodge.kernel_tool_names if self._lodge else set()
+            )
+            child_proxy = SyscallProxy(
+                checkpoint=child_cp,
+                dam=self._dam,
+                capability_manager=self._cap_mgr,
+                lodge=self._lodge,
+                llm_tool_names=self._llm_tool_names,
+                kernel_tool_names=child_kernel_tools,
+                agent_registry=self._agent_registry,
+            )
+
+            async def _run_child() -> Any:
+                try:
+                    result = await agent_fn(child_proxy)
+                    child_cp.result = result
+                    child_cp.status = "COMPLETED"
+                    return result
+                except SuspendInterrupt:
+                    # Don't re-raise — parent detects via child_cp.status at join
+                    return None
+                except BaseException:
+                    child_cp.status = "FAILED"
+                    raise
+
+            task = asyncio.create_task(_run_child())
+            self._async_tasks[child_pid] = task
+            self._async_checkpoints[child_pid] = child_cp
+        except BaseException:
+            self._cap_mgr.reclaim(self.checkpoint.capabilities, child_caps)
+            raise
+
+        # 6. Log spawn and return handle immediately
+        self._append_record(SyscallRecord(request=request, response=child_pid))
+        return child_pid
+
+    async def _handle_join(
+        self,
+        request: dict[str, Any],
+        arguments: dict[str, Any],
+    ) -> Any:
+        """Handle join_agent: await child completion, reclaim budget, return result."""
+        handle: str = arguments["handle"]
+
+        if handle not in self._async_tasks:
+            raise RuntimeError(f"Unknown async agent handle: {handle!r}")
+
+        task = self._async_tasks[handle]
+        child_cp = self._async_checkpoints[handle]
+
+        # Await child completion
+        try:
+            await task
+        except BaseException:
+            # Child raised unexpectedly — reclaim budget
+            self._cap_mgr.reclaim(self.checkpoint.capabilities, child_cp.capabilities)
+            del self._async_tasks[handle]
+            del self._async_checkpoints[handle]
+            raise
+
+        # Clean up tracking
+        del self._async_tasks[handle]
+        del self._async_checkpoints[handle]
+
+        # Check if child suspended for HITL
+        if child_cp.status == "SUSPENDED_FOR_HITL":
+            self._propagate_child_suspension(request, child_cp)
+            raise SuspendInterrupt(self.checkpoint)
+
+        # Child completed — reclaim unused budget
+        self._cap_mgr.reclaim(self.checkpoint.capabilities, child_cp.capabilities)
+
+        self._append_record(
+            SyscallRecord(
+                request=request,
+                response=child_cp.result,
+                child_checkpoint=child_cp,
+            )
+        )
+        return child_cp.result
+
     def _propagate_child_suspension(
         self,
         request: dict[str, Any],
@@ -253,7 +384,7 @@ class SyscallProxy:
             )
         )
         self.checkpoint.pending_hitl = {
-            "tool_name": "spawn_agent",
+            "tool_name": request["tool_name"],
             "arguments": request["arguments"],
             "child_pid": child_cp.pid,
         }

@@ -9,8 +9,10 @@ Newest entries first within each section. Prune aggressively — git is the perm
 
 ## Current Focus
 
-- [CC] **LLM replay safety** — `LLMSyscall` wrapper shipped. All LLM inference must flow through `proxy.syscall()`. 3 replay-determinism tests passing.
-- [CC] **Budget leak fix** — Fast-path `deduct` → `execute` is now transactional via `try/except BaseException` + `refund()`. 3 tests (tool exception, CancelledError, success sanity).
+- [CC] **M4 COMPLETE** — All Phase 1 milestones (M1–M4) delivered. 170 tests, 0 lint errors.
+- [CC] **Async spawn/join** — `spawn_agent_async` + `join_agent` syscalls for fan-out/fan-in parallelism. Budget delegated at spawn, reclaimed at join. HITL propagation at join time. Replay serves cached handle/result.
+- [CC] **CLI for HITL** — `castor list|show|reject|modify` via `[project.scripts]` entry. Approve excluded (requires runtime). Child HITL guarded with `is_child_hitl()` check.
+- [CC] **Code review fixes** — PID collision between sync/async spawns fixed (shared counter). FAILED status on async child exception. Budget leak guard in async spawn. CLI child HITL guard. Mixed-spawn regression tests.
 
 ---
 
@@ -18,9 +20,11 @@ Newest entries first within each section. Prune aggressively — git is the perm
 
 _Questions needing exploration or a design decision. Research Agent can pick these up._
 
-- **Lodge design (M3):** What token counting library? Should eviction use summarization (LLM call) or truncation? How does page-in search work — embedding similarity or keyword?
-- **Sub-agent spawning (M4):** `spawn_agent` is a syscall, but should `spawn_agent_async` + `join_agent` be separate syscalls or a single `fan_out` primitive? How does HITL propagate from child to parent?
-- **Agent return value:** `AgentRunner` discards `await agent_fn(proxy)` result. Should it be stored in `AgentCheckpoint`? New field, or overload `partial_work`?
+- ~~**Lodge design (M3):**~~ RESOLVED — FIFO eviction with watermark, HAL via `SemanticMemoryDriver` ABC, page-in via `search_memory` syscall.
+- ~~**Sub-agent spawning (M4):**~~ RESOLVED — Separate `spawn_agent_async` + `join_agent` syscalls. Child HITL propagates at join time via `_propagate_child_suspension`.
+- ~~**Agent return value:**~~ RESOLVED — Stored in `AgentCheckpoint.result`.
+- **Phase 2 planning:** When to start Rust/PyO3 core? Which subsystem first (Dam validation is hot path)?
+- **Async spawn observability:** Child checkpoints not persisted at spawn time (only at join). Orphaned tasks on parent preemption produce warnings but are GC'd.
 
 ---
 

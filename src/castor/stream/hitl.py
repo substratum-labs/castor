@@ -108,7 +108,10 @@ class HITLHandler:
         """Check if the pending HITL belongs to a child spawn."""
         if checkpoint.pending_hitl is None:
             return False
-        return checkpoint.pending_hitl.get("tool_name") == "spawn_agent"
+        return checkpoint.pending_hitl.get("tool_name") in {
+            "spawn_agent",
+            "join_agent",
+        }
 
     async def approve_child_hitl(
         self,

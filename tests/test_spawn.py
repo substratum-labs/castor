@@ -568,3 +568,423 @@ class TestSpawnReplay:
         assert result == "cached child result"
         assert proxy._replay_index == 1
         assert not proxy.is_replaying
+
+
+# ── Async spawn/join ──
+
+
+class TestSpawnAsyncHappyPath:
+    async def test_spawn_async_returns_handle(
+        self, tool_registry, dam, cap_mgr, agent_registry
+    ):
+        """spawn_agent_async returns a child PID handle immediately."""
+
+        async def child_agent(proxy):
+            return "child result"
+
+        agent_registry.register("child_agent", child_agent)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        handle = await proxy.syscall(
+            "spawn_agent_async",
+            {"agent_name": "child_agent", "capabilities": {"test": 10.0}},
+        )
+
+        assert handle == "parent-001::child_agent-0"
+        assert isinstance(handle, str)
+        # Spawn logged immediately (before join)
+        assert len(checkpoint.syscall_log) == 1
+        assert checkpoint.syscall_log[0].response == handle
+
+    async def test_join_returns_child_result(
+        self, tool_registry, dam, cap_mgr, agent_registry
+    ):
+        """join_agent awaits child and returns its result."""
+        register_search(tool_registry)
+
+        async def child_agent(proxy):
+            r = await proxy.syscall("search", {"query": "async-child"})
+            return {"answer": r}
+
+        agent_registry.register("child_agent", child_agent)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        handle = await proxy.syscall(
+            "spawn_agent_async",
+            {"agent_name": "child_agent", "capabilities": {"test": 10.0}},
+        )
+        result = await proxy.syscall("join_agent", {"handle": handle})
+
+        assert result == {"answer": ["result for async-child"]}
+        # 2 records: spawn_agent_async + join_agent
+        assert len(checkpoint.syscall_log) == 2
+        join_record = checkpoint.syscall_log[1]
+        assert join_record.child_checkpoint is not None
+        assert join_record.child_checkpoint.status == "COMPLETED"
+
+    async def test_fan_out_fan_in(self, tool_registry, dam, cap_mgr, agent_registry):
+        """Spawn 3 children async, join all 3, verify all results."""
+        register_search(tool_registry)
+
+        async def researcher(proxy):
+            return f"result-{proxy.checkpoint.pid}"
+
+        agent_registry.register("researcher", researcher)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        handles = []
+        for i in range(3):
+            h = await proxy.syscall(
+                "spawn_agent_async",
+                {"agent_name": "researcher", "capabilities": {"test": 5.0}},
+            )
+            handles.append(h)
+
+        results = []
+        for h in handles:
+            r = await proxy.syscall("join_agent", {"handle": h})
+            results.append(r)
+
+        assert len(results) == 3
+        assert results[0] == "result-parent-001::researcher-0"
+        assert results[1] == "result-parent-001::researcher-1"
+        assert results[2] == "result-parent-001::researcher-2"
+
+    async def test_async_budget_delegation(
+        self, tool_registry, dam, cap_mgr, agent_registry
+    ):
+        """Budget delegated at spawn, reclaimed at join."""
+        register_search(tool_registry)
+
+        async def child_agent(proxy):
+            await proxy.syscall("search", {"query": "x"})
+            return "done"
+
+        agent_registry.register("child_agent", child_agent)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        # After spawn: 20.0 delegated from parent's 100.0
+        handle = await proxy.syscall(
+            "spawn_agent_async",
+            {"agent_name": "child_agent", "capabilities": {"test": 20.0}},
+        )
+        assert checkpoint.capabilities["test"].current_usage == 20.0
+
+        # After join: child used 1.0 of 20.0, 19.0 reclaimed
+        await proxy.syscall("join_agent", {"handle": handle})
+        assert checkpoint.capabilities["test"].current_usage == 1.0
+
+    async def test_async_deterministic_pids(self, dam, cap_mgr, agent_registry):
+        """PIDs follow parent::agent-N counting spawn_agent_async records."""
+
+        async def noop(proxy):
+            return "ok"
+
+        agent_registry.register("worker", noop)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        h0 = await proxy.syscall(
+            "spawn_agent_async",
+            {"agent_name": "worker", "capabilities": {"test": 5.0}},
+        )
+        h1 = await proxy.syscall(
+            "spawn_agent_async",
+            {"agent_name": "worker", "capabilities": {"test": 5.0}},
+        )
+
+        assert h0 == "parent-001::worker-0"
+        assert h1 == "parent-001::worker-1"
+
+        # Join both to avoid dangling tasks
+        await proxy.syscall("join_agent", {"handle": h0})
+        await proxy.syscall("join_agent", {"handle": h1})
+
+    async def test_parent_continues_between_spawn_and_join(
+        self, tool_registry, dam, cap_mgr, agent_registry
+    ):
+        """Parent can do other syscalls between spawn_async and join."""
+        register_search(tool_registry)
+
+        async def child_agent(proxy):
+            return "child done"
+
+        agent_registry.register("child_agent", child_agent)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        handle = await proxy.syscall(
+            "spawn_agent_async",
+            {"agent_name": "child_agent", "capabilities": {"test": 5.0}},
+        )
+
+        # Parent does its own work while child runs
+        search_result = await proxy.syscall("search", {"query": "parent-work"})
+        assert search_result == ["result for parent-work"]
+
+        result = await proxy.syscall("join_agent", {"handle": handle})
+        assert result == "child done"
+
+        # 3 records: spawn_async, search, join
+        assert len(checkpoint.syscall_log) == 3
+        assert checkpoint.syscall_log[0].request["tool_name"] == "spawn_agent_async"
+        assert checkpoint.syscall_log[1].request["tool_name"] == "search"
+        assert checkpoint.syscall_log[2].request["tool_name"] == "join_agent"
+
+
+class TestSpawnAsyncMixed:
+    async def test_mixed_sync_async_no_pid_collision(
+        self, tool_registry, dam, cap_mgr, agent_registry
+    ):
+        """Sync and async spawns of the same agent get unique PIDs."""
+        register_search(tool_registry)
+
+        async def worker(proxy):
+            return f"done-{proxy.checkpoint.pid}"
+
+        agent_registry.register("worker", worker)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        # Sync spawn first
+        sync_result = await proxy.syscall(
+            "spawn_agent",
+            {"agent_name": "worker", "capabilities": {"test": 5.0}},
+        )
+        assert sync_result == "done-parent-001::worker-0"
+
+        # Async spawn second — should get worker-1, not worker-0
+        handle = await proxy.syscall(
+            "spawn_agent_async",
+            {"agent_name": "worker", "capabilities": {"test": 5.0}},
+        )
+        assert handle == "parent-001::worker-1"
+
+        async_result = await proxy.syscall("join_agent", {"handle": handle})
+        assert async_result == "done-parent-001::worker-1"
+
+    async def test_async_then_sync_no_pid_collision(
+        self, tool_registry, dam, cap_mgr, agent_registry
+    ):
+        """Async spawn first, then sync spawn — PIDs stay unique."""
+        register_search(tool_registry)
+
+        async def worker(proxy):
+            return f"done-{proxy.checkpoint.pid}"
+
+        agent_registry.register("worker", worker)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        # Async spawn first
+        handle = await proxy.syscall(
+            "spawn_agent_async",
+            {"agent_name": "worker", "capabilities": {"test": 5.0}},
+        )
+        assert handle == "parent-001::worker-0"
+        await proxy.syscall("join_agent", {"handle": handle})
+
+        # Sync spawn second — should get worker-1
+        sync_result = await proxy.syscall(
+            "spawn_agent",
+            {"agent_name": "worker", "capabilities": {"test": 5.0}},
+        )
+        assert sync_result == "done-parent-001::worker-1"
+
+
+class TestSpawnAsyncErrors:
+    async def test_join_unknown_handle_raises(self, dam, cap_mgr, agent_registry):
+        """join_agent with invalid handle raises RuntimeError."""
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        with pytest.raises(RuntimeError, match="Unknown async agent handle"):
+            await proxy.syscall("join_agent", {"handle": "ghost-handle"})
+
+    async def test_async_child_exception_reclaims_budget(
+        self, dam, cap_mgr, agent_registry
+    ):
+        """If async child crashes, budget is reclaimed at join."""
+
+        async def crashing_child(proxy):
+            raise RuntimeError("async child exploded")
+
+        agent_registry.register("crashing_child", crashing_child)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        handle = await proxy.syscall(
+            "spawn_agent_async",
+            {"agent_name": "crashing_child", "capabilities": {"test": 20.0}},
+        )
+
+        with pytest.raises(RuntimeError, match="async child exploded"):
+            await proxy.syscall("join_agent", {"handle": handle})
+
+        # Budget fully reclaimed
+        assert checkpoint.capabilities["test"].current_usage == 0.0
+
+    async def test_async_no_registry_raises(self, dam, cap_mgr):
+        """spawn_agent_async without AgentRegistry raises RuntimeError."""
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry=None)
+
+        with pytest.raises(RuntimeError, match="AgentRegistry"):
+            await proxy.syscall(
+                "spawn_agent_async",
+                {"agent_name": "x", "capabilities": {}},
+            )
+
+
+class TestSpawnAsyncHITL:
+    async def test_async_child_hitl_suspends_at_join(
+        self, tool_registry, dam, cap_mgr, agent_registry
+    ):
+        """When async child suspends for HITL, parent suspends at join_agent."""
+        register_delete(tool_registry)
+
+        async def dangerous_child(proxy):
+            await proxy.syscall("delete_files", {"paths": ["/important"]})
+            return "deleted"
+
+        agent_registry.register("dangerous_child", dangerous_child)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        handle = await proxy.syscall(
+            "spawn_agent_async",
+            {
+                "agent_name": "dangerous_child",
+                "capabilities": {"test": 10.0},
+            },
+        )
+
+        with pytest.raises(SuspendInterrupt):
+            await proxy.syscall("join_agent", {"handle": handle})
+
+        assert checkpoint.status == "SUSPENDED_FOR_HITL"
+        assert checkpoint.pending_hitl["tool_name"] == "join_agent"
+        assert checkpoint.pending_hitl["child_pid"].startswith("parent-001::")
+
+        # Child checkpoint saved in join record
+        join_record = checkpoint.syscall_log[-1]
+        assert join_record.child_checkpoint is not None
+        assert join_record.child_checkpoint.status == "SUSPENDED_FOR_HITL"
+
+    async def test_async_approve_child_hitl(
+        self, tool_registry, dam, cap_mgr, agent_registry, handler
+    ):
+        """Approve async child HITL, resume, parent gets result."""
+        register_delete(tool_registry)
+
+        async def dangerous_child(proxy):
+            result = await proxy.syscall("delete_files", {"paths": ["/a"]})
+            return {"deleted": result}
+
+        agent_registry.register("dangerous_child", dangerous_child)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        handle = await proxy.syscall(
+            "spawn_agent_async",
+            {
+                "agent_name": "dangerous_child",
+                "capabilities": {"test": 10.0},
+            },
+        )
+
+        with pytest.raises(SuspendInterrupt):
+            await proxy.syscall("join_agent", {"handle": handle})
+
+        # is_child_hitl should recognize join_agent as child HITL
+        assert handler.is_child_hitl(checkpoint) is True
+
+        await handler.approve_child_hitl(checkpoint, dam, cap_mgr, agent_registry)
+
+        assert checkpoint.status == "RUNNING"
+        assert checkpoint.pending_hitl is None
+        last = checkpoint.syscall_log[-1]
+        assert last.child_checkpoint.status == "COMPLETED"
+        assert last.response == {"deleted": 1}
+
+
+class TestSpawnAsyncReplay:
+    async def test_spawn_async_replay_returns_cached_handle(
+        self, dam, cap_mgr, agent_registry
+    ):
+        """On replay, spawn_agent_async returns cached handle without launching task."""
+        checkpoint = make_checkpoint(
+            cap_mgr,
+            syscall_log=[
+                SyscallRecord(
+                    request={
+                        "tool_name": "spawn_agent_async",
+                        "arguments": {
+                            "agent_name": "worker",
+                            "capabilities": {"test": 5.0},
+                        },
+                    },
+                    response="parent-001::worker-0",
+                )
+            ],
+        )
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        handle = await proxy.syscall(
+            "spawn_agent_async",
+            {"agent_name": "worker", "capabilities": {"test": 5.0}},
+        )
+
+        assert handle == "parent-001::worker-0"
+        # No task was launched
+        assert len(proxy._async_tasks) == 0
+
+    async def test_join_replay_returns_cached_result(
+        self, dam, cap_mgr, agent_registry
+    ):
+        """On replay, join_agent returns cached result without awaiting task."""
+        child_cp = AgentCheckpoint(
+            pid="parent-001::worker-0",
+            parent_pid="parent-001",
+            status="COMPLETED",
+            agent_function_name="worker",
+            capabilities=cap_mgr.create_capabilities({"test": 5.0}),
+            result="cached async result",
+        )
+        checkpoint = make_checkpoint(
+            cap_mgr,
+            syscall_log=[
+                SyscallRecord(
+                    request={
+                        "tool_name": "spawn_agent_async",
+                        "arguments": {
+                            "agent_name": "worker",
+                            "capabilities": {"test": 5.0},
+                        },
+                    },
+                    response="parent-001::worker-0",
+                ),
+                SyscallRecord(
+                    request={
+                        "tool_name": "join_agent",
+                        "arguments": {"handle": "parent-001::worker-0"},
+                    },
+                    response="cached async result",
+                    child_checkpoint=child_cp,
+                ),
+            ],
+        )
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        handle = await proxy.syscall(
+            "spawn_agent_async",
+            {"agent_name": "worker", "capabilities": {"test": 5.0}},
+        )
+        result = await proxy.syscall("join_agent", {"handle": handle})
+
+        assert result == "cached async result"
+        assert not proxy.is_replaying
