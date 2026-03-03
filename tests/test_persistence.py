@@ -125,3 +125,67 @@ class TestListPids:
             store.save(make_checkpoint(cap_mgr, pid=pid))
         pids = store.list_pids()
         assert set(pids) == {"a", "b", "c"}
+
+
+class TestWAL:
+    def test_write_wal_entry(self, store, cap_mgr):
+        """WAL entry can be written and read back."""
+        store.write_wal(
+            pid="test-001",
+            syscall_index=0,
+            tool_name="search",
+            arguments={"query": "hello"},
+            budget_snapshot={"test": 99.0},
+        )
+        entries = store.list_pending_wal()
+        assert len(entries) == 1
+        assert entries[0]["pid"] == "test-001"
+        assert entries[0]["status"] == "PENDING"
+
+    def test_complete_wal_entry(self, store, cap_mgr):
+        """Completing a WAL entry marks it COMPLETED with result."""
+        store.write_wal(
+            pid="test-001",
+            syscall_index=0,
+            tool_name="search",
+            arguments={"query": "hello"},
+            budget_snapshot={"test": 99.0},
+        )
+        store.complete_wal(pid="test-001", syscall_index=0, result=["found"])
+        entries = store.list_pending_wal()
+        assert len(entries) == 0
+
+    def test_recover_refunds_pending_wal(self, store, cap_mgr):
+        """Recovery refunds budget for PENDING WAL entries and marks ABANDONED."""
+        checkpoint = make_checkpoint(cap_mgr)
+        checkpoint.capabilities["test"].current_usage = 1.0
+        store.save(checkpoint)
+        store.write_wal(
+            pid="test-001",
+            syscall_index=0,
+            tool_name="search",
+            arguments={"query": "hello"},
+            budget_snapshot={"test": 0.0},
+        )
+        recovered = store.recover("test-001")
+        assert recovered is not None
+        assert recovered.capabilities["test"].current_usage == 0.0
+
+    def test_recover_no_pending_returns_none(self, store, cap_mgr):
+        """Recovery returns None when no PENDING WAL entries exist."""
+        checkpoint = make_checkpoint(cap_mgr)
+        store.save(checkpoint)
+        assert store.recover("test-001") is None
+
+    def test_gc_completed_wal(self, store, cap_mgr):
+        """GC removes COMPLETED and ABANDONED WAL entries."""
+        store.write_wal(
+            pid="test-001",
+            syscall_index=0,
+            tool_name="search",
+            arguments={"query": "a"},
+            budget_snapshot={},
+        )
+        store.complete_wal(pid="test-001", syscall_index=0, result="ok")
+        store.gc_wal()
+        assert store.list_pending_wal() == []
