@@ -277,8 +277,8 @@ class TestWALIntegration:
         # WAL should be completed (no pending entries)
         assert store.list_pending_wal() == []
 
-    async def test_wal_refund_on_failure(self, registry, dam, cap_mgr, store):
-        """If tool execution fails, WAL stays PENDING for recovery."""
+    async def test_wal_abandoned_on_failure(self, registry, dam, cap_mgr, store):
+        """If tool execution fails, WAL entry is marked ABANDONED (not left PENDING)."""
 
         @castor_tool(consumes="test", cost_per_use=2.0, registry=registry)
         async def failing_tool(query: str) -> str:
@@ -291,10 +291,8 @@ class TestWALIntegration:
         with pytest.raises(RuntimeError, match="boom"):
             await proxy.syscall("failing_tool", {"query": "test"})
 
-        # WAL entry left PENDING — recovery would refund
-        pending = store.list_pending_wal()
-        assert len(pending) == 1
-        assert pending[0]["tool_name"] == "failing_tool"
+        # WAL entry should be ABANDONED, not left PENDING (prevents double refund)
+        assert store.list_pending_wal() == []
 
     async def test_no_store_no_wal(self, registry, dam, cap_mgr):
         """When no store is provided, proxy works without WAL (backwards compat)."""

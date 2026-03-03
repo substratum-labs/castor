@@ -28,14 +28,9 @@ try:
 except ImportError:
 
     class _NoopSpan:
-        def set_attribute(self, key: str, value: Any) -> None:
-            pass
-
-        def set_status(self, status: Any) -> None:
-            pass
-
-        def record_exception(self, exception: BaseException) -> None:
-            pass
+        def __getattr__(self, name: str):  # noqa: ANN204
+            """Catch-all: any unimplemented Span method becomes a noop."""
+            return lambda *args, **kwargs: None
 
         def __enter__(self):  # noqa: ANN204
             return self

@@ -201,13 +201,31 @@ class HITLHandler:
         lodge: CastorLodge | None = None,
     ) -> None:
         """Replay a child agent after its HITL was resolved."""
+        import asyncio
+
         from castor.stream.runner import AgentRunner
 
         agent_fn = agent_registry.get(child_cp.agent_function_name)
         runner = AgentRunner(
             dam, capability_manager, lodge=lodge, agent_registry=agent_registry
         )
-        child_cp = await runner.run(agent_fn, child_cp)
+
+        try:
+            child_cp = await runner.run(agent_fn, child_cp)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Child crashed — mark failed, reclaim budget, unblock parent
+            child_cp.status = "FAILED"
+            capability_manager.reclaim(
+                parent_cp.capabilities, child_cp.capabilities
+            )
+            last = parent_cp.syscall_log[-1]
+            last.child_checkpoint = child_cp
+            last.response = None
+            parent_cp.pending_hitl = None
+            parent_cp.status = "RUNNING"
+            return
 
         last = parent_cp.syscall_log[-1]
         last.child_checkpoint = child_cp

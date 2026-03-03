@@ -10,6 +10,9 @@ from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from castor.models.checkpoint import AgentCheckpoint
+from castor.observability import get_logger
+
+_logger = get_logger("castor.persistence")
 
 
 class CheckpointNotFoundError(Exception):
@@ -115,7 +118,18 @@ class CheckpointStore:
             for pid, cp in checkpoints.items():
                 if cp.parent_pid and cp.status == "RUNNING":
                     parent = checkpoints.get(cp.parent_pid)
-                    if parent and parent.status in ("COMPLETED", "FAILED"):
+                    if parent is None or parent.status in (
+                        "COMPLETED",
+                        "FAILED",
+                    ):
+                        if parent is None:
+                            _logger.warning(
+                                "gc_orphan_missing_parent",
+                                extra={
+                                    "pid": pid,
+                                    "parent_pid": cp.parent_pid,
+                                },
+                            )
                         cp.status = "FAILED"
                         cp.preemption_reason = "ORPHANED"
                         self.save(cp)
@@ -154,9 +168,26 @@ class CheckpointStore:
                 .filter_by(pid=pid, syscall_index=syscall_index, status="PENDING")
                 .first()
             )
+            if row is None:
+                _logger.warning(
+                    "wal_complete_miss",
+                    extra={"pid": pid, "syscall_index": syscall_index},
+                )
+                return
+            row.status = "COMPLETED"
+            row.result = _json.dumps(result)
+            session.commit()
+
+    def abandon_wal(self, pid: str, syscall_index: int) -> None:
+        """Mark a WAL entry as ABANDONED (tool failed or timed out)."""
+        with self._session_factory() as session:
+            row = (
+                session.query(WALRow)
+                .filter_by(pid=pid, syscall_index=syscall_index, status="PENDING")
+                .first()
+            )
             if row:
-                row.status = "COMPLETED"
-                row.result = _json.dumps(result)
+                row.status = "ABANDONED"
                 session.commit()
 
     def list_pending_wal(self) -> list[dict]:
@@ -180,7 +211,24 @@ class CheckpointStore:
         pending = [e for e in self.list_pending_wal() if e["pid"] == pid]
         if not pending:
             return None
-        checkpoint = self.load(pid)
+        try:
+            checkpoint = self.load(pid)
+        except CheckpointNotFoundError:
+            _logger.warning(
+                "wal_recover_no_checkpoint",
+                extra={"pid": pid, "pending_count": len(pending)},
+            )
+            # Abandon orphaned WAL entries — no checkpoint to recover
+            with self._session_factory() as session:
+                rows = (
+                    session.query(WALRow)
+                    .filter_by(pid=pid, status="PENDING")
+                    .all()
+                )
+                for row in rows:
+                    row.status = "ABANDONED"
+                session.commit()
+            return None
         for entry in pending:
             snapshot = entry["budget_snapshot"]
             for resource, usage_before in snapshot.items():

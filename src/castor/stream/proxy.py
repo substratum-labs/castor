@@ -186,6 +186,8 @@ class SyscallProxy:
             return response.model_dump()
 
         # ── WAL: log intent before execution ──
+        # Snapshot captures usage BEFORE deduction so recover() restores correctly.
+        wal_syscall_index = len(self.checkpoint.syscall_log)
         if self._store is not None:
             budget_snapshot = {
                 tool_meta.consumes: self.checkpoint.capabilities[
@@ -195,7 +197,7 @@ class SyscallProxy:
             }
             self._store.write_wal(
                 pid=self.checkpoint.pid,
-                syscall_index=len(self.checkpoint.syscall_log),
+                syscall_index=wal_syscall_index,
                 tool_name=tool_name,
                 arguments=validated,
                 budget_snapshot=budget_snapshot,
@@ -207,11 +209,16 @@ class SyscallProxy:
                 from concurrent.futures import ThreadPoolExecutor
 
                 loop = asyncio.get_running_loop()
-                with ThreadPoolExecutor(max_workers=1) as pool:
+                pool = ThreadPoolExecutor(max_workers=1)
+                try:
                     result = await asyncio.wait_for(
-                        loop.run_in_executor(pool, lambda: tool_meta.func(**validated)),
+                        loop.run_in_executor(
+                            pool, lambda: tool_meta.func(**validated)
+                        ),
                         timeout=tool_meta.timeout_seconds,
                     )
+                finally:
+                    pool.shutdown(wait=False, cancel_futures=True)
             elif tool_meta.timeout_seconds is not None:
                 # Async tool with timeout
                 result = await asyncio.wait_for(
@@ -221,6 +228,11 @@ class SyscallProxy:
             else:
                 result = await self._dam.execute(tool_name, validated)
         except BaseException:
+            # Abandon WAL entry — tool did not complete successfully
+            if self._store is not None:
+                self._store.abandon_wal(
+                    self.checkpoint.pid, wal_syscall_index
+                )
             # Refund the budget — execution was interrupted (CancelledError from
             # preemption) or failed (tool exception).  Without this, the record
             # is never logged, so replay will re-attempt the syscall and deduct
@@ -236,7 +248,7 @@ class SyscallProxy:
         if self._store is not None:
             self._store.complete_wal(
                 pid=self.checkpoint.pid,
-                syscall_index=len(self.checkpoint.syscall_log),
+                syscall_index=wal_syscall_index,
                 result=result,
             )
 
