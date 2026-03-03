@@ -9,11 +9,32 @@ Newest entries first within each section. Prune aggressively — git is the perm
 
 ## Current Focus
 
-- [CC] **Phase 1 COMPLETE** — All milestones (M1-M4) delivered. 170 tests, 0 lint errors. Docs regenerated for review.
+- [CC] **Phase 2.1: Rust Coprocessor** — Maturin scaffold + CapabilityManager in Rust. See `docs/PHASE2_PLAN.md`.
+
+---
+
+## Phase 2 Decisions
+
+- [CC] **Rust as coprocessor, not microkernel** — asyncio.Task.cancel() and contextvars can't cross PyO3 FFI. Rust accelerates pure computation; Python keeps async runtime.
+- [CC] **Single `kernel_call()` dispatch** — One FFI entry point mirrors `proxy.syscall()` pattern. Future-proof for new kernel ops without API changes.
+- [CC] **CapabilityManager first** — Pure arithmetic, no async, smallest blast radius. Proves PyO3 toolchain.
+- [CC] **Dam stays in Python** — `inspect.signature()`, `pydantic.create_model()`, NL error formatting all require Python runtime. Architect's "Dam → Rust" proposal rejected.
+- [CC] **Skip serde for models** — Pydantic V2 already uses Rust backend (pydantic-core). Replacing it with raw serde is marginal gain, significant API loss.
+- [CC] **Golden tests over shadow mode** — Record Python outputs, assert Rust matches exactly. No parallel implementation maintenance.
+- [CC] **rusqlite deferred to Phase 2.2** — Crash-proof journal is a safety invariant (not perf). Too much scope for 2.1.
+- [CC] **Project restructure** — `src/castor/` → `python/castor/` for clear language boundary. Maturin convention.
+- [CC] **Python prototype preserved** — Tag `v0.1.0-python` + branch `python-prototype` for reference.
 
 ---
 
 ## Milestones Delivered
+
+### M5: Streaming LLM & Preemption (Complete)
+- [CC] **StreamingLLMSyscall** — Async generator wrapper with ContextVar-based partial_work capture.
+- [CC] **Token-level preemption** — CancelledError at each chunk iteration; partial text saved to checkpoint.
+- [CC] **Proportional budget** — Refund-then-re-deduct pattern via `proxy.charge_partial()`.
+- [CC] **Resume context** — `preemption_reason`, `preemption_payload`, `partial_work` fields cleared on success.
+- [CC] **on_chunk callbacks** — Sync and async callbacks fired per chunk.
 
 ### M4: Sub-Agent Spawning & Integration (Complete)
 - [CC] **Sync spawn** — `spawn_agent` syscall: delegate caps, run child, reclaim. PID format `{parent}::{name}-{N}`.
@@ -23,6 +44,8 @@ Newest entries first within each section. Prune aggressively — git is the perm
 - [CC] **CLI for HITL** — `castor list|show|reject|modify` via `[project.scripts]`. Approve excluded (requires runtime). Child HITL guarded.
 - [CC] **PID collision fix** — shared spawn counter counts both sync and async to prevent collision.
 - [CC] **Budget leak guard** — async spawn wraps post-delegation in try/except that reclaims on failure.
+- [CC] **Child crash HITL tests** — sync and async variants verify parent unblocked, child FAILED, budget reclaimed.
+- [CC] **O(1) spawn counter** — `_spawn_count` cached at proxy init, incremented per spawn.
 
 ### M3: Castor Lodge — Context Window Management (Complete)
 - [CC] **CastorLodge** — Token monitoring, FIFO eviction, watermark threshold.
@@ -52,12 +75,11 @@ Newest entries first within each section. Prune aggressively — git is the perm
 
 _Questions needing exploration or a design decision._
 
-- **Phase 2 planning:** When to start Rust/PyO3 core? Which subsystem first (Dam validation is hot path)?
+- **Stage 2 gate:** Is ToolRegistry migration worth the effort? Need profiling data.
 - **Async spawn observability:** Child checkpoints not persisted at spawn time (only at join). Orphaned tasks on parent preemption produce warnings but are GC'd.
 - **Streaming IPC:** Children cannot stream partial results back to parent. Requires design.
 - **Bidirectional IPC:** Parent cannot send follow-up instructions to running child.
 - **Recursive spawning:** Children spawning their own sub-agents (capability cascading).
-- **Crash recovery:** If kernel process dies mid-execution, checkpoint may be stale.
 - **Multi-tenancy:** Currently single agent tree per process.
 
 ---
@@ -76,29 +98,31 @@ _Resolved questions with brief rationale._
 - [CC] **Shared PID counter** — Counts both sync and async spawns to prevent PID collision.
 - [CC] **Lodge eviction via proxy** — `sys_kernel_page_out` is a kernel tool routed through `proxy.syscall()`. Lodge never checks `is_replaying`.
 - [CC] **id() set for eviction** — Object identity matching to remove evicted messages. No copies before eviction.
+- [CC] **Phase 2 boundary** — CapabilityManager → Rust. Dam/Stream/Lodge/LLM stay Python. See `docs/PHASE2_PLAN.md`.
 
 ---
 
 ## Architecture Snapshot
 
 ```
-Agent Function
-  └── SyscallProxy  (only interface to kernel)
+Agent Function (Python)
+  └── SyscallProxy (Python — async runtime, replay, HITL)
+        ├── CastorKernel (Rust — via PyO3 kernel_call())
+        │     └── CapabilityManager — budget math, delegation
         ├── Dam        — tool registry, Pydantic validation, execution
         ├── Stream     — checkpoint/replay, HITL, persistence
         ├── Lodge      — context paging, eviction, search_memory
-        ├── Capability — budget tracking, delegation, refund
         └── LLM        — replay-safe inference wrapper
 ```
 
-**Milestones:** M1 (Dam+Cap) DONE | M2 (Stream) DONE | M3 (Lodge) DONE | M4 (Integration) DONE
+**Phase 1:** M1-M5 DONE | **Phase 2.1:** Rust CapabilityManager (in progress)
 
-**Stats:** 170 tests | 0 lint errors | 20 public API exports | Python 3.11+ / Pydantic V2 / SQLite
+**Stats:** 219 tests | 0 lint errors | Python 3.11+ / Pydantic V2 / SQLite / Rust (PyO3)
 
 ---
 
 ## Build
 
 ```bash
-uv sync && uv run pytest tests/ -v && uv run ruff check src/ tests/
+maturin develop && uv run pytest tests/ -v && uv run ruff check python/ tests/
 ```
