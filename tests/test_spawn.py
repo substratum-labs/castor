@@ -470,6 +470,92 @@ class TestChildHITLHandler:
         assert mod_record.response["status"] == "HITL_MODIFIED"
         assert "temp files" in mod_record.response["human_feedback"]
 
+    async def test_approve_child_hitl_child_crashes(
+        self, tool_registry, dam, cap_mgr, agent_registry, handler
+    ):
+        """Child crash after HITL approval unblocks parent with FAILED child."""
+        register_delete(tool_registry)
+
+        async def crashing_after_hitl(proxy):
+            await proxy.syscall("delete_files", {"paths": ["/a"]})
+            raise RuntimeError("child crashed after HITL approval")
+
+        agent_registry.register("crashing_after_hitl", crashing_after_hitl)
+
+        # Spawn child → child hits HITL → parent suspends
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        with pytest.raises(SuspendInterrupt):
+            await proxy.syscall(
+                "spawn_agent",
+                {
+                    "agent_name": "crashing_after_hitl",
+                    "capabilities": {"test": 10.0},
+                },
+            )
+
+        initial_usage = checkpoint.capabilities["test"].current_usage
+
+        # Approve child HITL — child resumes, then crashes
+        await handler.approve_child_hitl(checkpoint, dam, cap_mgr, agent_registry)
+
+        # Parent unblocked
+        assert checkpoint.status == "RUNNING"
+        assert checkpoint.pending_hitl is None
+
+        # Child marked FAILED
+        last = checkpoint.syscall_log[-1]
+        assert last.child_checkpoint.status == "FAILED"
+        assert last.response is None
+
+        # Budget reclaimed (child's unused budget returned)
+        assert checkpoint.capabilities["test"].current_usage < initial_usage
+
+    async def test_async_approve_child_hitl_child_crashes(
+        self, tool_registry, dam, cap_mgr, agent_registry, handler
+    ):
+        """If async child crashes after HITL approval at join, parent is unblocked."""
+        register_delete(tool_registry)
+
+        async def crashing_after_hitl(proxy):
+            await proxy.syscall("delete_files", {"paths": ["/a"]})
+            raise RuntimeError("async child crashed after HITL approval")
+
+        agent_registry.register("crashing_after_hitl", crashing_after_hitl)
+
+        # Async spawn → join → child hits HITL → parent suspends
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+
+        handle = await proxy.syscall(
+            "spawn_agent_async",
+            {
+                "agent_name": "crashing_after_hitl",
+                "capabilities": {"test": 10.0},
+            },
+        )
+
+        with pytest.raises(SuspendInterrupt):
+            await proxy.syscall("join_agent", {"handle": handle})
+
+        initial_usage = checkpoint.capabilities["test"].current_usage
+
+        # Approve child HITL — child resumes, then crashes
+        await handler.approve_child_hitl(checkpoint, dam, cap_mgr, agent_registry)
+
+        # Parent unblocked
+        assert checkpoint.status == "RUNNING"
+        assert checkpoint.pending_hitl is None
+
+        # Child marked FAILED
+        last = checkpoint.syscall_log[-1]
+        assert last.child_checkpoint.status == "FAILED"
+        assert last.response is None
+
+        # Budget reclaimed
+        assert checkpoint.capabilities["test"].current_usage < initial_usage
+
     async def test_approve_child_no_spawn_raises(
         self, dam, cap_mgr, agent_registry, handler
     ):

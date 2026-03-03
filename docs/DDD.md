@@ -306,11 +306,13 @@ class ToolMetadata(BaseModel):
     tool_name: str
     consumes: str                  # Capability resource type
     cost_per_use: float = 1.0
+    cost_per_token: float | None = None  # Per-token cost for streaming (proportional billing)
     requires_hitl: bool = False    # Always suspend for review
     destructive: bool = False      # Marks irreversible operations (triggers HITL)
     input_schema: dict[str, Any] = {}  # JSON Schema from function signature
     func: Callable | None = None   # The actual Python function
     is_async: bool = False         # Whether func is a coroutine function
+    timeout_seconds: float | None = None  # Tool execution timeout (CPU-bound tools)
 
 
 class ToolRegistry:
@@ -444,6 +446,7 @@ class SyscallProxy:
         llm_tool_names: set[str] | None = None,      # default: {"llm_inference"}
         kernel_tool_names: set[str] | None = None,    # default: set()
         agent_registry: AgentRegistry | None = None,
+        checkpoint_store: CheckpointStore | None = None,  # WAL crash recovery
     ) -> None
 
     @property

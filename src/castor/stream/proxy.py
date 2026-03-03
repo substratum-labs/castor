@@ -79,6 +79,13 @@ class SyscallProxy:
         self._agent_registry = agent_registry
         self._store = checkpoint_store
         self._replay_index = 0
+        # Cached spawn count — computed once from syscall_log at init, then
+        # incremented per spawn.  Avoids O(N) log scan on every spawn call.
+        self._spawn_count = sum(
+            1
+            for r in checkpoint.syscall_log
+            if r.request.get("tool_name") in {"spawn_agent", "spawn_agent_async"}
+        )
         # Async spawn tracking (live execution only, not persisted)
         self._async_tasks: dict[str, asyncio.Task[Any]] = {}
         self._async_checkpoints: dict[str, AgentCheckpoint] = {}
@@ -283,13 +290,9 @@ class SyscallProxy:
             self.checkpoint.capabilities, requested_caps
         )
 
-        # 3. Deterministic child PID (count both sync and async spawns)
-        spawn_count = sum(
-            1
-            for r in self.checkpoint.syscall_log
-            if r.request.get("tool_name") in {"spawn_agent", "spawn_agent_async"}
-        )
-        child_pid = f"{self.checkpoint.pid}::{agent_name}-{spawn_count}"
+        # 3. Deterministic child PID (cached counter — O(1) per spawn)
+        child_pid = f"{self.checkpoint.pid}::{agent_name}-{self._spawn_count}"
+        self._spawn_count += 1
 
         # 4. Create child checkpoint
         child_cp = AgentCheckpoint(
@@ -369,13 +372,9 @@ class SyscallProxy:
         )
 
         try:
-            # 3. Deterministic child PID (count both sync and async spawns)
-            spawn_count = sum(
-                1
-                for r in self.checkpoint.syscall_log
-                if r.request.get("tool_name") in {"spawn_agent", "spawn_agent_async"}
-            )
-            child_pid = f"{self.checkpoint.pid}::{agent_name}-{spawn_count}"
+            # 3. Deterministic child PID (cached counter — O(1) per spawn)
+            child_pid = f"{self.checkpoint.pid}::{agent_name}-{self._spawn_count}"
+            self._spawn_count += 1
 
             # 4. Create child checkpoint
             child_cp = AgentCheckpoint(
