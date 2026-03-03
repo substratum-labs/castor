@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING, Any
 from castor.capability.manager import CapabilityManager
 from castor.dam.validator import CastorDam
 from castor.models.checkpoint import AgentCheckpoint, SuspendInterrupt
+from castor.observability import get_logger
 from castor.stream.proxy import SyscallProxy
+
+_logger = get_logger("castor.stream")
 
 if TYPE_CHECKING:
     from castor.lodge.core import CastorLodge
@@ -55,6 +58,13 @@ class AgentRunner:
         """
         self._current_checkpoint = checkpoint
         checkpoint.status = "RUNNING"
+        _logger.info(
+            "agent_start",
+            extra={
+                "pid": checkpoint.pid,
+                "agent": checkpoint.agent_function_name,
+            },
+        )
         kernel_tools = self._lodge.kernel_tool_names if self._lodge else set()
         proxy = SyscallProxy(
             checkpoint,
@@ -77,6 +87,13 @@ class AgentRunner:
             # preemption_reason/payload were set before cancel()
             raise
 
+        _logger.info(
+            "agent_complete",
+            extra={
+                "pid": checkpoint.pid,
+                "status": checkpoint.status,
+            },
+        )
         return checkpoint
 
     async def run_as_task(

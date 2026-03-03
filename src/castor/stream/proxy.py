@@ -3,22 +3,32 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
 from castor.capability.manager import CapabilityExhaustedError, CapabilityManager
 from castor.dam.validator import CastorDam
+from castor.observability import get_logger, get_meter
 
 if TYPE_CHECKING:
     from castor.lodge.core import CastorLodge
     from castor.stream.agent_registry import AgentRegistry
+    from castor.stream.persistence import CheckpointStore
 from castor.models.capability import SyscallResponse
 from castor.models.checkpoint import (
     AgentCheckpoint,
     SuspendInterrupt,
     SyscallRecord,
 )
+
+_logger = get_logger("castor.stream")
+_meter = get_meter("castor.stream")
+_syscall_counter = _meter.create_counter("castor_syscalls_total")
+_syscall_duration = _meter.create_histogram("castor_syscall_duration_seconds")
+_hitl_counter = _meter.create_counter("castor_hitl_total")
+_spawn_counter = _meter.create_counter("castor_spawns_total")
 
 
 class ReplayDivergenceError(Exception):
@@ -58,6 +68,7 @@ class SyscallProxy:
         llm_tool_names: set[str] | None = None,
         kernel_tool_names: set[str] | None = None,
         agent_registry: AgentRegistry | None = None,
+        checkpoint_store: CheckpointStore | None = None,
     ) -> None:
         self.checkpoint = checkpoint
         self._dam = dam
@@ -66,6 +77,7 @@ class SyscallProxy:
         self._llm_tool_names = llm_tool_names or {"llm_inference"}
         self._kernel_tool_names = kernel_tool_names or set()
         self._agent_registry = agent_registry
+        self._store = checkpoint_store
         self._replay_index = 0
         # Async spawn tracking (live execution only, not persisted)
         self._async_tasks: dict[str, asyncio.Task[Any]] = {}
@@ -86,6 +98,7 @@ class SyscallProxy:
         4. Fast path: deduct capability, execute, log result
         """
         request = {"tool_name": tool_name, "arguments": arguments}
+        start = time.perf_counter()
 
         # ── Lodge eviction hook: run before LLM tools (live execution only) ──
         if (
@@ -109,6 +122,14 @@ class SyscallProxy:
             if record.request != request:
                 raise ReplayDivergenceError(self._replay_index, record.request, request)
             self._replay_index += 1
+            _logger.debug(
+                "replay_hit",
+                extra={
+                    "pid": self.checkpoint.pid,
+                    "tool": tool_name,
+                    "index": self._replay_index - 1,
+                },
+            )
             return record.response
 
         # ── Spawn/join intercepts: kernel-internal, bypass Dam ──
@@ -135,6 +156,14 @@ class SyscallProxy:
 
         # ── Slow Path: suspend for HITL ──
         if tool_meta.requires_hitl or tool_meta.destructive:
+            _hitl_counter.add(1, {"action": "suspend"})
+            _logger.info(
+                "hitl_suspend",
+                extra={
+                    "pid": self.checkpoint.pid,
+                    "tool": tool_name,
+                },
+            )
             self.checkpoint.pending_hitl = request
             self.checkpoint.status = "SUSPENDED_FOR_HITL"
             raise SuspendInterrupt(self.checkpoint)
@@ -156,9 +185,54 @@ class SyscallProxy:
             )
             return response.model_dump()
 
+        # ── WAL: log intent before execution ──
+        # Snapshot captures usage BEFORE deduction so recover() restores correctly.
+        wal_syscall_index = len(self.checkpoint.syscall_log)
+        if self._store is not None:
+            budget_snapshot = {
+                tool_meta.consumes: self.checkpoint.capabilities[
+                    tool_meta.consumes
+                ].current_usage
+                - tool_meta.cost_per_use
+            }
+            self._store.write_wal(
+                pid=self.checkpoint.pid,
+                syscall_index=wal_syscall_index,
+                tool_name=tool_name,
+                arguments=validated,
+                budget_snapshot=budget_snapshot,
+            )
+
         try:
-            result = await self._dam.execute(tool_name, validated)
+            if tool_meta.timeout_seconds is not None and not tool_meta.is_async:
+                # Sync tool with timeout: run in thread executor
+                from concurrent.futures import ThreadPoolExecutor
+
+                loop = asyncio.get_running_loop()
+                pool = ThreadPoolExecutor(max_workers=1)
+                try:
+                    result = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            pool, lambda: tool_meta.func(**validated)
+                        ),
+                        timeout=tool_meta.timeout_seconds,
+                    )
+                finally:
+                    pool.shutdown(wait=False, cancel_futures=True)
+            elif tool_meta.timeout_seconds is not None:
+                # Async tool with timeout
+                result = await asyncio.wait_for(
+                    self._dam.execute(tool_name, validated),
+                    timeout=tool_meta.timeout_seconds,
+                )
+            else:
+                result = await self._dam.execute(tool_name, validated)
         except BaseException:
+            # Abandon WAL entry — tool did not complete successfully
+            if self._store is not None:
+                self._store.abandon_wal(
+                    self.checkpoint.pid, wal_syscall_index
+                )
             # Refund the budget — execution was interrupted (CancelledError from
             # preemption) or failed (tool exception).  Without this, the record
             # is never logged, so replay will re-attempt the syscall and deduct
@@ -169,6 +243,26 @@ class SyscallProxy:
                 tool_meta.cost_per_use,
             )
             raise
+
+        # ── WAL: mark complete after execution ──
+        if self._store is not None:
+            self._store.complete_wal(
+                pid=self.checkpoint.pid,
+                syscall_index=wal_syscall_index,
+                result=result,
+            )
+
+        elapsed = time.perf_counter() - start
+        _syscall_counter.add(1, {"tool": tool_name, "status": "success"})
+        _syscall_duration.record(elapsed, {"tool": tool_name})
+        _logger.info(
+            "syscall_complete",
+            extra={
+                "pid": self.checkpoint.pid,
+                "tool": tool_name,
+                "latency_ms": elapsed * 1000,
+            },
+        )
 
         self._append_record(SyscallRecord(request=request, response=result))
         return result
@@ -238,6 +332,15 @@ class SyscallProxy:
         self._cap_mgr.reclaim(self.checkpoint.capabilities, child_cp.capabilities)
 
         # 7. Log and return
+        _spawn_counter.add(1, {"type": "sync"})
+        _logger.info(
+            "spawn",
+            extra={
+                "pid": self.checkpoint.pid,
+                "child_pid": child_cp.pid,
+                "type": "sync",
+            },
+        )
         self._append_record(
             SyscallRecord(
                 request=request,
@@ -288,9 +391,7 @@ class SyscallProxy:
             )
 
             # 5. Launch child as background task
-            child_kernel_tools = (
-                self._lodge.kernel_tool_names if self._lodge else set()
-            )
+            child_kernel_tools = self._lodge.kernel_tool_names if self._lodge else set()
             child_proxy = SyscallProxy(
                 checkpoint=child_cp,
                 dam=self._dam,
@@ -314,6 +415,10 @@ class SyscallProxy:
                     child_cp.status = "FAILED"
                     raise
 
+            # Persist child checkpoint for observability
+            if self._store is not None:
+                self._store.save(child_cp)
+
             task = asyncio.create_task(_run_child())
             self._async_tasks[child_pid] = task
             self._async_checkpoints[child_pid] = child_cp
@@ -322,6 +427,15 @@ class SyscallProxy:
             raise
 
         # 6. Log spawn and return handle immediately
+        _spawn_counter.add(1, {"type": "async"})
+        _logger.info(
+            "spawn",
+            extra={
+                "pid": self.checkpoint.pid,
+                "child_pid": child_pid,
+                "type": "async",
+            },
+        )
         self._append_record(SyscallRecord(request=request, response=child_pid))
         return child_pid
 

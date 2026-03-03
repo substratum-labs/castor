@@ -18,6 +18,7 @@ def castor_tool(
     requires_hitl: bool = False,
     destructive: bool = False,
     registry: ToolRegistry | None = None,
+    timeout_seconds: float | None = None,
 ) -> Callable:
     """Register a Python function as a Castor tool.
 
@@ -40,6 +41,7 @@ def castor_tool(
             input_schema=input_schema,
             func=func,
             is_async=is_async,
+            timeout_seconds=timeout_seconds,
         )
         target_registry.register(metadata)
 

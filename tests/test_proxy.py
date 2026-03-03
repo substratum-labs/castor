@@ -258,6 +258,107 @@ class TestBudgetRefundOnFailure:
         assert len(checkpoint.syscall_log) == 1
 
 
+class TestWALIntegration:
+    @pytest.fixture
+    def store(self, tmp_path):
+        from castor.stream.persistence import CheckpointStore
+
+        return CheckpointStore(f"sqlite:///{tmp_path / 'test.db'}")
+
+    async def test_wal_written_before_execution(self, registry, dam, cap_mgr, store):
+        """WAL entry is written before tool executes."""
+        register_search(registry)
+        checkpoint = make_checkpoint(cap_mgr)
+        store.save(checkpoint)
+        proxy = SyscallProxy(checkpoint, dam, cap_mgr, checkpoint_store=store)
+
+        await proxy.syscall("search", {"query": "hello"})
+
+        # WAL should be completed (no pending entries)
+        assert store.list_pending_wal() == []
+
+    async def test_wal_abandoned_on_failure(self, registry, dam, cap_mgr, store):
+        """If tool execution fails, WAL entry is marked ABANDONED (not left PENDING)."""
+
+        @castor_tool(consumes="test", cost_per_use=2.0, registry=registry)
+        async def failing_tool(query: str) -> str:
+            raise RuntimeError("boom")
+
+        checkpoint = make_checkpoint(cap_mgr)
+        store.save(checkpoint)
+        proxy = SyscallProxy(checkpoint, dam, cap_mgr, checkpoint_store=store)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await proxy.syscall("failing_tool", {"query": "test"})
+
+        # WAL entry should be ABANDONED, not left PENDING (prevents double refund)
+        assert store.list_pending_wal() == []
+
+    async def test_no_store_no_wal(self, registry, dam, cap_mgr):
+        """When no store is provided, proxy works without WAL (backwards compat)."""
+        register_search(registry)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = SyscallProxy(checkpoint, dam, cap_mgr)  # no store
+
+        result = await proxy.syscall("search", {"query": "hello"})
+        assert result == ["result for hello"]
+
+
+class TestToolTimeout:
+    async def test_async_tool_timeout(self, registry, dam, cap_mgr):
+        """Async tool exceeding timeout raises asyncio.TimeoutError, budget refunded."""
+
+        @castor_tool(
+            consumes="test",
+            cost_per_use=1.0,
+            timeout_seconds=0.1,
+            registry=registry,
+        )
+        async def slow_tool(query: str) -> str:
+            await asyncio.sleep(10)
+            return "never reached"
+
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = SyscallProxy(checkpoint, dam, cap_mgr)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await proxy.syscall("slow_tool", {"query": "test"})
+
+        # Budget refunded
+        assert checkpoint.capabilities["test"].current_usage == 0.0
+
+    async def test_sync_tool_timeout(self, registry, dam, cap_mgr):
+        """Sync CPU-bound tool with timeout runs in executor and times out."""
+        import time
+
+        @castor_tool(
+            consumes="test",
+            cost_per_use=1.0,
+            timeout_seconds=0.1,
+            registry=registry,
+        )
+        def cpu_bound_tool(query: str) -> str:
+            time.sleep(10)
+            return "never reached"
+
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = SyscallProxy(checkpoint, dam, cap_mgr)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await proxy.syscall("cpu_bound_tool", {"query": "test"})
+
+        assert checkpoint.capabilities["test"].current_usage == 0.0
+
+    async def test_no_timeout_default(self, registry, dam, cap_mgr):
+        """Tools without timeout_seconds work normally (backwards compat)."""
+        register_search(registry)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = SyscallProxy(checkpoint, dam, cap_mgr)
+
+        result = await proxy.syscall("search", {"query": "hello"})
+        assert result == ["result for hello"]
+
+
 class TestReplayThenLive:
     async def test_replay_then_live_execution(self, registry, dam, cap_mgr):
         """After replaying cached syscalls, new ones execute live."""

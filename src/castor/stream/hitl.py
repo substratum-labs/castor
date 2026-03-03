@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from castor.capability.manager import CapabilityManager
 from castor.dam.validator import CastorDam
-from castor.models.checkpoint import AgentCheckpoint, SuspendInterrupt, SyscallRecord
+from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
 
 if TYPE_CHECKING:
     from castor.lodge.core import CastorLodge
@@ -201,33 +201,41 @@ class HITLHandler:
         lodge: CastorLodge | None = None,
     ) -> None:
         """Replay a child agent after its HITL was resolved."""
-        from castor.stream.proxy import SyscallProxy
+        import asyncio
+
+        from castor.stream.runner import AgentRunner
 
         agent_fn = agent_registry.get(child_cp.agent_function_name)
-        kernel_tool_names = lodge.kernel_tool_names if lodge else set()
-        child_proxy = SyscallProxy(
-            checkpoint=child_cp,
-            dam=dam,
-            capability_manager=capability_manager,
-            lodge=lodge,
-            kernel_tool_names=kernel_tool_names,
-            agent_registry=agent_registry,
+        runner = AgentRunner(
+            dam, capability_manager, lodge=lodge, agent_registry=agent_registry
         )
 
         try:
-            child_result = await agent_fn(child_proxy)
-            child_cp.result = child_result
-            child_cp.status = "COMPLETED"
-        except SuspendInterrupt:
-            # Child suspended again — parent stays suspended
+            child_cp = await runner.run(agent_fn, child_cp)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Child crashed — mark failed, reclaim budget, unblock parent
+            child_cp.status = "FAILED"
+            capability_manager.reclaim(
+                parent_cp.capabilities, child_cp.capabilities
+            )
             last = parent_cp.syscall_log[-1]
             last.child_checkpoint = child_cp
+            last.response = None
+            parent_cp.pending_hitl = None
+            parent_cp.status = "RUNNING"
+            return
+
+        last = parent_cp.syscall_log[-1]
+        last.child_checkpoint = child_cp
+
+        if child_cp.status == "SUSPENDED_FOR_HITL":
+            # Child suspended again — parent stays suspended
             return
 
         # Child completed — reclaim budget and update parent
         capability_manager.reclaim(parent_cp.capabilities, child_cp.capabilities)
-        last = parent_cp.syscall_log[-1]
         last.response = child_cp.result
-        last.child_checkpoint = child_cp
         parent_cp.pending_hitl = None
         parent_cp.status = "RUNNING"

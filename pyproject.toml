@@ -25,6 +25,12 @@ dependencies = [
     "sqlalchemy>=2.0",
 ]
 
+[project.optional-dependencies]
+observability = [
+    "opentelemetry-api>=1.20",
+    "opentelemetry-sdk>=1.20",
+]
+
 [project.scripts]
 castor = "castor.cli:main"
 
@@ -39,6 +45,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "ruff>=0.8",
+    "hypothesis>=6.0",
 ]
 
 [build-system]

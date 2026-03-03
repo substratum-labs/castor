@@ -912,6 +912,39 @@ class TestSpawnAsyncHITL:
         assert last.response == {"deleted": 1}
 
 
+class TestAsyncSpawnPersistence:
+    async def test_child_persisted_at_spawn(
+        self, tool_registry, dam, cap_mgr, agent_registry, tmp_path
+    ):
+        """Child checkpoint is persisted to store immediately at async spawn."""
+        from castor.stream.persistence import CheckpointStore
+
+        store = CheckpointStore(f"sqlite:///{tmp_path / 'test.db'}")
+
+        async def child_agent(proxy):
+            return "child done"
+
+        agent_registry.register("child_agent", child_agent)
+        checkpoint = make_checkpoint(cap_mgr)
+        store.save(checkpoint)
+        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy._store = store  # inject store
+
+        handle = await proxy.syscall(
+            "spawn_agent_async",
+            {"agent_name": "child_agent", "capabilities": {"test": 10.0}},
+        )
+
+        # Child should be in the store before join
+        children = store.list_by_parent("parent-001")
+        assert len(children) == 1
+        assert children[0].pid == handle
+        assert children[0].status == "RUNNING"
+
+        # Clean up
+        await proxy.syscall("join_agent", {"handle": handle})
+
+
 class TestSpawnAsyncReplay:
     async def test_spawn_async_replay_returns_cached_handle(
         self, dam, cap_mgr, agent_registry

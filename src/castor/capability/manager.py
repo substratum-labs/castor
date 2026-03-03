@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from castor.models.capability import Capability
+from castor.observability import get_logger
+
+_logger = get_logger("castor.capability")
 
 
 class CapabilityExhaustedError(Exception):
@@ -66,6 +69,14 @@ class CapabilityManager:
             raise CapabilityExhaustedError(resource_type, cost, remaining)
 
         cap.current_usage += cost
+        _logger.debug(
+            "budget_deduct",
+            extra={
+                "resource": resource_type,
+                "cost": cost,
+                "remaining": cap.max_budget - cap.current_usage,
+            },
+        )
 
     def delegate(
         self,
@@ -103,6 +114,10 @@ class CapabilityManager:
         cap = capabilities.get(resource_type)
         if cap is not None:
             cap.current_usage = max(0.0, cap.current_usage - cost)
+            _logger.debug(
+                "budget_refund",
+                extra={"resource": resource_type, "cost": cost},
+            )
 
     def reclaim(
         self,

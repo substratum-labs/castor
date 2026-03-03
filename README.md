@@ -4,6 +4,10 @@
   <img src="assets/logo.png" alt="Castor Logo" width="300" />
 </p>
 
+[![CI](https://github.com/substrate-lab/castor/actions/workflows/ci.yml/badge.svg)](https://github.com/substrate-lab/castor/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+
 A secure microkernel for LLM Agents. Castor cages LLMs inside a deterministic execution engine with strongly-typed tool validation, capability-based security budgets, and preemptive human-in-the-loop (HITL) interrupts.
 
 Castor is a **kernel**, not an agent framework. It provides core primitives that agent frameworks and custom agents integrate with. Your agent brings its own LLM client — Castor controls the side effects.
@@ -23,6 +27,39 @@ pip install castor
 # or with uv
 uv add castor
 ```
+
+```python
+from castor import (
+    castor_tool, CastorDam, CapabilityManager,
+    AgentRunner, AgentCheckpoint, SyscallProxy, ToolRegistry,
+)
+
+registry = ToolRegistry()
+
+@castor_tool(consumes="api", cost_per_use=1.0, registry=registry)
+async def search(query: str) -> list[str]:
+    return [f"Result for: {query}"]
+
+dam = CastorDam(registry)
+cap_mgr = CapabilityManager()
+caps = cap_mgr.create_capabilities({"api": 50.0})
+
+async def my_agent(proxy: SyscallProxy) -> str:
+    results = await proxy.syscall("search", {"query": "hello"})
+    return f"Found: {results}"
+
+checkpoint = AgentCheckpoint(
+    pid="agent-001", status="RUNNING",
+    agent_function_name="my_agent", capabilities=caps,
+)
+runner = AgentRunner(dam, cap_mgr)
+# result = asyncio.run(runner.run(my_agent, checkpoint))
+```
+
+See [examples/quickstart.py](examples/quickstart.py) for a runnable example with HITL.
+
+<details>
+<summary>Detailed example with HITL and destructive tools</summary>
 
 ```python
 import asyncio
@@ -69,6 +106,8 @@ async def main():
 asyncio.run(main())
 ```
 
+</details>
+
 ## Architecture
 
 Castor has four kernel subsystems:
@@ -78,7 +117,7 @@ Castor has four kernel subsystems:
 | **Dam** (`castor.dam`) | Tool registry & Pydantic validation | Complete |
 | **Stream** (`castor.stream`) | Checkpoint/replay scheduler, HITL, preemption | Complete |
 | **Capability** (`castor.capability`) | Budget tracking & delegation | Complete |
-| **Lodge** (`castor.lodge`) | Context window memory management | Planned |
+| **Lodge** (`castor.lodge`) | Context window memory management | Complete |
 
 All side effects go through `await proxy.syscall(tool_name, args)`. The kernel decides: replay from cache, execute (fast path), or suspend for human approval (slow path).
 
@@ -90,7 +129,7 @@ Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 git clone https://github.com/substrate-lab/castor.git
 cd castor
 uv sync
-uv run pytest          # 90 tests
+uv run pytest          # 185+ tests
 uv run ruff check src/ # lint
 uv run ruff format src/ # format
 ```
