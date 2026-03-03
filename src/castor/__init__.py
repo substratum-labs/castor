@@ -8,7 +8,7 @@ from castor.api_status import experimental, stable
 from castor.capability.manager import CapabilityManager
 from castor.dam.decorator import castor_tool
 from castor.dam.validator import CastorDam
-from castor.llm.wrapper import LLMSyscall
+from castor.llm.wrapper import LLMSyscall, StreamingLLMSyscall
 from castor.lodge.core import CastorLodge
 from castor.models.capability import Capability, SyscallRequest, SyscallResponse
 from castor.models.checkpoint import (
@@ -40,6 +40,7 @@ stable(CastorMessage)
 
 experimental(CastorLodge)
 experimental(LLMSyscall)
+experimental(StreamingLLMSyscall)
 experimental(AgentRegistry)
 experimental(castor_agent)
 experimental(AgentNotFoundError)
@@ -57,6 +58,7 @@ __all__ = [
     "CheckpointStore",
     "HITLHandler",
     "LLMSyscall",
+    "StreamingLLMSyscall",
     "SuspendInterrupt",
     "SyscallProxy",
     "SyscallRecord",

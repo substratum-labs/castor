@@ -24,6 +24,7 @@ class ToolMetadata(BaseModel):
     tool_name: str
     consumes: str
     cost_per_use: float = 1.0
+    cost_per_token: float | None = None
     requires_hitl: bool = False
     destructive: bool = False
     input_schema: dict[str, Any] = {}

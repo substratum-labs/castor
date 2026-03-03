@@ -212,9 +212,7 @@ class SyscallProxy:
                 pool = ThreadPoolExecutor(max_workers=1)
                 try:
                     result = await asyncio.wait_for(
-                        loop.run_in_executor(
-                            pool, lambda: tool_meta.func(**validated)
-                        ),
+                        loop.run_in_executor(pool, lambda: tool_meta.func(**validated)),
                         timeout=tool_meta.timeout_seconds,
                     )
                 finally:
@@ -230,9 +228,7 @@ class SyscallProxy:
         except BaseException:
             # Abandon WAL entry — tool did not complete successfully
             if self._store is not None:
-                self._store.abandon_wal(
-                    self.checkpoint.pid, wal_syscall_index
-                )
+                self._store.abandon_wal(self.checkpoint.pid, wal_syscall_index)
             # Refund the budget — execution was interrupted (CancelledError from
             # preemption) or failed (tool exception).  Without this, the record
             # is never logged, so replay will re-attempt the syscall and deduct
@@ -503,6 +499,46 @@ class SyscallProxy:
             "child_pid": child_cp.pid,
         }
         self.checkpoint.status = "SUSPENDED_FOR_HITL"
+
+    # ── Preemption context helpers ──
+
+    @property
+    def preemption_context(self) -> dict[str, Any] | None:
+        """Return preemption metadata if this is a resume after preemption.
+
+        Returns ``None`` if the checkpoint was not preempted.  Otherwise
+        returns a dict with ``reason``, ``payload``, and ``partial_work``.
+        The agent can inspect this on resume to adapt its behaviour.
+        """
+        if self.checkpoint.preemption_reason is None:
+            return None
+        return {
+            "reason": self.checkpoint.preemption_reason,
+            "payload": self.checkpoint.preemption_payload,
+            "partial_work": self.checkpoint.partial_work,
+        }
+
+    def clear_preemption_context(self) -> None:
+        """Clear preemption fields after the agent has consumed them."""
+        self.checkpoint.preemption_reason = None
+        self.checkpoint.preemption_payload = None
+        self.checkpoint.partial_work = None
+
+    def charge_partial(self, resource_type: str, cost: float) -> None:
+        """Re-deduct actual cost after an automatic full refund.
+
+        When a streaming tool is cancelled mid-execution, the proxy's
+        ``BaseException`` handler refunds the full ``cost_per_use``.  The
+        streaming wrapper then calls this method to charge the actual
+        amount consumed (e.g. ``tokens * cost_per_token``).
+        """
+        try:
+            self._cap_mgr.deduct(self.checkpoint.capabilities, resource_type, cost)
+        except CapabilityExhaustedError:
+            # Budget is already exhausted — charge whatever remains.
+            cap = self.checkpoint.capabilities.get(resource_type)
+            if cap is not None:
+                cap.current_usage = cap.max_budget
 
     def _append_record(self, record: SyscallRecord) -> None:
         """Append a record to the log and advance replay index to stay in sync."""

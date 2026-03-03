@@ -78,6 +78,11 @@ class AgentRunner:
         try:
             checkpoint.result = await agent_fn(proxy)
             checkpoint.status = "COMPLETED"
+            # Clear stale preemption context on successful completion so it
+            # doesn't leak into future run cycles on the same checkpoint.
+            checkpoint.preemption_reason = None
+            checkpoint.preemption_payload = None
+            checkpoint.partial_work = None
         except SuspendInterrupt:
             # Cooperative suspend — checkpoint already set by proxy
             pass

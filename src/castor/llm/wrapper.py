@@ -1,4 +1,4 @@
-"""LLMSyscall: route LLM inference through the SyscallProxy for replay safety.
+"""LLM syscall wrappers: route LLM inference through the SyscallProxy.
 
 LLM API calls are non-deterministic — the same prompt can return different text
 on every invocation.  If an agent calls an LLM client directly (bypassing the
@@ -6,41 +6,79 @@ proxy), the response is never logged in the ``syscall_log``.  On resume/replay
 the live call re-executes, produces different text, and the agent issues a
 different syscall sequence, triggering ``ReplayDivergenceError``.
 
-This module provides ``LLMSyscall``, a thin helper that registers a
-``@castor_tool`` backed by a user-supplied async callable and exposes a
-convenience ``infer()`` method that delegates to ``proxy.syscall()``.
+This module provides two helpers:
 
-Usage::
+* ``LLMSyscall`` — wraps a ``call_fn`` that returns a complete string.
+* ``StreamingLLMSyscall`` — wraps a ``stream_fn`` (async generator yielding
+  chunks).  Each chunk iteration is an ``await`` point, enabling true
+  token-level preemption via ``asyncio.Task.cancel()``.  On cancellation,
+  accumulated partial text is saved to ``checkpoint.partial_work``.
+
+Usage (non-streaming)::
 
     from castor.llm import LLMSyscall
 
-    # 1. Define your LLM client callback
     async def call_openai(model: str, prompt: str) -> str:
         resp = await openai_client.chat.completions.create(
             model=model, messages=[{"role": "user", "content": prompt}]
         )
         return resp.choices[0].message.content
 
-    # 2. Create the syscall wrapper (registers the tool in the registry)
     llm = LLMSyscall(registry, call_fn=call_openai, consumes="api_usd",
                       cost_per_use=0.03)
 
-    # 3. Inside your agent function, call via the proxy
     async def my_agent(proxy):
         answer = await llm.infer(proxy, model="gpt-4", prompt="Summarise X")
-        ...
+
+Usage (streaming — token-level preemption)::
+
+    from castor.llm import StreamingLLMSyscall
+
+    async def stream_openai(model: str, prompt: str):
+        stream = await openai_client.chat.completions.create(
+            model=model, messages=[{"role": "user", "content": prompt}],
+            stream=True,
+        )
+        async for chunk in stream:
+            if chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
+    llm = StreamingLLMSyscall(registry, stream_fn=stream_openai,
+                               consumes="api_usd", cost_per_use=0.03)
+
+    async def my_agent(proxy):
+        answer = await llm.infer(proxy, model="gpt-4", prompt="Summarise X")
+        # On preemption mid-stream: checkpoint.partial_work has accumulated text
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+import contextvars
+import functools
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from castor.dam.registry import ToolMetadata, ToolRegistry
+from castor.observability import get_meter
 from castor.stream.proxy import SyscallProxy
 
 # Default tool name used when registering the LLM inference syscall.
 DEFAULT_TOOL_NAME = "llm_inference"
+DEFAULT_STREAMING_TOOL_NAME = "llm_inference_streaming"
+
+# ── ContextVars for per-task streaming state ──
+# Each asyncio.Task gets its own copy, so concurrent agents sharing one
+# StreamingLLMSyscall instance won't collide.
+_streaming_partial: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "castor_streaming_partial", default=""
+)
+_streaming_token_count: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "castor_streaming_token_count", default=0
+)
+
+_meter = get_meter("castor.llm")
+_streaming_tokens_counter = _meter.create_counter("castor_llm_tokens_streamed")
 
 
 class LLMSyscall:
@@ -102,3 +140,140 @@ class LLMSyscall:
         LLM provider.
         """
         return await proxy.syscall(self._tool_name, kwargs)
+
+
+class StreamingLLMSyscall:
+    """Wraps an async-generator LLM streaming client as a Castor syscall.
+
+    Unlike ``LLMSyscall`` (which accepts a ``call_fn`` returning a complete
+    string), this accepts a ``stream_fn`` — an async generator that yields
+    string chunks.  Each chunk iteration is an ``await`` point, enabling
+    true **token-level preemption** via ``asyncio.Task.cancel()``.
+
+    On ``CancelledError``, accumulated text is saved to
+    ``checkpoint.partial_work`` so the agent can inspect it on resume.
+
+    Parameters
+    ----------
+    registry:
+        The ``ToolRegistry`` to register the tool in.
+    stream_fn:
+        An async generator ``async def(model, prompt, ...) -> AsyncIterator[str]``
+        that yields string chunks from the LLM API.
+    consumes:
+        Capability resource type deducted per call (e.g. ``"api_usd"``).
+    cost_per_use:
+        Flat cost deducted before execution (same as ``LLMSyscall``).
+    cost_per_token:
+        Optional per-token cost.  When set and a call is cancelled mid-stream,
+        only the actual tokens consumed are charged (via ``proxy.charge_partial``).
+    tool_name:
+        Override the registered tool name (default ``"llm_inference_streaming"``).
+    on_chunk:
+        Synchronous callback ``(chunk: str, accumulated: str) -> None`` fired
+        after each chunk.  Keep this fast — it runs on the event loop.
+    on_chunk_async:
+        Async callback ``(chunk: str, accumulated: str) -> None`` fired after
+        each chunk.  May perform I/O (e.g. content safety check).
+    """
+
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        stream_fn: Callable[..., AsyncIterator[str]],
+        consumes: str = "api_usd",
+        cost_per_use: float = 1.0,
+        cost_per_token: float | None = None,
+        tool_name: str = DEFAULT_STREAMING_TOOL_NAME,
+        on_chunk: Callable[[str, str], None] | None = None,
+        on_chunk_async: Callable[[str, str], Any] | None = None,
+    ) -> None:
+        self._tool_name = tool_name
+        self._stream_fn = stream_fn
+        self._on_chunk = on_chunk
+        self._on_chunk_async = on_chunk_async
+        self._consumes = consumes
+        self._cost_per_use = cost_per_use
+        self._cost_per_token = cost_per_token
+
+        # Build the accumulating wrapper that will be registered as the tool.
+        # It iterates the async generator, accumulates chunks into a full
+        # response string, and updates ContextVars for partial-work capture.
+        _on_chunk_sync = on_chunk
+        _on_chunk_awaitable = on_chunk_async
+        _tool = tool_name
+
+        @functools.wraps(stream_fn)
+        async def _accumulate(**kwargs: Any) -> str:
+            accumulated = ""
+            token_count = 0
+            async for chunk in stream_fn(**kwargs):
+                accumulated += chunk
+                token_count += 1
+                # Update ContextVars so CancelledError handler can read them.
+                # set() is synchronous — cannot be interrupted.
+                _streaming_partial.set(accumulated)
+                _streaming_token_count.set(token_count)
+                # Observability
+                _streaming_tokens_counter.add(1, {"tool": _tool})
+                # Callbacks
+                if _on_chunk_sync is not None:
+                    _on_chunk_sync(chunk, accumulated)
+                if _on_chunk_awaitable is not None:
+                    await _on_chunk_awaitable(chunk, accumulated)
+            return accumulated
+
+        # Introspect stream_fn for Pydantic input schema (same as LLMSyscall).
+        from castor.dam.decorator import _generate_schema
+
+        try:
+            schema = _generate_schema(stream_fn)
+        except (AttributeError, TypeError):
+            schema = {}
+
+        metadata = ToolMetadata(
+            tool_name=tool_name,
+            consumes=consumes,
+            cost_per_use=cost_per_use,
+            cost_per_token=cost_per_token,
+            requires_hitl=False,
+            destructive=False,
+            input_schema=schema,
+            func=_accumulate,
+            is_async=True,
+        )
+        registry.register(metadata)
+
+    async def infer(self, proxy: SyscallProxy, **kwargs: Any) -> Any:
+        """Issue a streaming LLM inference call through the proxy.
+
+        Keyword arguments are forwarded as the syscall ``arguments`` dict.
+        During replay the cached response is returned without calling the
+        LLM provider (identical to ``LLMSyscall``).
+
+        On ``CancelledError``: saves accumulated partial text to
+        ``checkpoint.partial_work`` and charges proportional budget
+        (if ``cost_per_token`` was configured).
+        """
+        partial_token = _streaming_partial.set("")
+        count_token = _streaming_token_count.set(0)
+        try:
+            return await proxy.syscall(self._tool_name, kwargs)
+        except asyncio.CancelledError:
+            # Save partial work before re-raising.
+            partial = _streaming_partial.get()
+            if partial:
+                proxy.checkpoint.partial_work = partial
+            # Proportional budget: proxy already did a full refund in its
+            # BaseException handler.  Re-deduct actual consumption.
+            if self._cost_per_token is not None:
+                token_count = _streaming_token_count.get()
+                if token_count > 0:
+                    actual_cost = min(
+                        token_count * self._cost_per_token, self._cost_per_use
+                    )
+                    proxy.charge_partial(self._consumes, actual_cost)
+            raise
+        finally:
+            _streaming_partial.reset(partial_token)
+            _streaming_token_count.reset(count_token)
