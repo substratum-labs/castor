@@ -13,6 +13,7 @@ from castor.dam.validator import CastorDam
 if TYPE_CHECKING:
     from castor.lodge.core import CastorLodge
     from castor.stream.agent_registry import AgentRegistry
+    from castor.stream.persistence import CheckpointStore
 from castor.models.capability import SyscallResponse
 from castor.models.checkpoint import (
     AgentCheckpoint,
@@ -58,6 +59,7 @@ class SyscallProxy:
         llm_tool_names: set[str] | None = None,
         kernel_tool_names: set[str] | None = None,
         agent_registry: AgentRegistry | None = None,
+        checkpoint_store: CheckpointStore | None = None,
     ) -> None:
         self.checkpoint = checkpoint
         self._dam = dam
@@ -66,6 +68,7 @@ class SyscallProxy:
         self._llm_tool_names = llm_tool_names or {"llm_inference"}
         self._kernel_tool_names = kernel_tool_names or set()
         self._agent_registry = agent_registry
+        self._store = checkpoint_store
         self._replay_index = 0
         # Async spawn tracking (live execution only, not persisted)
         self._async_tasks: dict[str, asyncio.Task[Any]] = {}
@@ -156,6 +159,22 @@ class SyscallProxy:
             )
             return response.model_dump()
 
+        # ── WAL: log intent before execution ──
+        if self._store is not None:
+            budget_snapshot = {
+                tool_meta.consumes: self.checkpoint.capabilities[
+                    tool_meta.consumes
+                ].current_usage
+                - tool_meta.cost_per_use
+            }
+            self._store.write_wal(
+                pid=self.checkpoint.pid,
+                syscall_index=len(self.checkpoint.syscall_log),
+                tool_name=tool_name,
+                arguments=validated,
+                budget_snapshot=budget_snapshot,
+            )
+
         try:
             result = await self._dam.execute(tool_name, validated)
         except BaseException:
@@ -169,6 +188,14 @@ class SyscallProxy:
                 tool_meta.cost_per_use,
             )
             raise
+
+        # ── WAL: mark complete after execution ──
+        if self._store is not None:
+            self._store.complete_wal(
+                pid=self.checkpoint.pid,
+                syscall_index=len(self.checkpoint.syscall_log),
+                result=result,
+            )
 
         self._append_record(SyscallRecord(request=request, response=result))
         return result
@@ -288,9 +315,7 @@ class SyscallProxy:
             )
 
             # 5. Launch child as background task
-            child_kernel_tools = (
-                self._lodge.kernel_tool_names if self._lodge else set()
-            )
+            child_kernel_tools = self._lodge.kernel_tool_names if self._lodge else set()
             child_proxy = SyscallProxy(
                 checkpoint=child_cp,
                 dam=self._dam,

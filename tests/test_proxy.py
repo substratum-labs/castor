@@ -258,6 +258,54 @@ class TestBudgetRefundOnFailure:
         assert len(checkpoint.syscall_log) == 1
 
 
+class TestWALIntegration:
+    @pytest.fixture
+    def store(self, tmp_path):
+        from castor.stream.persistence import CheckpointStore
+
+        return CheckpointStore(f"sqlite:///{tmp_path / 'test.db'}")
+
+    async def test_wal_written_before_execution(self, registry, dam, cap_mgr, store):
+        """WAL entry is written before tool executes."""
+        register_search(registry)
+        checkpoint = make_checkpoint(cap_mgr)
+        store.save(checkpoint)
+        proxy = SyscallProxy(checkpoint, dam, cap_mgr, checkpoint_store=store)
+
+        await proxy.syscall("search", {"query": "hello"})
+
+        # WAL should be completed (no pending entries)
+        assert store.list_pending_wal() == []
+
+    async def test_wal_refund_on_failure(self, registry, dam, cap_mgr, store):
+        """If tool execution fails, WAL stays PENDING for recovery."""
+
+        @castor_tool(consumes="test", cost_per_use=2.0, registry=registry)
+        async def failing_tool(query: str) -> str:
+            raise RuntimeError("boom")
+
+        checkpoint = make_checkpoint(cap_mgr)
+        store.save(checkpoint)
+        proxy = SyscallProxy(checkpoint, dam, cap_mgr, checkpoint_store=store)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await proxy.syscall("failing_tool", {"query": "test"})
+
+        # WAL entry left PENDING — recovery would refund
+        pending = store.list_pending_wal()
+        assert len(pending) == 1
+        assert pending[0]["tool_name"] == "failing_tool"
+
+    async def test_no_store_no_wal(self, registry, dam, cap_mgr):
+        """When no store is provided, proxy works without WAL (backwards compat)."""
+        register_search(registry)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = SyscallProxy(checkpoint, dam, cap_mgr)  # no store
+
+        result = await proxy.syscall("search", {"query": "hello"})
+        assert result == ["result for hello"]
+
+
 class TestReplayThenLive:
     async def test_replay_then_live_execution(self, registry, dam, cap_mgr):
         """After replaying cached syscalls, new ones execute live."""
