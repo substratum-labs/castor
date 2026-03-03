@@ -220,11 +220,7 @@ class CheckpointStore:
             )
             # Abandon orphaned WAL entries — no checkpoint to recover
             with self._session_factory() as session:
-                rows = (
-                    session.query(WALRow)
-                    .filter_by(pid=pid, status="PENDING")
-                    .all()
-                )
+                rows = session.query(WALRow).filter_by(pid=pid, status="PENDING").all()
                 for row in rows:
                     row.status = "ABANDONED"
                 session.commit()

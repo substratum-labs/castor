@@ -217,9 +217,7 @@ class HITLHandler:
         except Exception:
             # Child crashed — mark failed, reclaim budget, unblock parent
             child_cp.status = "FAILED"
-            capability_manager.reclaim(
-                parent_cp.capabilities, child_cp.capabilities
-            )
+            capability_manager.reclaim(parent_cp.capabilities, child_cp.capabilities)
             last = parent_cp.syscall_log[-1]
             last.child_checkpoint = child_cp
             last.response = None

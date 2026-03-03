@@ -60,8 +60,10 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from castor.dam.registry import ToolMetadata, ToolRegistry
-from castor.observability import get_meter
+from castor.observability import get_logger, get_meter
 from castor.stream.proxy import SyscallProxy
+
+_logger = get_logger("castor.llm")
 
 # Default tool name used when registering the LLM inference syscall.
 DEFAULT_TOOL_NAME = "llm_inference"
@@ -118,6 +120,11 @@ class LLMSyscall:
         try:
             schema = _generate_schema(call_fn)
         except (AttributeError, TypeError):
+            fn_name = getattr(call_fn, "__name__", repr(call_fn))
+            _logger.warning(
+                "llm_schema_fallback",
+                extra={"tool": tool_name, "call_fn": fn_name},
+            )
             schema = {}
 
         metadata = ToolMetadata(
@@ -229,6 +236,11 @@ class StreamingLLMSyscall:
         try:
             schema = _generate_schema(stream_fn)
         except (AttributeError, TypeError):
+            fn_name = getattr(stream_fn, "__name__", repr(stream_fn))
+            _logger.warning(
+                "llm_schema_fallback",
+                extra={"tool": tool_name, "stream_fn": fn_name},
+            )
             schema = {}
 
         metadata = ToolMetadata(
@@ -264,6 +276,10 @@ class StreamingLLMSyscall:
             partial = _streaming_partial.get()
             if partial:
                 proxy.checkpoint.partial_work = partial
+                _logger.info(
+                    "streaming_partial_saved",
+                    extra={"tool": self._tool_name, "partial_len": len(partial)},
+                )
             # Proportional budget: proxy already did a full refund in its
             # BaseException handler.  Re-deduct actual consumption.
             if self._cost_per_token is not None:
@@ -273,6 +289,14 @@ class StreamingLLMSyscall:
                         token_count * self._cost_per_token, self._cost_per_use
                     )
                     proxy.charge_partial(self._consumes, actual_cost)
+                    _logger.info(
+                        "streaming_proportional_charge",
+                        extra={
+                            "tool": self._tool_name,
+                            "tokens": token_count,
+                            "actual_cost": actual_cost,
+                        },
+                    )
             raise
         finally:
             _streaming_partial.reset(partial_token)
