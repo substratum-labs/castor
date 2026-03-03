@@ -93,6 +93,35 @@ class CheckpointStore:
             rows = session.query(CheckpointRow.pid).all()
             return [r.pid for r in rows]
 
+    def list_by_parent(self, parent_pid: str) -> list[AgentCheckpoint]:
+        """List all checkpoints with the given parent_pid."""
+        with self._session_factory() as session:
+            rows = session.query(CheckpointRow).all()
+            results = []
+            for row in rows:
+                cp = AgentCheckpoint.model_validate_json(row.data)
+                if cp.parent_pid == parent_pid:
+                    results.append(cp)
+            return results
+
+    def gc_orphans(self) -> list[str]:
+        """Mark orphaned children (parent done, child still RUNNING) as FAILED."""
+        orphaned: list[str] = []
+        with self._session_factory() as session:
+            all_rows = session.query(CheckpointRow).all()
+            checkpoints = {
+                r.pid: AgentCheckpoint.model_validate_json(r.data) for r in all_rows
+            }
+            for pid, cp in checkpoints.items():
+                if cp.parent_pid and cp.status == "RUNNING":
+                    parent = checkpoints.get(cp.parent_pid)
+                    if parent and parent.status in ("COMPLETED", "FAILED"):
+                        cp.status = "FAILED"
+                        cp.preemption_reason = "ORPHANED"
+                        self.save(cp)
+                        orphaned.append(pid)
+        return orphaned
+
     # ── WAL (Write-Ahead Log) ──
 
     def write_wal(

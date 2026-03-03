@@ -127,6 +127,63 @@ class TestListPids:
         assert set(pids) == {"a", "b", "c"}
 
 
+class TestParentPidQuery:
+    def test_list_by_parent(self, store, cap_mgr):
+        """List all checkpoints with a given parent_pid."""
+        parent = make_checkpoint(cap_mgr, pid="parent-001")
+        store.save(parent)
+
+        child1 = AgentCheckpoint(
+            pid="parent-001::child-0",
+            parent_pid="parent-001",
+            status="RUNNING",
+            agent_function_name="child",
+            capabilities=cap_mgr.create_capabilities({"test": 10.0}),
+        )
+        child2 = AgentCheckpoint(
+            pid="parent-001::child-1",
+            parent_pid="parent-001",
+            status="COMPLETED",
+            agent_function_name="child",
+            capabilities=cap_mgr.create_capabilities({"test": 10.0}),
+        )
+        store.save(child1)
+        store.save(child2)
+
+        children = store.list_by_parent("parent-001")
+        assert set(c.pid for c in children) == {
+            "parent-001::child-0",
+            "parent-001::child-1",
+        }
+
+    def test_list_by_parent_empty(self, store):
+        assert store.list_by_parent("no-parent") == []
+
+
+class TestGCOrphans:
+    def test_gc_marks_orphaned_children(self, store, cap_mgr):
+        """Children of completed parents with RUNNING status become FAILED."""
+        parent = make_checkpoint(cap_mgr, pid="parent-001")
+        parent.status = "COMPLETED"
+        store.save(parent)
+
+        child = AgentCheckpoint(
+            pid="parent-001::child-0",
+            parent_pid="parent-001",
+            status="RUNNING",
+            agent_function_name="child",
+            capabilities=cap_mgr.create_capabilities({"test": 10.0}),
+        )
+        store.save(child)
+
+        orphaned = store.gc_orphans()
+        assert len(orphaned) == 1
+        assert orphaned[0] == "parent-001::child-0"
+
+        reloaded = store.load("parent-001::child-0")
+        assert reloaded.status == "FAILED"
+
+
 class TestWAL:
     def test_write_wal_entry(self, store, cap_mgr):
         """WAL entry can be written and read back."""

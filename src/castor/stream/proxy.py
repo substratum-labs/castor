@@ -339,6 +339,10 @@ class SyscallProxy:
                     child_cp.status = "FAILED"
                     raise
 
+            # Persist child checkpoint for observability
+            if self._store is not None:
+                self._store.save(child_cp)
+
             task = asyncio.create_task(_run_child())
             self._async_tasks[child_pid] = task
             self._async_checkpoints[child_pid] = child_cp
