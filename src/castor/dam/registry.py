@@ -29,6 +29,7 @@ class ToolMetadata(BaseModel):
     input_schema: dict[str, Any] = {}
     func: Callable | None = None
     is_async: bool = False
+    timeout_seconds: float | None = None
 
 
 class ToolRegistry:

@@ -176,7 +176,24 @@ class SyscallProxy:
             )
 
         try:
-            result = await self._dam.execute(tool_name, validated)
+            if tool_meta.timeout_seconds is not None and not tool_meta.is_async:
+                # Sync tool with timeout: run in thread executor
+                from concurrent.futures import ThreadPoolExecutor
+
+                loop = asyncio.get_running_loop()
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    result = await asyncio.wait_for(
+                        loop.run_in_executor(pool, lambda: tool_meta.func(**validated)),
+                        timeout=tool_meta.timeout_seconds,
+                    )
+            elif tool_meta.timeout_seconds is not None:
+                # Async tool with timeout
+                result = await asyncio.wait_for(
+                    self._dam.execute(tool_name, validated),
+                    timeout=tool_meta.timeout_seconds,
+                )
+            else:
+                result = await self._dam.execute(tool_name, validated)
         except BaseException:
             # Refund the budget — execution was interrupted (CancelledError from
             # preemption) or failed (tool exception).  Without this, the record

@@ -306,6 +306,61 @@ class TestWALIntegration:
         assert result == ["result for hello"]
 
 
+class TestToolTimeout:
+    async def test_async_tool_timeout(self, registry, dam, cap_mgr):
+        """Async tool exceeding timeout raises asyncio.TimeoutError, budget refunded."""
+
+        @castor_tool(
+            consumes="test",
+            cost_per_use=1.0,
+            timeout_seconds=0.1,
+            registry=registry,
+        )
+        async def slow_tool(query: str) -> str:
+            await asyncio.sleep(10)
+            return "never reached"
+
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = SyscallProxy(checkpoint, dam, cap_mgr)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await proxy.syscall("slow_tool", {"query": "test"})
+
+        # Budget refunded
+        assert checkpoint.capabilities["test"].current_usage == 0.0
+
+    async def test_sync_tool_timeout(self, registry, dam, cap_mgr):
+        """Sync CPU-bound tool with timeout runs in executor and times out."""
+        import time
+
+        @castor_tool(
+            consumes="test",
+            cost_per_use=1.0,
+            timeout_seconds=0.1,
+            registry=registry,
+        )
+        def cpu_bound_tool(query: str) -> str:
+            time.sleep(10)
+            return "never reached"
+
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = SyscallProxy(checkpoint, dam, cap_mgr)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await proxy.syscall("cpu_bound_tool", {"query": "test"})
+
+        assert checkpoint.capabilities["test"].current_usage == 0.0
+
+    async def test_no_timeout_default(self, registry, dam, cap_mgr):
+        """Tools without timeout_seconds work normally (backwards compat)."""
+        register_search(registry)
+        checkpoint = make_checkpoint(cap_mgr)
+        proxy = SyscallProxy(checkpoint, dam, cap_mgr)
+
+        result = await proxy.syscall("search", {"query": "hello"})
+        assert result == ["result for hello"]
+
+
 class TestReplayThenLive:
     async def test_replay_then_live_execution(self, registry, dam, cap_mgr):
         """After replaying cached syscalls, new ones execute live."""
