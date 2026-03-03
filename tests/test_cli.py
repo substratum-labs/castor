@@ -103,7 +103,10 @@ class TestCLIReject:
         store.save(cp)
 
         result = run_cli(
-            "reject", "agent-001", "--feedback", "Too dangerous",
+            "reject",
+            "agent-001",
+            "--feedback",
+            "Too dangerous",
             db_path=temp_db,
         )
         assert result.returncode == 0
@@ -133,7 +136,10 @@ class TestCLIReject:
         store.save(cp)
 
         result = run_cli(
-            "reject", "agent-001", "--feedback", "nope",
+            "reject",
+            "agent-001",
+            "--feedback",
+            "nope",
             db_path=temp_db,
         )
         assert result.returncode == 1
@@ -150,7 +156,10 @@ class TestCLIReject:
         store.save(cp)
 
         result = run_cli(
-            "reject", "agent-001", "--feedback", "nope",
+            "reject",
+            "agent-001",
+            "--feedback",
+            "nope",
             db_path=temp_db,
         )
         assert result.returncode == 1
@@ -158,7 +167,10 @@ class TestCLIReject:
 
     def test_reject_missing_pid(self, temp_db):
         result = run_cli(
-            "reject", "ghost", "--feedback", "nope",
+            "reject",
+            "ghost",
+            "--feedback",
+            "nope",
             db_path=temp_db,
         )
         assert result.returncode == 1
@@ -171,7 +183,10 @@ class TestCLIModify:
         store.save(cp)
 
         result = run_cli(
-            "modify", "agent-001", "--feedback", "Only delete old files",
+            "modify",
+            "agent-001",
+            "--feedback",
+            "Only delete old files",
             db_path=temp_db,
         )
         assert result.returncode == 0
@@ -200,7 +215,10 @@ class TestCLIModify:
         store.save(cp)
 
         result = run_cli(
-            "modify", "agent-001", "--feedback", "change it",
+            "modify",
+            "agent-001",
+            "--feedback",
+            "change it",
             db_path=temp_db,
         )
         assert result.returncode == 1
@@ -217,7 +235,10 @@ class TestCLIModify:
         store.save(cp)
 
         result = run_cli(
-            "modify", "agent-001", "--feedback", "change it",
+            "modify",
+            "agent-001",
+            "--feedback",
+            "change it",
             db_path=temp_db,
         )
         assert result.returncode == 1
