@@ -24,3 +24,36 @@ class TestNoopFallback:
         logger = get_logger("castor.test")
         assert isinstance(logger, logging.Logger)
         assert logger.name == "castor.test"
+
+
+class TestLoggingIntegration:
+    async def test_syscall_emits_log(self, caplog):
+        """Syscall execution emits structured log messages."""
+        from castor.capability.manager import CapabilityManager
+        from castor.dam.decorator import castor_tool
+        from castor.dam.registry import ToolRegistry
+        from castor.dam.validator import CastorDam
+        from castor.models.checkpoint import AgentCheckpoint
+        from castor.stream.proxy import SyscallProxy
+
+        registry = ToolRegistry()
+
+        @castor_tool(consumes="test", cost_per_use=1.0, registry=registry)
+        def search(query: str) -> list:
+            return [f"result for {query}"]
+
+        dam = CastorDam(registry)
+        cap_mgr = CapabilityManager()
+        caps = cap_mgr.create_capabilities({"test": 100.0})
+        cp = AgentCheckpoint(
+            pid="test-001",
+            status="RUNNING",
+            agent_function_name="test",
+            capabilities=caps,
+        )
+        proxy = SyscallProxy(cp, dam, cap_mgr)
+
+        with caplog.at_level(logging.DEBUG, logger="castor.stream"):
+            await proxy.syscall("search", {"query": "hello"})
+
+        assert any("syscall_complete" in r.message for r in caplog.records)

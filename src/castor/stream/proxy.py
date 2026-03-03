@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
 from castor.capability.manager import CapabilityExhaustedError, CapabilityManager
 from castor.dam.validator import CastorDam
+from castor.observability import get_logger, get_meter
 
 if TYPE_CHECKING:
     from castor.lodge.core import CastorLodge
@@ -20,6 +22,13 @@ from castor.models.checkpoint import (
     SuspendInterrupt,
     SyscallRecord,
 )
+
+_logger = get_logger("castor.stream")
+_meter = get_meter("castor.stream")
+_syscall_counter = _meter.create_counter("castor_syscalls_total")
+_syscall_duration = _meter.create_histogram("castor_syscall_duration_seconds")
+_hitl_counter = _meter.create_counter("castor_hitl_total")
+_spawn_counter = _meter.create_counter("castor_spawns_total")
 
 
 class ReplayDivergenceError(Exception):
@@ -89,6 +98,7 @@ class SyscallProxy:
         4. Fast path: deduct capability, execute, log result
         """
         request = {"tool_name": tool_name, "arguments": arguments}
+        start = time.perf_counter()
 
         # ── Lodge eviction hook: run before LLM tools (live execution only) ──
         if (
@@ -112,6 +122,14 @@ class SyscallProxy:
             if record.request != request:
                 raise ReplayDivergenceError(self._replay_index, record.request, request)
             self._replay_index += 1
+            _logger.debug(
+                "replay_hit",
+                extra={
+                    "pid": self.checkpoint.pid,
+                    "tool": tool_name,
+                    "index": self._replay_index - 1,
+                },
+            )
             return record.response
 
         # ── Spawn/join intercepts: kernel-internal, bypass Dam ──
@@ -138,6 +156,14 @@ class SyscallProxy:
 
         # ── Slow Path: suspend for HITL ──
         if tool_meta.requires_hitl or tool_meta.destructive:
+            _hitl_counter.add(1, {"action": "suspend"})
+            _logger.info(
+                "hitl_suspend",
+                extra={
+                    "pid": self.checkpoint.pid,
+                    "tool": tool_name,
+                },
+            )
             self.checkpoint.pending_hitl = request
             self.checkpoint.status = "SUSPENDED_FOR_HITL"
             raise SuspendInterrupt(self.checkpoint)
@@ -214,6 +240,18 @@ class SyscallProxy:
                 result=result,
             )
 
+        elapsed = time.perf_counter() - start
+        _syscall_counter.add(1, {"tool": tool_name, "status": "success"})
+        _syscall_duration.record(elapsed, {"tool": tool_name})
+        _logger.info(
+            "syscall_complete",
+            extra={
+                "pid": self.checkpoint.pid,
+                "tool": tool_name,
+                "latency_ms": elapsed * 1000,
+            },
+        )
+
         self._append_record(SyscallRecord(request=request, response=result))
         return result
 
@@ -282,6 +320,15 @@ class SyscallProxy:
         self._cap_mgr.reclaim(self.checkpoint.capabilities, child_cp.capabilities)
 
         # 7. Log and return
+        _spawn_counter.add(1, {"type": "sync"})
+        _logger.info(
+            "spawn",
+            extra={
+                "pid": self.checkpoint.pid,
+                "child_pid": child_cp.pid,
+                "type": "sync",
+            },
+        )
         self._append_record(
             SyscallRecord(
                 request=request,
@@ -368,6 +415,15 @@ class SyscallProxy:
             raise
 
         # 6. Log spawn and return handle immediately
+        _spawn_counter.add(1, {"type": "async"})
+        _logger.info(
+            "spawn",
+            extra={
+                "pid": self.checkpoint.pid,
+                "child_pid": child_pid,
+                "type": "async",
+            },
+        )
         self._append_record(SyscallRecord(request=request, response=child_pid))
         return child_pid
 
