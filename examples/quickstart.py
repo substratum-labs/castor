@@ -13,9 +13,9 @@ from castor import (
     CastorDam,
     HITLHandler,
     SyscallProxy,
-    ToolRegistry,
     castor_tool,
 )
+from castor.dam.registry import ToolRegistry
 
 # ── 1. Register tools ──
 

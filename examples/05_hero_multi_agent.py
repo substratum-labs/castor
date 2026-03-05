@@ -1,0 +1,214 @@
+"""Demo 05 — Multi-Agent: The full Castor experience.
+
+A coordinator spawns specialist agents, delegates budgets, handles
+human approvals across the hierarchy, and produces a final report.
+
+Run:
+    uv run python examples/05_hero_multi_agent.py
+"""
+
+import asyncio
+
+from castor import (
+    AgentCheckpoint,
+    AgentRegistry,
+    AgentRunner,
+    CapabilityManager,
+    CastorDam,
+    HITLHandler,
+    SyscallProxy,
+    castor_agent,
+    castor_tool,
+)
+from castor.dam.registry import ToolRegistry
+
+# ── Output helpers ──
+
+
+def _h(text: str) -> None:
+    print(f"\n\033[1;36m=== {text} ===\033[0m")
+
+
+def _ok(text: str) -> None:
+    print(f"  \033[32m[OK]\033[0m {text}")
+
+
+def _warn(text: str) -> None:
+    print(f"  \033[33m[!!]\033[0m {text}")
+
+
+def _replay(text: str) -> None:
+    print(f"  \033[90m[REPLAY]\033[0m {text}")
+
+
+# ── 1. Register tools ──
+
+tool_registry = ToolRegistry()
+
+
+@castor_tool(consumes="network", cost_per_use=1.0, registry=tool_registry)
+async def web_search(query: str) -> list[str]:
+    return [f"Finding 1 for '{query}'", f"Finding 2 for '{query}'"]
+
+
+@castor_tool(consumes="disk", cost_per_use=0.5, registry=tool_registry)
+async def write_note(filename: str, content: str) -> str:
+    return f"Saved {filename} ({len(content)} chars)"
+
+
+@castor_tool(consumes="disk", cost_per_use=0.5, registry=tool_registry)
+async def read_note(filename: str) -> str:
+    return "Finding 1 for 'AI safety': important results"
+
+
+@castor_tool(
+    consumes="network", cost_per_use=2.0,
+    destructive=True, requires_hitl=True, registry=tool_registry,
+)
+async def send_message(platform: str, channel: str, body: str) -> str:
+    return f"Message sent to {platform}#{channel}"
+
+
+# ── 2. Register agents ──
+
+agent_registry = AgentRegistry()
+
+
+@castor_agent(name="researcher", registry=agent_registry)
+async def researcher(proxy: SyscallProxy) -> str:
+    results = await proxy.syscall("web_search", {"query": "AI safety 2026"})
+    await proxy.syscall("write_note", {
+        "filename": "findings.md",
+        "content": f"Research findings: {results}",
+    })
+    return f"Research complete: {len(results)} findings"
+
+
+@castor_agent(name="publisher", registry=agent_registry)
+async def publisher(proxy: SyscallProxy) -> str:
+    note = await proxy.syscall("read_note", {"filename": "findings.md"})
+    result = await proxy.syscall("send_message", {
+        "platform": "slack",
+        "channel": "#research",
+        "body": f"Summary: {note[:50]}",
+    })
+    return f"Published: {result}"
+
+
+# ── 3. Define coordinator agent ──
+
+
+async def coordinator(proxy: SyscallProxy) -> str:
+    # Spawn two children with delegated budgets
+    print("  Spawning child agents...")
+    handle_a = await proxy.syscall("spawn_agent_async", {
+        "agent_name": "researcher",
+        "capabilities": {"network": 5.0, "disk": 3.0},
+    })
+    _ok(f"researcher spawned (handle={handle_a})")
+
+    handle_b = await proxy.syscall("spawn_agent_async", {
+        "agent_name": "publisher",
+        "capabilities": {"network": 5.0, "disk": 3.0},
+    })
+    _ok(f"publisher spawned (handle={handle_b})")
+
+    # Join — waits for children to complete (or suspends if child needs HITL)
+    print("\n  Joining children...")
+    result_a = await proxy.syscall("join_agent", {"handle": handle_a})
+    _ok(f"researcher: {result_a}")
+
+    result_b = await proxy.syscall("join_agent", {"handle": handle_b})
+    _ok(f"publisher: {result_b}")
+
+    return f"Coordinated: [{result_a}] + [{result_b}]"
+
+
+# ── 4. Run it ──
+
+
+async def main() -> None:
+    dam = CastorDam(tool_registry)
+    cap_mgr = CapabilityManager()
+    handler = HITLHandler()
+
+    caps = cap_mgr.create_capabilities({"network": 20.0, "disk": 10.0})
+    checkpoint = AgentCheckpoint(
+        pid="coord-001", status="RUNNING",
+        agent_function_name="coordinator", capabilities=caps,
+    )
+
+    _h("Castor Multi-Agent Demo")
+    print(f"  Coordinator PID: {checkpoint.pid}")
+    print(f"  Budget: network={caps['network'].max_budget}, "
+          f"disk={caps['disk'].max_budget}")
+
+    # --- Run 1: coordinator spawns children, publisher hits HITL ---
+    runner = AgentRunner(dam, cap_mgr, agent_registry=agent_registry)
+    checkpoint = await runner.run(coordinator, checkpoint)
+
+    if checkpoint.status == "SUSPENDED_FOR_HITL":
+        _h("HITL Propagation")
+        _warn("Child suspended -> Parent suspended")
+        pending = checkpoint.pending_hitl
+        _warn(f"Pending: {pending['tool_name']}()")
+
+        # Inspect child checkpoint
+        last_record = checkpoint.syscall_log[-1]
+        child_cp = last_record.child_checkpoint
+        if child_cp and child_cp.pending_hitl:
+            child_pending = child_cp.pending_hitl
+            print(f"  Child PID: {child_cp.pid}")
+            print(f"  Child tool: {child_pending['tool_name']}")
+            print(f"  Child args: {child_pending['arguments']}")
+
+        # Human approves the child's action through the parent
+        _h("Human approves child's message send")
+        await handler.approve_child_hitl(
+            checkpoint, dam, cap_mgr, agent_registry,
+        )
+
+        if checkpoint.status == "RUNNING":
+            _ok("Child completed, parent unblocked")
+
+            # --- Run 2: replay everything, continue coordinator ---
+            _h("Resuming coordinator (full replay)")
+            runner2 = AgentRunner(dam, cap_mgr, agent_registry=agent_registry)
+            checkpoint = await runner2.run(coordinator, checkpoint)
+
+    # ── Agent Tree ──
+    _h("Agent Tree")
+    # Parent
+    net = checkpoint.capabilities["network"]
+    disk = checkpoint.capabilities["disk"]
+    print(f"  {checkpoint.pid} (coordinator)"
+          f"  {checkpoint.status}"
+          f"  net={net.current_usage:.1f}/{net.max_budget:.1f}"
+          f"  disk={disk.current_usage:.1f}/{disk.max_budget:.1f}")
+
+    # Children (from syscall log)
+    for record in checkpoint.syscall_log:
+        if record.child_checkpoint:
+            child = record.child_checkpoint
+            c_status = child.status
+            c_caps = child.capabilities
+            net_str = ""
+            disk_str = ""
+            if "network" in c_caps:
+                c = c_caps["network"]
+                net_str = f"  net={c.current_usage:.1f}/{c.max_budget:.1f}"
+            if "disk" in c_caps:
+                c = c_caps["disk"]
+                disk_str = f"  disk={c.current_usage:.1f}/{c.max_budget:.1f}"
+            print(f"    +-- {child.pid}"
+                  f"  {c_status}{net_str}{disk_str}")
+
+    # ── Final Result ──
+    _h("Final Result")
+    print(f"  Status: \033[32m{checkpoint.status}\033[0m")
+    print(f"  Result: {checkpoint.result}")
+    print(f"  Total syscalls (coordinator): {len(checkpoint.syscall_log)}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
