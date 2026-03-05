@@ -95,7 +95,9 @@ class SyscallProxy:
         """True if the proxy is still serving cached responses."""
         return self._replay_index < len(self.checkpoint.syscall_log)
 
-    async def syscall(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+    async def syscall(
+        self, tool_name: str, arguments: dict[str, Any] | None = None, /, **kwargs: Any
+    ) -> Any:
         """Main syscall entry point.
 
         Flow:
@@ -103,7 +105,22 @@ class SyscallProxy:
         2. Validate via Dam
         3. Slow path: suspend if HITL required
         4. Fast path: deduct capability, execute, log result
+
+        Args:
+            tool_name: Name of the registered tool to invoke.
+            arguments: Tool arguments as a dict (positional-only).
+            **kwargs: Tool arguments as keyword arguments (alternative to dict).
+
+        Raises:
+            TypeError: If both ``arguments`` dict and ``**kwargs`` are provided.
         """
+        if arguments is not None and kwargs:
+            raise TypeError(
+                "Cannot pass both positional arguments dict"
+                " and keyword arguments"
+            )
+        if arguments is None:
+            arguments = kwargs
         request = {"tool_name": tool_name, "arguments": arguments}
         start = time.perf_counter()
 
