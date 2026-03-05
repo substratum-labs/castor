@@ -109,6 +109,12 @@ class CastorResilientAgent(ToolCallingAgent):
         self.cap_mgr = CapabilityManager()
         if checkpoint is not None:
             self._checkpoint = checkpoint
+            # Reset capability usage — replay will re-deduct each recorded
+            # syscall's cost, rebuilding the correct totals from scratch.
+            # This mirrors a real restore from storage where capabilities
+            # are deserialized fresh.
+            for cap in checkpoint.capabilities.values():
+                cap.current_usage = 0.0
             self.capabilities = checkpoint.capabilities
         else:
             self.capabilities = self.cap_mgr.create_capabilities(budgets)
@@ -142,10 +148,15 @@ class CastorResilientAgent(ToolCallingAgent):
         return record.response
 
     def _record(self, request: dict[str, Any], response: Any) -> None:
-        """Append new syscall record and persist checkpoint."""
+        """Append new syscall record and persist checkpoint.
+
+        Also advances ``_replay_index`` to stay past the end of the log,
+        preventing ``is_replaying`` from becoming True mid-session.
+        """
         self._checkpoint.syscall_log.append(
             SyscallRecord(request=request, response=response)
         )
+        self._replay_index = len(self._checkpoint.syscall_log)
         self._save_checkpoint()
 
     def _save_checkpoint(self) -> None:
@@ -195,12 +206,14 @@ class CastorResilientAgent(ToolCallingAgent):
 
         # 4. Record + audit
         self._record(request, result)
-        self.audit_log.append({
-            "tool": tool_name,
-            "cost": cost,
-            "resource": resource,
-            "replayed": False,
-        })
+        self.audit_log.append(
+            {
+                "tool": tool_name,
+                "cost": cost,
+                "resource": resource,
+                "replayed": False,
+            }
+        )
         return result
 
     def budget_summary(self) -> dict[str, dict[str, float]]:
