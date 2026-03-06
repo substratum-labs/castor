@@ -250,3 +250,76 @@ class TestCastorFacade:
 
         cp = await kernel.run(agent)
         assert cp.status == "COMPLETED"
+
+
+# ── Task 5: HITL facade tests ──
+
+
+class TestCastorHITL:
+    @pytest.fixture()
+    def hitl_kernel(self):
+        reg = ToolRegistry()
+
+        @castor_tool(consumes="api", cost_per_use=1.0, registry=reg)
+        async def safe_tool() -> str:
+            return "safe"
+
+        @castor_tool(
+            consumes="api",
+            cost_per_use=1.0,
+            destructive=True,
+            requires_hitl=True,
+            registry=reg,
+        )
+        async def dangerous_tool(target: str) -> str:
+            return f"destroyed {target}"
+
+        return Castor(tools=[safe_tool, dangerous_tool])
+
+    @pytest.mark.asyncio
+    async def test_approve_flow(self, hitl_kernel):
+        async def agent(proxy: SyscallProxy) -> str:
+            await proxy.syscall("safe_tool")
+            result = await proxy.syscall("dangerous_tool", target="test")
+            return f"done: {result}"
+
+        cp = await hitl_kernel.run(agent, budgets={"api": 10.0})
+        assert cp.status == "SUSPENDED_FOR_HITL"
+        assert cp.pending_hitl["tool_name"] == "dangerous_tool"
+
+        await hitl_kernel.approve(cp)
+        cp = await hitl_kernel.run(agent, checkpoint=cp)
+        assert cp.status == "COMPLETED"
+        assert cp.result == "done: destroyed test"
+
+    @pytest.mark.asyncio
+    async def test_reject_flow(self, hitl_kernel):
+        async def agent(proxy: SyscallProxy) -> str:
+            result = await proxy.syscall("dangerous_tool", target="prod")
+            if isinstance(result, dict) and result.get("status") == "HITL_REJECTED":
+                return "aborted"
+            return f"done: {result}"
+
+        cp = await hitl_kernel.run(agent, budgets={"api": 10.0})
+        assert cp.status == "SUSPENDED_FOR_HITL"
+
+        hitl_kernel.reject(cp, reason="too risky")
+        cp = await hitl_kernel.run(agent, checkpoint=cp)
+        assert cp.status == "COMPLETED"
+        assert cp.result == "aborted"
+
+    @pytest.mark.asyncio
+    async def test_modify_flow(self, hitl_kernel):
+        async def agent(proxy: SyscallProxy) -> str:
+            result = await proxy.syscall("dangerous_tool", target="prod")
+            if isinstance(result, dict) and result.get("status") == "HITL_MODIFIED":
+                return f"modified: {result['human_feedback']}"
+            return f"done: {result}"
+
+        cp = await hitl_kernel.run(agent, budgets={"api": 10.0})
+        assert cp.status == "SUSPENDED_FOR_HITL"
+
+        hitl_kernel.modify(cp, feedback="use staging instead")
+        cp = await hitl_kernel.run(agent, checkpoint=cp)
+        assert cp.status == "COMPLETED"
+        assert "use staging instead" in cp.result
