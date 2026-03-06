@@ -9,16 +9,7 @@ Run:
 
 import asyncio
 
-from castor import (
-    AgentCheckpoint,
-    AgentRunner,
-    CapabilityManager,
-    CastorDam,
-    HITLHandler,
-    SyscallProxy,
-    castor_tool,
-)
-from castor.dam.registry import ToolRegistry
+from castor import Castor, SyscallProxy, castor_tool
 
 # ── Output helpers ──
 
@@ -37,23 +28,23 @@ def _warn(text: str) -> None:
 
 # ── 1. Register tools ──
 
-registry = ToolRegistry()
 
-
-@castor_tool(consumes="api", cost_per_use=1.0, registry=registry)
+@castor_tool(consumes="api", cost_per_use=1.0)
 async def research(topic: str) -> str:
     return f"Findings on '{topic}': 3 key insights discovered"
 
 
 @castor_tool(
-    consumes="api", cost_per_use=2.0,
-    destructive=True, requires_hitl=True, registry=registry,
+    consumes="api",
+    cost_per_use=2.0,
+    destructive=True,
+    requires_hitl=True,
 )
 async def send_email(to: str, subject: str, body: str) -> str:
     return f"Email sent to {to}: '{subject}'"
 
 
-@castor_tool(consumes="api", cost_per_use=0.5, registry=registry)
+@castor_tool(consumes="api", cost_per_use=0.5)
 async def save_draft(title: str, content: str) -> str:
     return f"Draft saved: '{title}'"
 
@@ -62,37 +53,39 @@ async def save_draft(title: str, content: str) -> str:
 
 
 async def email_agent(proxy: SyscallProxy) -> str:
-    findings = await proxy.syscall("research", {"topic": "Q4 results"})
+    findings = await proxy.research(topic="Q4 results")
 
-    result = await proxy.syscall("send_email", {
-        "to": "team@company.com",
-        "subject": "Q4 Results Summary",
-        "body": f"Here is the full report. {findings}",
-    })
+    result = await proxy.send_email(
+        to="team@company.com",
+        subject="Q4 Results Summary",
+        body=f"Here is the full report. {findings}",
+    )
 
     # Handle rejection: save as draft instead
     if isinstance(result, dict) and result.get("status") == "HITL_REJECTED":
         feedback = result["human_feedback"]
-        draft = await proxy.syscall("save_draft", {
-            "title": "Q4 Email Draft",
-            "content": f"Original email (rejected: {feedback}). {findings}",
-        })
+        draft = await proxy.save_draft(
+            title="Q4 Email Draft",
+            content=f"Original email (rejected: {feedback}). {findings}",
+        )
         return f"Email rejected. {draft}"
 
     # Handle modification: revise and resend
     if isinstance(result, dict) and result.get("status") == "HITL_MODIFIED":
         feedback = result["human_feedback"]
-        result = await proxy.syscall("send_email", {
-            "to": "team@company.com, manager@company.com",
-            "subject": "Q4 Results (Revised)",
-            "body": f"Brief summary per feedback: '{feedback}'. {findings}",
-        })
+        result = await proxy.send_email(
+            to="team@company.com, manager@company.com",
+            subject="Q4 Results (Revised)",
+            body=f"Brief summary per feedback: '{feedback}'. {findings}",
+        )
         return f"Email revised and sent. {result}"
 
     return f"Email approved and sent. {result}"
 
 
 # ── 3. Run three scenarios ──
+
+kernel = Castor(tools=[research, send_email, save_draft])
 
 
 async def run_scenario(
@@ -101,51 +94,38 @@ async def run_scenario(
     feedback: str = "",
 ) -> dict:
     """Run the agent with a specific HITL decision and return outcome."""
-    dam = CastorDam(registry)
-    cap_mgr = CapabilityManager()
-    handler = HITLHandler()
-
-    caps = cap_mgr.create_capabilities({"api": 20.0})
-    checkpoint = AgentCheckpoint(
-        pid=f"email-{name}", status="RUNNING",
-        agent_function_name="email_agent", capabilities=caps,
-    )
-
     # Run 1: agent hits send_email, suspends
-    runner = AgentRunner(dam, cap_mgr)
-    checkpoint = await runner.run(email_agent, checkpoint)
+    cp = await kernel.run(email_agent, budgets={"api": 20.0}, pid=f"email-{name}")
 
-    pending = checkpoint.pending_hitl
+    pending = cp.pending_hitl
     print(f"  Agent wants: send_email(to={pending['arguments']['to']!r})")
 
     # Apply human decision
     if decision == "approve":
-        await handler.approve(checkpoint, dam, cap_mgr)
+        await kernel.approve(cp)
         _ok("Human: APPROVED")
     elif decision == "reject":
-        handler.reject(checkpoint, feedback)
+        kernel.reject(cp, reason=feedback)
         _warn(f'Human: REJECTED ("{feedback}")')
     elif decision == "modify":
-        handler.modify(checkpoint, feedback)
+        kernel.modify(cp, feedback=feedback)
         _warn(f'Human: MODIFIED ("{feedback}")')
 
     # Resume
-    runner2 = AgentRunner(dam, cap_mgr)
-    checkpoint = await runner2.run(email_agent, checkpoint)
+    cp = await kernel.run(email_agent, checkpoint=cp)
 
     # Modification may trigger a second HITL (revised send_email)
-    if checkpoint.status == "SUSPENDED_FOR_HITL":
+    if cp.status == "SUSPENDED_FOR_HITL":
         _ok("Revised email needs approval -> auto-approving")
-        await handler.approve(checkpoint, dam, cap_mgr)
-        runner3 = AgentRunner(dam, cap_mgr)
-        checkpoint = await runner3.run(email_agent, checkpoint)
+        await kernel.approve(cp)
+        cp = await kernel.run(email_agent, checkpoint=cp)
 
     return {
         "scenario": name,
         "decision": decision,
-        "syscalls": len(checkpoint.syscall_log),
-        "result": checkpoint.result,
-        "budget_used": checkpoint.capabilities["api"].current_usage,
+        "syscalls": len(cp.syscall_log),
+        "result": cp.result,
+        "budget_used": cp.capabilities["api"].current_usage,
     }
 
 
@@ -156,14 +136,22 @@ async def main() -> None:
     results.append(await run_scenario("A", "approve"))
 
     _h("Scenario B: REJECT")
-    results.append(await run_scenario(
-        "B", "reject", "Too informal for external stakeholders",
-    ))
+    results.append(
+        await run_scenario(
+            "B",
+            "reject",
+            "Too informal for external stakeholders",
+        )
+    )
 
     _h("Scenario C: MODIFY")
-    results.append(await run_scenario(
-        "C", "modify", "Make it shorter, CC the manager",
-    ))
+    results.append(
+        await run_scenario(
+            "C",
+            "modify",
+            "Make it shorter, CC the manager",
+        )
+    )
 
     # ── Comparison table ──
     _h("Comparison")
@@ -171,8 +159,10 @@ async def main() -> None:
     print(f"  {'─' * 12} {'─' * 10} {'─' * 10} {'─' * 8} {'─' * 30}")
     for r in results:
         result_short = str(r["result"])[:45]
-        print(f"  {r['scenario']:<12} {r['decision']:<10} {r['syscalls']:<10} "
-              f"{r['budget_used']:<8.1f} {result_short}")
+        print(
+            f"  {r['scenario']:<12} {r['decision']:<10} {r['syscalls']:<10} "
+            f"{r['budget_used']:<8.1f} {result_short}"
+        )
 
 
 if __name__ == "__main__":

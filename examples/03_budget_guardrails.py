@@ -9,15 +9,7 @@ Run:
 
 import asyncio
 
-from castor import (
-    AgentCheckpoint,
-    AgentRunner,
-    CapabilityManager,
-    CastorDam,
-    SyscallProxy,
-    castor_tool,
-)
-from castor.dam.registry import ToolRegistry
+from castor import Castor, SyscallProxy, castor_tool
 
 # ── Output helpers ──
 
@@ -38,23 +30,26 @@ def _budget_bar(label: str, used: float, total: float) -> str:
 
 # ── 1. Register tools ──
 
-registry = ToolRegistry()
 
-
-@castor_tool(consumes="api", cost_per_use=1.0, registry=registry)
+@castor_tool(consumes="api", cost_per_use=1.0)
 async def search(query: str) -> list[str]:
     return [f"Result for '{query}'"]
 
 
-@castor_tool(consumes="llm", cost_per_use=2.0, registry=registry)
+@castor_tool(consumes="llm", cost_per_use=2.0)
 async def summarize(data: str) -> str:
     return f"Summary of: {data[:40]}..."
 
 
 # ── 2. Define a loop agent that may run out of budget ──
 
-TOPICS = ["climate change", "quantum computing", "gene therapy",
-          "fusion energy", "space mining"]
+TOPICS = [
+    "climate change",
+    "quantum computing",
+    "gene therapy",
+    "fusion energy",
+    "space mining",
+]
 
 
 async def research_loop(proxy: SyscallProxy) -> str:
@@ -62,7 +57,7 @@ async def research_loop(proxy: SyscallProxy) -> str:
 
     for topic in TOPICS:
         # Search
-        result = await proxy.syscall("search", {"query": topic})
+        result = await proxy.search(query=topic)
         is_exhausted = (
             isinstance(result, dict)
             and result.get("status") == "INSUFFICIENT_CAPABILITY"
@@ -72,11 +67,13 @@ async def research_loop(proxy: SyscallProxy) -> str:
             break
         caps = proxy.checkpoint.capabilities
         api = caps["api"]
-        print(f"    search    api: "
-              f"{_budget_bar('api', api.current_usage, api.max_budget)}")
+        print(
+            f"    search    api: "
+            f"{_budget_bar('api', api.current_usage, api.max_budget)}"
+        )
 
         # Summarize
-        result = await proxy.syscall("summarize", {"data": str(result)})
+        result = await proxy.summarize(data=str(result))
         is_exhausted = (
             isinstance(result, dict)
             and result.get("status") == "INSUFFICIENT_CAPABILITY"
@@ -84,14 +81,18 @@ async def research_loop(proxy: SyscallProxy) -> str:
         if is_exhausted:
             llm = caps["llm"]
             remain = llm.max_budget - llm.current_usage
-            print(f"    summarize \033[31mINSUFFICIENT "
-                  f"(need 2.0, have {remain:.1f})\033[0m")
+            print(
+                f"    summarize \033[31mINSUFFICIENT "
+                f"(need 2.0, have {remain:.1f})\033[0m"
+            )
             completed.append(f"{topic}: searched but NOT summarized")
             break
         caps = proxy.checkpoint.capabilities
         llm = caps["llm"]
-        print(f"    summarize llm: "
-              f"{_budget_bar('llm', llm.current_usage, llm.max_budget)}")
+        print(
+            f"    summarize llm: "
+            f"{_budget_bar('llm', llm.current_usage, llm.max_budget)}"
+        )
         completed.append(f"{topic}: {result}")
 
     return f"Completed {len(completed)}/{len(TOPICS)} topics"
@@ -101,30 +102,28 @@ async def research_loop(proxy: SyscallProxy) -> str:
 
 
 async def main() -> None:
-    dam = CastorDam(registry)
-    cap_mgr = CapabilityManager()
+    kernel = Castor(tools=[search, summarize])
+    budgets = {"api": 3.0, "llm": 5.0}
 
-    # Tight budgets: enough for ~2.5 cycles of search+summarize
-    caps = cap_mgr.create_capabilities({"api": 3.0, "llm": 5.0})
-    checkpoint = AgentCheckpoint(
-        pid="budget-001", status="RUNNING",
-        agent_function_name="research_loop", capabilities=caps,
-    )
-
-    _h(f"Research Agent (Budget: api={caps['api'].max_budget}, "
-        f"llm={caps['llm'].max_budget})")
+    _h(f"Research Agent (Budget: api={budgets['api']}, llm={budgets['llm']})")
     print(f"  Plan: {len(TOPICS)} cycles of search (1.0 api) + summarize (2.0 llm)")
     print()
 
-    runner = AgentRunner(dam, cap_mgr)
-    checkpoint = await runner.run(research_loop, checkpoint)
+    # Tight budgets: enough for ~2.5 cycles of search+summarize
+    checkpoint = await kernel.run(
+        research_loop,
+        budgets=budgets,
+        pid="budget-001",
+    )
 
     # Summary
     _h("Budget Summary")
     for name, cap in checkpoint.capabilities.items():
         pct = (cap.current_usage / cap.max_budget * 100) if cap.max_budget > 0 else 0
-        print(f"  {name}: {_budget_bar(name, cap.current_usage, cap.max_budget)}"
-              f"  ({pct:.0f}% used)")
+        print(
+            f"  {name}: {_budget_bar(name, cap.current_usage, cap.max_budget)}"
+            f"  ({pct:.0f}% used)"
+        )
     print(f"\n  Status: \033[32m{checkpoint.status}\033[0m")
     print(f"  Result: {checkpoint.result}")
     print(f"  Syscalls executed: {len(checkpoint.syscall_log)}")

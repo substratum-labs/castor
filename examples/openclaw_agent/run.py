@@ -19,15 +19,10 @@ from pathlib import Path
 from agent import openclaw_agent
 from tools import register_tools
 
-from castor.capability.manager import CapabilityManager
+from castor import Castor, CastorDam
 from castor.dam.registry import ToolRegistry
-from castor.dam.validator import CastorDam
 from castor.llm.wrapper import LLMSyscall
-from castor.models.checkpoint import AgentCheckpoint
-from castor.stream.hitl import HITLHandler
-from castor.stream.persistence import CheckpointStore
 from castor.stream.proxy import SyscallProxy
-from castor.stream.runner import AgentRunner
 
 # ── Fake LLM client (replace with a real provider in production) ──
 
@@ -53,16 +48,7 @@ async def fake_llm_client(model: str, prompt: str) -> str:
 # ── Kernel setup ──
 
 
-def setup_kernel(
-    kb_path: Path, db_path: Path
-) -> tuple[
-    CastorDam,
-    CapabilityManager,
-    AgentRunner,
-    HITLHandler,
-    CheckpointStore,
-    LLMSyscall,
-]:
+def setup_kernel(kb_path: Path, db_path: Path) -> tuple[Castor, LLMSyscall]:
     registry = ToolRegistry()
     register_tools(registry, kb_path)
 
@@ -73,33 +59,17 @@ def setup_kernel(
         cost_per_use=1.0,
     )
 
-    dam = CastorDam(registry)
-    cap_mgr = CapabilityManager()
-    runner = AgentRunner(dam, cap_mgr)
-    hitl = HITLHandler()
-    store = CheckpointStore(f"sqlite:///{db_path}")
+    kernel = Castor(dam=CastorDam(registry), store=f"sqlite:///{db_path}")
 
-    return dam, cap_mgr, runner, hitl, store, llm
-
-
-def create_checkpoint(cap_mgr: CapabilityManager) -> AgentCheckpoint:
-    caps = cap_mgr.create_capabilities({"network": 50.0, "disk": 20.0})
-    return AgentCheckpoint(
-        pid="openclaw-001",
-        status="RUNNING",
-        agent_function_name="openclaw_agent",
-        capabilities=caps,
-    )
+    return kernel, llm
 
 
 # ── Interactive HITL handler ──
 
 
 async def handle_hitl(
-    checkpoint: AgentCheckpoint,
-    dam: CastorDam,
-    cap_mgr: CapabilityManager,
-    hitl: HITLHandler,
+    checkpoint: AgentCheckpoint,  # noqa: F821
+    kernel: Castor,
 ) -> None:
     pending = checkpoint.pending_hitl
     print("\n--- HUMAN-IN-THE-LOOP REQUIRED ---")
@@ -114,19 +84,19 @@ async def handle_hitl(
     choice = input("Your choice: ").strip().lower()
 
     if choice == "a":
-        await hitl.approve(checkpoint, dam, cap_mgr)
+        await kernel.approve(checkpoint)
         print("-> Approved.")
     elif choice == "r":
         feedback = input("Rejection reason: ").strip()
-        hitl.reject(checkpoint, feedback or "Rejected by user.")
+        kernel.reject(checkpoint, feedback or "Rejected by user.")
         print("-> Rejected.")
     elif choice == "m":
         feedback = input("Modification feedback: ").strip()
-        hitl.modify(checkpoint, feedback or "Please modify.")
+        kernel.modify(checkpoint, feedback or "Please modify.")
         print("-> Modified.")
     else:
         print("-> Unknown choice, defaulting to reject.")
-        hitl.reject(checkpoint, "Unknown input — rejecting for safety.")
+        kernel.reject(checkpoint, "Unknown input — rejecting for safety.")
 
 
 # ── Main ──
@@ -136,8 +106,7 @@ async def main() -> None:
     kb_path = Path("./openclaw_knowledge_base")
     db_path = Path("./openclaw.db")
 
-    dam, cap_mgr, runner, hitl, store, llm = setup_kernel(kb_path, db_path)
-    checkpoint = create_checkpoint(cap_mgr)
+    kernel, llm = setup_kernel(kb_path, db_path)
 
     print("=== OpenClaw Agent (powered by Castor) ===\n")
     print(f"Knowledge base: {kb_path.resolve()}")
@@ -148,18 +117,17 @@ async def main() -> None:
         return await openclaw_agent(proxy, llm)
 
     # Run loop: execute → handle HITL → resume, until done.
-    while True:
-        result = await runner.run(agent_fn, checkpoint)
+    cp = await kernel.run(
+        agent_fn, budgets={"network": 50.0, "disk": 20.0}, pid="openclaw-001"
+    )
 
-        if result.status == "SUSPENDED_FOR_HITL":
-            store.save(result)
-            await handle_hitl(result, dam, cap_mgr, hitl)
-            # Create a new runner for replay-based resume.
-            runner = AgentRunner(dam, cap_mgr)
-            continue
+    while cp.status == "SUSPENDED_FOR_HITL":
+        await kernel.save(cp)
+        await handle_hitl(cp, kernel)
+        # Resume via replay
+        cp = await kernel.run(agent_fn, checkpoint=cp)
 
-        # Agent completed or failed.
-        break
+    result = cp
 
     # ── Print results ──
     print(f"\n=== Agent finished: {result.status} ===")
@@ -173,7 +141,7 @@ async def main() -> None:
     for name, cap in result.capabilities.items():
         print(f"  {name}: {cap.current_usage:.1f} / {cap.max_budget:.1f}")
 
-    store.save(result)
+    await kernel.save(result)
     print(f"\nCheckpoint saved to {db_path.resolve()}")
 
 

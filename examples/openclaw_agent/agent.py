@@ -39,19 +39,16 @@ async def openclaw_agent(proxy: SyscallProxy, llm: LLMSyscall) -> str:
     )
 
     # Step 2: Search the web
-    search_results = await proxy.syscall(
-        "web_search", {"query": "battery technology 2026 breakthroughs"}
+    search_results = await proxy.web_search(
+        query="battery technology 2026 breakthroughs"
     )
 
     # Step 3: Check existing notes for context
-    existing = await proxy.syscall("read_note", {"filename": "battery-tech.md"})
+    existing = await proxy.read_note(filename="battery-tech.md")
 
     # Step 4: Save research findings as a note
     findings = _format_findings(search_results, existing)
-    await proxy.syscall(
-        "write_note",
-        {"filename": "battery-tech.md", "content": findings},
-    )
+    await proxy.write_note(filename="battery-tech.md", content=findings)
 
     # Step 5: LLM composes a message
     message = await llm.infer(
@@ -61,16 +58,14 @@ async def openclaw_agent(proxy: SyscallProxy, llm: LLMSyscall) -> str:
     )
 
     # Step 6: Send the message (destructive — will suspend for HITL)
-    send_result = await proxy.syscall(
-        "send_message",
-        {"platform": "slack", "recipient": "#research", "body": message},
+    send_result = await proxy.send_message(
+        platform="slack", recipient="#research", body=message
     )
 
     # Step 7: Handle rejection gracefully
     if _is_rejected(send_result):
-        await proxy.syscall(
-            "write_note",
-            {"filename": "battery-tech-draft.md", "content": f"DRAFT: {message}"},
+        await proxy.write_note(
+            filename="battery-tech-draft.md", content=f"DRAFT: {message}"
         )
         return "Message rejected — saved as draft note."
 

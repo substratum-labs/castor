@@ -8,14 +8,10 @@ from __future__ import annotations
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor import Castor, CastorDam
 from castor.dam.registry import ToolRegistry
-from castor.dam.validator import CastorDam
 from castor.llm.wrapper import LLMSyscall
-from castor.models.checkpoint import AgentCheckpoint
-from castor.stream.hitl import HITLHandler
 from castor.stream.proxy import SyscallProxy
-from castor.stream.runner import AgentRunner
 from examples.openclaw_agent.agent import openclaw_agent
 from examples.openclaw_agent.tools import register_tools
 
@@ -63,23 +59,8 @@ def dam(registry, knowledge_base):
 
 
 @pytest.fixture
-def cap_mgr():
-    return CapabilityManager()
-
-
-@pytest.fixture
-def hitl():
-    return HITLHandler()
-
-
-def _make_checkpoint(cap_mgr):
-    caps = cap_mgr.create_capabilities({"network": 50.0, "disk": 20.0})
-    return AgentCheckpoint(
-        pid="test-openclaw-001",
-        status="RUNNING",
-        agent_function_name="openclaw_agent",
-        capabilities=caps,
-    )
+def kernel(dam):
+    return Castor(dam=dam)
 
 
 def _make_agent_fn(llm):
@@ -95,32 +76,29 @@ def _make_agent_fn(llm):
 
 
 class TestFullFlowApprove:
-    async def test_approve_completes_all_steps(
-        self, dam, cap_mgr, hitl, llm, llm_call_log
-    ):
+    async def test_approve_completes_all_steps(self, kernel, llm, llm_call_log):
         """Agent researches, suspends at send_message, human approves, completes."""
         agent_fn = _make_agent_fn(llm)
-        checkpoint = _make_checkpoint(cap_mgr)
 
         # Run 1: executes until send_message → suspends
-        runner1 = AgentRunner(dam, cap_mgr)
-        await runner1.run(agent_fn, checkpoint)
+        cp = await kernel.run(
+            agent_fn, budgets={"network": 50.0, "disk": 20.0}, pid="test-openclaw-001"
+        )
 
-        assert checkpoint.status == "SUSPENDED_FOR_HITL"
-        assert checkpoint.pending_hitl["tool_name"] == "send_message"
-        assert checkpoint.pending_hitl["arguments"]["platform"] == "slack"
+        assert cp.status == "SUSPENDED_FOR_HITL"
+        assert cp.pending_hitl["tool_name"] == "send_message"
+        assert cp.pending_hitl["arguments"]["platform"] == "slack"
         # 5 syscalls: llm, web_search, read_note, write_note, llm
-        assert len(checkpoint.syscall_log) == 5
+        assert len(cp.syscall_log) == 5
         assert len(llm_call_log) == 2
 
         # Human approves
-        await hitl.approve(checkpoint, dam, cap_mgr)
-        assert checkpoint.status == "RUNNING"
-        assert len(checkpoint.syscall_log) == 6  # + send_message
+        await kernel.approve(cp)
+        assert cp.status == "RUNNING"
+        assert len(cp.syscall_log) == 6  # + send_message
 
         # Run 2: replay from top, all cached, continues past HITL
-        runner2 = AgentRunner(dam, cap_mgr)
-        result = await runner2.run(agent_fn, checkpoint)
+        result = await kernel.run(agent_fn, checkpoint=cp)
 
         assert result.status == "COMPLETED"
         assert len(result.syscall_log) == 6
@@ -144,22 +122,21 @@ class TestFullFlowApprove:
 
 
 class TestRejectFallback:
-    async def test_reject_saves_draft_instead(self, dam, cap_mgr, hitl, llm):
+    async def test_reject_saves_draft_instead(self, kernel, llm):
         """When human rejects send_message, agent writes a draft note instead."""
         agent_fn = _make_agent_fn(llm)
-        checkpoint = _make_checkpoint(cap_mgr)
 
         # Run 1: suspends at send_message
-        runner1 = AgentRunner(dam, cap_mgr)
-        await runner1.run(agent_fn, checkpoint)
-        assert checkpoint.status == "SUSPENDED_FOR_HITL"
+        cp = await kernel.run(
+            agent_fn, budgets={"network": 50.0, "disk": 20.0}, pid="test-openclaw-001"
+        )
+        assert cp.status == "SUSPENDED_FOR_HITL"
 
         # Human rejects
-        hitl.reject(checkpoint, "Don't send to Slack, save as draft.")
+        kernel.reject(cp, "Don't send to Slack, save as draft.")
 
         # Run 2: replay → agent sees rejection → writes draft note
-        runner2 = AgentRunner(dam, cap_mgr)
-        result = await runner2.run(agent_fn, checkpoint)
+        result = await kernel.run(agent_fn, checkpoint=cp)
 
         assert result.status == "COMPLETED"
         # 5 original + send_message(rejected) + write_note(draft) = 7
@@ -179,19 +156,18 @@ class TestRejectFallback:
 
 
 class TestBudgetTracking:
-    async def test_budget_deducted_correctly(self, dam, cap_mgr, hitl, llm):
+    async def test_budget_deducted_correctly(self, kernel, llm):
         """Capability budgets reflect exact tool costs after full run."""
         agent_fn = _make_agent_fn(llm)
-        checkpoint = _make_checkpoint(cap_mgr)
 
         # Run to suspension
-        runner1 = AgentRunner(dam, cap_mgr)
-        await runner1.run(agent_fn, checkpoint)
+        cp = await kernel.run(
+            agent_fn, budgets={"network": 50.0, "disk": 20.0}, pid="test-openclaw-001"
+        )
 
         # Approve and resume
-        await hitl.approve(checkpoint, dam, cap_mgr)
-        runner2 = AgentRunner(dam, cap_mgr)
-        result = await runner2.run(agent_fn, checkpoint)
+        await kernel.approve(cp)
+        result = await kernel.run(agent_fn, checkpoint=cp)
 
         assert result.status == "COMPLETED"
 

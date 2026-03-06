@@ -10,17 +10,7 @@ Run:
 import asyncio
 import tempfile
 
-from castor import (
-    AgentCheckpoint,
-    AgentRunner,
-    CapabilityManager,
-    CastorDam,
-    CheckpointStore,
-    HITLHandler,
-    SyscallProxy,
-    castor_tool,
-)
-from castor.dam.registry import ToolRegistry
+from castor import Castor, SyscallProxy, castor_tool
 
 # ── Output helpers ──
 
@@ -43,32 +33,33 @@ def _ok(text: str) -> None:
 
 # ── 1. Register tools ──
 
-registry = ToolRegistry()
 call_log: list[str] = []  # tracks which tools actually execute
 
 
-@castor_tool(consumes="api", cost_per_use=1.0, registry=registry)
+@castor_tool(consumes="api", cost_per_use=1.0)
 async def web_search(query: str) -> list[str]:
     call_log.append("web_search")
     return [f"Result for '{query}'"]
 
 
-@castor_tool(consumes="api", cost_per_use=1.0, registry=registry)
+@castor_tool(consumes="api", cost_per_use=1.0)
 async def analyze(data: list[str]) -> str:
     call_log.append("analyze")
     return f"Analysis of {len(data)} items: deploy to staging recommended"
 
 
 @castor_tool(
-    consumes="api", cost_per_use=2.0,
-    destructive=True, requires_hitl=True, registry=registry,
+    consumes="api",
+    cost_per_use=2.0,
+    destructive=True,
+    requires_hitl=True,
 )
 async def deploy_code(target: str) -> str:
     call_log.append("deploy_code")
     return f"Deployed to {target}"
 
 
-@castor_tool(consumes="api", cost_per_use=0.5, registry=registry)
+@castor_tool(consumes="api", cost_per_use=0.5)
 async def notify_team(message: str) -> str:
     call_log.append("notify_team")
     return f"Team notified: {message}"
@@ -78,10 +69,10 @@ async def notify_team(message: str) -> str:
 
 
 async def deploy_agent(proxy: SyscallProxy) -> str:
-    results = await proxy.syscall("web_search", {"query": "deployment best practices"})
-    analysis = await proxy.syscall("analyze", {"data": results})
-    deploy_result = await proxy.syscall("deploy_code", {"target": "staging"})
-    await proxy.syscall("notify_team", {"message": deploy_result})
+    results = await proxy.web_search(query="deployment best practices")
+    analysis = await proxy.analyze(data=results)
+    deploy_result = await proxy.deploy_code(target="staging")
+    await proxy.notify_team(message=deploy_result)
     return f"Done: {analysis}"
 
 
@@ -89,31 +80,31 @@ async def deploy_agent(proxy: SyscallProxy) -> str:
 
 
 async def main() -> None:
-    dam = CastorDam(registry)
-    cap_mgr = CapabilityManager()
-
     with tempfile.TemporaryDirectory() as tmp:
-        store = CheckpointStore(f"sqlite:///{tmp}/demo.db")
+        kernel = Castor(
+            tools=[web_search, analyze, deploy_code, notify_team],
+            store=f"sqlite:///{tmp}/demo.db",
+        )
 
         # --- Run 1: agent executes until HITL suspend ---
         _h("Run 1: Agent executing")
-        caps = cap_mgr.create_capabilities({"api": 20.0})
-        checkpoint = AgentCheckpoint(
-            pid="deploy-001", status="RUNNING",
-            agent_function_name="deploy_agent", capabilities=caps,
+        checkpoint = await kernel.run(
+            deploy_agent,
+            budgets={"api": 20.0},
+            pid="deploy-001",
         )
-        runner1 = AgentRunner(dam, cap_mgr)
-        checkpoint = await runner1.run(deploy_agent, checkpoint)
 
         for record in checkpoint.syscall_log:
-            _live(f'{record.request["tool_name"]}(...) -> {record.response!r:.60s}')
+            _live(f"{record.request['tool_name']}(...) -> {record.response!r:.60s}")
 
         print(f"\n  Status: \033[33m{checkpoint.status}\033[0m")
-        print(f"  Pending: {checkpoint.pending_hitl['tool_name']}"
-              f"({checkpoint.pending_hitl['arguments']})")
+        print(
+            f"  Pending: {checkpoint.pending_hitl['tool_name']}"
+            f"({checkpoint.pending_hitl['arguments']})"
+        )
         print(f"  Completed syscalls: {len(checkpoint.syscall_log)}")
 
-        store.save(checkpoint)
+        await kernel.save(checkpoint)
         _ok("Checkpoint saved to SQLite")
 
         # --- Simulate process crash ---
@@ -121,20 +112,18 @@ async def main() -> None:
         print("  (New runner, loaded checkpoint from disk — proving serialization)")
         call_log.clear()
 
-        loaded = store.load("deploy-001")
+        loaded = kernel.load("deploy-001")
         _ok(f"Loaded checkpoint: PID={loaded.pid}, status={loaded.status}")
 
         # --- Human approves the destructive action ---
         _h("Human approves deployment to staging")
-        handler = HITLHandler()
-        await handler.approve(loaded, dam, cap_mgr)
-        store.save(loaded)
+        await kernel.approve(loaded)
+        await kernel.save(loaded)
         _ok(f"Status after approve: {loaded.status}")
 
         # --- Run 2: replay cached calls, then continue live ---
         _h("Run 2: Resuming from checkpoint")
-        runner2 = AgentRunner(dam, cap_mgr)
-        result = await runner2.run(deploy_agent, loaded)
+        result = await kernel.run(deploy_agent, checkpoint=loaded)
 
         # Distinguish replayed vs live calls
         for i, record in enumerate(result.syscall_log):
