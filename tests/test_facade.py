@@ -9,6 +9,7 @@ from castor import (
     SyscallProxy,
     castor_tool,
 )
+from castor.core import Castor
 from castor.dam.registry import ToolRegistry
 
 # ── Fixtures ──
@@ -147,3 +148,105 @@ class TestCallMethod:
 
         with pytest.raises(TypeError, match="not a @castor_tool"):
             await proxy.call(plain_func, x=1)
+
+
+# ── Task 4: Castor facade class ──
+
+
+class TestCastorFacade:
+    def test_create_with_default_registry(self):
+        """Castor() picks up tools from default_registry."""
+        from castor.dam.registry import default_registry
+
+        @castor_tool(consumes="api", cost_per_use=1.0)
+        async def default_tool(x: int) -> int:
+            return x * 2
+
+        try:
+            kernel = Castor()
+            assert kernel._dam.registry.has_tool("default_tool")
+        finally:
+            default_registry._tools.pop("default_tool", None)
+
+    def test_create_with_explicit_tools(self):
+        """Castor(tools=[...]) uses only the given tools."""
+        reg = ToolRegistry()
+
+        @castor_tool(consumes="api", cost_per_use=1.0, registry=reg)
+        async def explicit_tool(x: int) -> int:
+            return x + 1
+
+        kernel = Castor(tools=[explicit_tool])
+        assert kernel._dam.registry.has_tool("explicit_tool")
+
+    def test_create_with_custom_dam(self):
+        """Castor(dam=...) uses the provided dam."""
+        reg = ToolRegistry()
+        dam = CastorDam(reg)
+        kernel = Castor(dam=dam)
+        assert kernel._dam is dam
+
+    @pytest.mark.asyncio
+    async def test_run_simple_agent(self):
+        """kernel.run() creates checkpoint and runs agent."""
+        reg = ToolRegistry()
+
+        @castor_tool(consumes="api", cost_per_use=1.0, registry=reg)
+        async def echo(msg: str) -> str:
+            return f"echo: {msg}"
+
+        kernel = Castor(tools=[echo])
+
+        async def agent(proxy: SyscallProxy) -> str:
+            return await proxy.syscall("echo", msg="hi")
+
+        cp = await kernel.run(agent, budgets={"api": 10.0})
+        assert cp.status == "COMPLETED"
+        assert cp.result == "echo: hi"
+
+    @pytest.mark.asyncio
+    async def test_run_auto_generates_pid(self):
+        """kernel.run() auto-generates a PID from function name."""
+        reg = ToolRegistry()
+
+        @castor_tool(consumes="api", cost_per_use=1.0, registry=reg)
+        async def noop() -> str:
+            return "ok"
+
+        kernel = Castor(tools=[noop])
+
+        async def my_agent(proxy: SyscallProxy) -> str:
+            return "done"
+
+        cp = await kernel.run(my_agent, budgets={"api": 10.0})
+        assert cp.pid.startswith("my_agent-")
+
+    @pytest.mark.asyncio
+    async def test_run_with_explicit_pid(self):
+        """kernel.run(pid=...) uses the given PID."""
+        kernel = Castor(tools=[])
+
+        async def agent(proxy: SyscallProxy) -> str:
+            return "done"
+
+        cp = await kernel.run(agent, pid="custom-pid")
+        assert cp.pid == "custom-pid"
+
+    @pytest.mark.asyncio
+    async def test_run_without_budgets_is_unlimited(self):
+        """kernel.run() without budgets allows unlimited tool calls."""
+        reg = ToolRegistry()
+
+        @castor_tool(consumes="api", cost_per_use=1.0, registry=reg)
+        async def ping() -> str:
+            return "pong"
+
+        kernel = Castor(tools=[ping])
+
+        async def agent(proxy: SyscallProxy) -> str:
+            for _ in range(100):
+                await proxy.syscall("ping")
+            return "done"
+
+        cp = await kernel.run(agent)
+        assert cp.status == "COMPLETED"
