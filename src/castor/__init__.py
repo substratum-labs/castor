@@ -6,6 +6,7 @@ __version__ = "0.1.0"
 # ── API stability markers ──
 from castor.api_status import experimental, stable
 from castor.capability.manager import CapabilityManager
+from castor.core import Castor
 from castor.dam.decorator import castor_tool
 from castor.dam.validator import CastorDam
 from castor.llm.wrapper import LLMSyscall, StreamingLLMSyscall
@@ -23,6 +24,7 @@ from castor.stream.persistence import CheckpointStore
 from castor.stream.proxy import SyscallProxy
 from castor.stream.runner import AgentRunner
 
+stable(Castor)
 stable(SyscallProxy)
 stable(AgentCheckpoint)
 stable(SyscallRecord)
@@ -52,6 +54,7 @@ __all__ = [
     "AgentRunner",
     "Capability",
     "CapabilityManager",
+    "Castor",
     "CastorDam",
     "CastorLodge",
     "CastorMessage",

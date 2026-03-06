@@ -323,3 +323,20 @@ class TestCastorHITL:
         cp = await hitl_kernel.run(agent, checkpoint=cp)
         assert cp.status == "COMPLETED"
         assert "use staging instead" in cp.result
+
+
+# ── Task 6: Public exports ──
+
+
+class TestPublicExports:
+    def test_import_castor_from_top_level(self):
+        """Castor is importable from top-level package."""
+        from castor import Castor
+
+        assert Castor is not None
+
+    def test_minimal_import_set(self):
+        """Quickstart only needs 3 imports."""
+        from castor import Castor, SyscallProxy, castor_tool
+
+        assert all(x is not None for x in [Castor, SyscallProxy, castor_tool])
