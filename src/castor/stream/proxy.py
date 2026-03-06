@@ -560,3 +560,22 @@ class SyscallProxy:
         """Append a record to the log and advance replay index to stay in sync."""
         self.checkpoint.syscall_log.append(record)
         self._replay_index = len(self.checkpoint.syscall_log)
+
+    def __getattr__(self, name: str) -> Any:
+        """Enable proxy.tool_name(...) style calls.
+
+        Returns an async callable that delegates to syscall().
+        Only triggers for names not found via normal attribute lookup.
+        """
+        # Check if it's a registered tool
+        if self._dam.registry.has_tool(name):
+
+            async def _tool_call(**kwargs: Any) -> Any:
+                return await self.syscall(name, **kwargs)
+
+            return _tool_call
+
+        raise AttributeError(
+            f"'{type(self).__name__}' has no attribute '{name}' "
+            f"and '{name}' is not a registered tool"
+        )

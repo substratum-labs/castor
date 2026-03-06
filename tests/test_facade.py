@@ -82,3 +82,39 @@ class TestSyscallKwargs:
         """syscall() raises if both positional dict and kwargs given."""
         with pytest.raises(TypeError, match="Cannot pass both"):
             await proxy.syscall("search", {"query": "hello"}, query="hello")
+
+
+# ── Task 2: dynamic tool calls via __getattr__ ──
+
+
+class TestDynamicToolCalls:
+    @pytest.mark.asyncio
+    async def test_proxy_dynamic_call(self, proxy):
+        """proxy.search(query='hello') calls syscall('search', ...)."""
+        result = await proxy.search(query="hello")
+        assert result == ["Result: hello"]
+
+    @pytest.mark.asyncio
+    async def test_proxy_dynamic_multiple_args(self, proxy):
+        """proxy.add(a=2, b=3) works with multiple params."""
+        result = await proxy.add(a=2, b=3)
+        assert result == 5
+
+    @pytest.mark.asyncio
+    async def test_proxy_dynamic_logs_syscall(self, proxy):
+        """Dynamic calls go through syscall and appear in syscall_log."""
+        await proxy.search(query="test")
+        assert len(proxy.checkpoint.syscall_log) == 1
+        record = proxy.checkpoint.syscall_log[0]
+        assert record.request["tool_name"] == "search"
+        assert record.request["arguments"] == {"query": "test"}
+
+    def test_proxy_real_attrs_not_intercepted(self, proxy):
+        """Real attributes like checkpoint, is_replaying are not intercepted."""
+        _ = proxy.checkpoint  # should not raise
+        _ = proxy.is_replaying  # should not raise
+
+    def test_proxy_unknown_tool_raises(self, proxy):
+        """Accessing a non-existent tool raises AttributeError."""
+        with pytest.raises(AttributeError):
+            proxy.nonexistent_tool_xyz
