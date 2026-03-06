@@ -10,14 +10,11 @@ Run:
 import asyncio
 
 from castor import (
-    AgentCheckpoint,
-    AgentRunner,
-    CapabilityManager,
-    CastorDam,
+    Castor,
+    CastorTask,
     StreamingLLMSyscall,
     SyscallProxy,
 )
-from castor.dam.registry import ToolRegistry
 
 # ── Output helpers ──
 
@@ -93,23 +90,23 @@ async def fake_llm_stream(model: str, prompt: str):
 
 # ── 2. Set up kernel with content safety callback ──
 
-registry = ToolRegistry()
-_runner_ref: AgentRunner | None = None
+_kernel_ref: Castor | None = None
+_task_ref: CastorTask | None = None
 
 
 def content_safety_check(chunk: str, accumulated: str) -> None:
     """on_chunk callback: scan accumulated text for policy violations."""
     if "DELETE /production" in accumulated:
         _err(f"POLICY VIOLATION detected in: ...{accumulated[-40:]!r}")
-        if _runner_ref is not None:
-            _runner_ref.preempt(
+        if _kernel_ref is not None and _task_ref is not None:
+            _kernel_ref.preempt(
+                _task_ref,
                 "CONTENT_POLICY_VIOLATION",
                 {"pattern": "DELETE /production", "position": len(accumulated)},
             )
 
 
 llm = StreamingLLMSyscall(
-    registry,
     stream_fn=fake_llm_stream,
     consumes="api_usd",
     cost_per_use=1.0,
@@ -117,8 +114,7 @@ llm = StreamingLLMSyscall(
     on_chunk=content_safety_check,
 )
 
-dam = CastorDam(registry)
-cap_mgr = CapabilityManager()
+kernel = Castor(tools=[llm])
 
 
 # ── 3. Define agent ──
@@ -138,35 +134,28 @@ async def planning_agent(proxy: SyscallProxy) -> str:
 
 
 async def main() -> None:
-    global _runner_ref, _use_safe
+    global _kernel_ref, _task_ref, _use_safe
+
+    _kernel_ref = kernel
 
     # --- First run: dangerous content triggers preemption ---
     _h("Streaming LLM with Content Safety")
-    caps = cap_mgr.create_capabilities({"api_usd": 5.0})
-    checkpoint = AgentCheckpoint(
-        pid="preempt-001",
-        status="RUNNING",
-        agent_function_name="planning_agent",
-        capabilities=caps,
-    )
-
-    runner = AgentRunner(dam, cap_mgr)
-    _runner_ref = runner
 
     print("  Streaming tokens:")
-    task = await runner.run_as_task(planning_agent, checkpoint)
+    task = await kernel.run_async(
+        planning_agent,
+        budgets={"api_usd": 5.0},
+        pid="preempt-001",
+    )
+    _task_ref = task
 
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    checkpoint = await task  # blocks until completion or preemption
 
     print(f"\n  Status: \033[33m{checkpoint.status}\033[0m")
     print(f"  Preemption reason: {checkpoint.preemption_reason}")
     if checkpoint.partial_work:
         print(f"  Partial work: {checkpoint.partial_work!r:.70s}")
-    budget = checkpoint.capabilities["api_usd"]
-    charged = budget.current_usage
+    charged = checkpoint.budget_used("api_usd")
     print(f"  Budget charged: ${charged:.2f} (proportional) instead of $1.00 flat rate")
 
     # --- Resume: agent adapts based on preemption context ---
@@ -174,17 +163,15 @@ async def main() -> None:
     checkpoint.status = "RUNNING"
     _use_safe = True  # Switch to safe LLM response
 
-    runner2 = AgentRunner(dam, cap_mgr)
-    _runner_ref = runner2
-    checkpoint = await runner2.run(planning_agent, checkpoint)
+    task2 = await kernel.run_async(planning_agent, checkpoint=checkpoint)
+    _task_ref = task2
+    checkpoint = await task2
 
     print(f"\n  Status: \033[32m{checkpoint.status}\033[0m")
     print(f"  Result: {checkpoint.result!r:.70s}")
-    final_budget = checkpoint.capabilities["api_usd"]
-    print(
-        f"  Total budget: ${final_budget.current_usage:.2f}"
-        f"/${final_budget.max_budget:.2f} used"
-    )
+    total_used = checkpoint.budget_used("api_usd")
+    total_budget = total_used + checkpoint.budget_remaining("api_usd")
+    print(f"  Total budget: ${total_used:.2f}/${total_budget:.2f} used")
 
 
 if __name__ == "__main__":

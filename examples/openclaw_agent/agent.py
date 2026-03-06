@@ -86,4 +86,6 @@ def _format_findings(search_results: Any, existing_note: Any) -> str:
 
 def _is_rejected(result: Any) -> bool:
     """Check if a syscall result indicates HITL rejection."""
+    if hasattr(result, "rejected"):
+        return result.rejected
     return isinstance(result, dict) and result.get("status") == "HITL_REJECTED"

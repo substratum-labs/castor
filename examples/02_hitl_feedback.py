@@ -62,30 +62,28 @@ async def email_agent(proxy: SyscallProxy) -> str:
     )
 
     # Handle rejection: save as draft instead
-    if isinstance(result, dict) and result.get("status") == "HITL_REJECTED":
-        feedback = result["human_feedback"]
+    if result.rejected:
         draft = await proxy.save_draft(
             title="Q4 Email Draft",
-            content=f"Original email (rejected: {feedback}). {findings}",
+            content=f"Original email (rejected: {result.feedback}). {findings}",
         )
         return f"Email rejected. {draft}"
 
     # Handle modification: revise and resend
-    if isinstance(result, dict) and result.get("status") == "HITL_MODIFIED":
-        feedback = result["human_feedback"]
+    if result.modified:
         result = await proxy.send_email(
             to="team@company.com, manager@company.com",
             subject="Q4 Results (Revised)",
-            body=f"Brief summary per feedback: '{feedback}'. {findings}",
+            body=f"Brief summary per feedback: '{result.feedback}'. {findings}",
         )
-        return f"Email revised and sent. {result}"
+        return f"Email revised and sent. {result.value}"
 
-    return f"Email approved and sent. {result}"
+    return f"Email approved and sent. {result.value}"
 
 
 # ── 3. Run three scenarios ──
 
-kernel = Castor(tools=[research, send_email, save_draft])
+kernel = Castor(tools=[research, send_email, save_draft], structured_results=True)
 
 
 async def run_scenario(
@@ -97,8 +95,7 @@ async def run_scenario(
     # Run 1: agent hits send_email, suspends
     cp = await kernel.run(email_agent, budgets={"api": 20.0}, pid=f"email-{name}")
 
-    pending = cp.pending_hitl
-    print(f"  Agent wants: send_email(to={pending['arguments']['to']!r})")
+    print(f"  Agent wants: send_email(to={cp.pending_args['to']!r})")
 
     # Apply human decision
     if decision == "approve":
@@ -115,7 +112,7 @@ async def run_scenario(
     cp = await kernel.run(email_agent, checkpoint=cp)
 
     # Modification may trigger a second HITL (revised send_email)
-    if cp.status == "SUSPENDED_FOR_HITL":
+    if cp.is_suspended:
         _ok("Revised email needs approval -> auto-approving")
         await kernel.approve(cp)
         cp = await kernel.run(email_agent, checkpoint=cp)
@@ -125,7 +122,7 @@ async def run_scenario(
         "decision": decision,
         "syscalls": len(cp.syscall_log),
         "result": cp.result,
-        "budget_used": cp.capabilities["api"].current_usage,
+        "budget_used": cp.budget_used("api"),
     }
 
 

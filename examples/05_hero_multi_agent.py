@@ -10,7 +10,6 @@ Run:
 import asyncio
 
 from castor import (
-    AgentRegistry,
     Castor,
     SyscallProxy,
     castor_agent,
@@ -64,12 +63,10 @@ async def send_message(platform: str, channel: str, body: str) -> str:
     return f"Message sent to {platform}#{channel}"
 
 
-# ── 2. Register agents ──
-
-agent_registry = AgentRegistry()
+# ── 2. Register agents (auto-collected by default_agent_registry) ──
 
 
-@castor_agent(name="researcher", registry=agent_registry)
+@castor_agent(name="researcher")
 async def researcher(proxy: SyscallProxy) -> str:
     results = await proxy.web_search(query="AI safety 2026")
     await proxy.write_note(
@@ -79,7 +76,7 @@ async def researcher(proxy: SyscallProxy) -> str:
     return f"Research complete: {len(results)} findings"
 
 
-@castor_agent(name="publisher", registry=agent_registry)
+@castor_agent(name="publisher")
 async def publisher(proxy: SyscallProxy) -> str:
     note = await proxy.read_note(filename="findings.md")
     result = await proxy.send_message(
@@ -96,26 +93,19 @@ async def publisher(proxy: SyscallProxy) -> str:
 async def coordinator(proxy: SyscallProxy) -> str:
     # Spawn two children with delegated budgets
     print("  Spawning child agents...")
-    handle_a = await proxy.syscall(
-        "spawn_agent_async",
-        agent_name="researcher",
-        capabilities={"network": 5.0, "disk": 3.0},
-    )
+    caps = {"network": 5.0, "disk": 3.0}
+    handle_a = await proxy.spawn("researcher", capabilities=caps)
     _ok(f"researcher spawned (handle={handle_a})")
 
-    handle_b = await proxy.syscall(
-        "spawn_agent_async",
-        agent_name="publisher",
-        capabilities={"network": 5.0, "disk": 3.0},
-    )
+    handle_b = await proxy.spawn("publisher", capabilities=caps)
     _ok(f"publisher spawned (handle={handle_b})")
 
     # Join — waits for children to complete (or suspends if child needs HITL)
     print("\n  Joining children...")
-    result_a = await proxy.syscall("join_agent", handle=handle_a)
+    result_a = await proxy.join(handle_a)
     _ok(f"researcher: {result_a}")
 
-    result_b = await proxy.syscall("join_agent", handle=handle_b)
+    result_b = await proxy.join(handle_b)
     _ok(f"publisher: {result_b}")
 
     return f"Coordinated: [{result_a}] + [{result_b}]"
@@ -125,10 +115,7 @@ async def coordinator(proxy: SyscallProxy) -> str:
 
 
 async def main() -> None:
-    kernel = Castor(
-        tools=[web_search, write_note, read_note, send_message],
-        agent_registry=agent_registry,
-    )
+    kernel = Castor(tools=[web_search, write_note, read_note, send_message])
 
     _h("Castor Multi-Agent Demo")
     print("  Coordinator PID: coord-001")
@@ -141,20 +128,18 @@ async def main() -> None:
         pid="coord-001",
     )
 
-    if cp.status == "SUSPENDED_FOR_HITL":
+    if cp.is_suspended:
         _h("HITL Propagation")
         _warn("Child suspended -> Parent suspended")
-        pending = cp.pending_hitl
-        _warn(f"Pending: {pending['tool_name']}()")
+        _warn(f"Pending: {cp.pending_tool}()")
 
         # Inspect child checkpoint
         last_record = cp.syscall_log[-1]
         child_cp = last_record.child_checkpoint
-        if child_cp and child_cp.pending_hitl:
-            child_pending = child_cp.pending_hitl
+        if child_cp and child_cp.is_suspended:
             print(f"  Child PID: {child_cp.pid}")
-            print(f"  Child tool: {child_pending['tool_name']}")
-            print(f"  Child args: {child_pending['arguments']}")
+            print(f"  Child tool: {child_cp.pending_tool}")
+            print(f"  Child args: {child_cp.pending_args}")
 
         # Human approves the child's action through the parent
         _h("Human approves child's message send")
@@ -169,31 +154,30 @@ async def main() -> None:
 
     # ── Agent Tree ──
     _h("Agent Tree")
+
     # Parent
-    net = cp.capabilities["network"]
-    disk = cp.capabilities["disk"]
+    def _fmt(c, res: str) -> str:
+        u = c.budget_used(res)
+        return f"{res}={u:.1f}/{u + c.budget_remaining(res):.1f}"
+
     print(
         f"  {cp.pid} (coordinator)"
         f"  {cp.status}"
-        f"  net={net.current_usage:.1f}/{net.max_budget:.1f}"
-        f"  disk={disk.current_usage:.1f}/{disk.max_budget:.1f}"
+        f"  {_fmt(cp, 'network')}"
+        f"  {_fmt(cp, 'disk')}"
     )
 
     # Children (from syscall log)
     for record in cp.syscall_log:
         if record.child_checkpoint:
             child = record.child_checkpoint
-            c_status = child.status
-            c_caps = child.capabilities
-            net_str = ""
-            disk_str = ""
-            if "network" in c_caps:
-                c = c_caps["network"]
-                net_str = f"  net={c.current_usage:.1f}/{c.max_budget:.1f}"
-            if "disk" in c_caps:
-                c = c_caps["disk"]
-                disk_str = f"  disk={c.current_usage:.1f}/{c.max_budget:.1f}"
-            print(f"    +-- {child.pid}  {c_status}{net_str}{disk_str}")
+            parts = []
+            if "network" in child.capabilities:
+                parts.append(_fmt(child, "network"))
+            if "disk" in child.capabilities:
+                parts.append(_fmt(child, "disk"))
+            extra = "  ".join(parts)
+            print(f"    +-- {child.pid}  {child.status}  {extra}")
 
     # ── Final Result ──
     _h("Final Result")

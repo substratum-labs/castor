@@ -56,8 +56,8 @@ async def main() -> None:
     cp = await kernel.run(
         research_agent, budgets={"api": 10.0, "disk": 5.0}, pid="quickstart-001"
     )
-    print(f"  Status: {cp.status}")
-    print(f"  Pending HITL: {cp.pending_hitl}")
+    print(f"  Suspended: {cp.is_suspended}")
+    print(f"  Pending: {cp.pending_tool}({cp.pending_args})")
 
     # Human approves the destructive operation
     print("\n=== Human approves the delete ===")
@@ -72,10 +72,10 @@ async def main() -> None:
 
     # Budget check
     print("\n=== Budget usage ===")
-    for name, cap in cp.capabilities.items():
-        used = cap.current_usage
-        total = cap.max_budget
-        print(f"  {name}: {used}/{total} used")
+    for name in cp.capabilities:
+        used = cp.budget_used(name)
+        remaining = cp.budget_remaining(name)
+        print(f"  {name}: {used}/{used + remaining} used")
 
 
 if __name__ == "__main__":

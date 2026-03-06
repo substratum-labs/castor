@@ -98,10 +98,7 @@ async def main() -> None:
             _live(f"{record.request['tool_name']}(...) -> {record.response!r:.60s}")
 
         print(f"\n  Status: \033[33m{checkpoint.status}\033[0m")
-        print(
-            f"  Pending: {checkpoint.pending_hitl['tool_name']}"
-            f"({checkpoint.pending_hitl['arguments']})"
-        )
+        print(f"  Pending: {checkpoint.pending_tool}({checkpoint.pending_args})")
         print(f"  Completed syscalls: {len(checkpoint.syscall_log)}")
 
         await kernel.save(checkpoint)
@@ -142,8 +139,10 @@ async def main() -> None:
         print(f"  Status: \033[32m{result.status}\033[0m")
         print(f"  Result: {result.result}")
         print(f"  Syscalls: {total} total ({replayed} replayed, {live} new)")
-        for name, cap in result.capabilities.items():
-            print(f"  Budget {name}: {cap.current_usage}/{cap.max_budget} used")
+        for name in result.capabilities:
+            used = result.budget_used(name)
+            total = used + result.budget_remaining(name)
+            print(f"  Budget {name}: {used}/{total} used")
 
 
 if __name__ == "__main__":

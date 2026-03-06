@@ -65,12 +65,9 @@ async def research_loop(proxy: SyscallProxy) -> str:
         if is_exhausted:
             print("    search    \033[31mINSUFFICIENT\033[0m")
             break
-        caps = proxy.checkpoint.capabilities
-        api = caps["api"]
-        print(
-            f"    search    api: "
-            f"{_budget_bar('api', api.current_usage, api.max_budget)}"
-        )
+        api_used = proxy.checkpoint.budget_used("api")
+        api_total = api_used + proxy.budget("api")
+        print(f"    search    api: {_budget_bar('api', api_used, api_total)}")
 
         # Summarize
         result = await proxy.summarize(data=str(result))
@@ -79,20 +76,16 @@ async def research_loop(proxy: SyscallProxy) -> str:
             and result.get("status") == "INSUFFICIENT_CAPABILITY"
         )
         if is_exhausted:
-            llm = caps["llm"]
-            remain = llm.max_budget - llm.current_usage
+            remain = proxy.budget("llm")
             print(
                 f"    summarize \033[31mINSUFFICIENT "
                 f"(need 2.0, have {remain:.1f})\033[0m"
             )
             completed.append(f"{topic}: searched but NOT summarized")
             break
-        caps = proxy.checkpoint.capabilities
-        llm = caps["llm"]
-        print(
-            f"    summarize llm: "
-            f"{_budget_bar('llm', llm.current_usage, llm.max_budget)}"
-        )
+        llm_used = proxy.checkpoint.budget_used("llm")
+        llm_total = llm_used + proxy.budget("llm")
+        print(f"    summarize llm: {_budget_bar('llm', llm_used, llm_total)}")
         completed.append(f"{topic}: {result}")
 
     return f"Completed {len(completed)}/{len(TOPICS)} topics"
@@ -118,12 +111,11 @@ async def main() -> None:
 
     # Summary
     _h("Budget Summary")
-    for name, cap in checkpoint.capabilities.items():
-        pct = (cap.current_usage / cap.max_budget * 100) if cap.max_budget > 0 else 0
-        print(
-            f"  {name}: {_budget_bar(name, cap.current_usage, cap.max_budget)}"
-            f"  ({pct:.0f}% used)"
-        )
+    for name in checkpoint.capabilities:
+        used = checkpoint.budget_used(name)
+        total = used + checkpoint.budget_remaining(name)
+        pct = (used / total * 100) if total > 0 else 0
+        print(f"  {name}: {_budget_bar(name, used, total)}  ({pct:.0f}% used)")
     print(f"\n  Status: \033[32m{checkpoint.status}\033[0m")
     print(f"  Result: {checkpoint.result}")
     print(f"  Syscalls executed: {len(checkpoint.syscall_log)}")

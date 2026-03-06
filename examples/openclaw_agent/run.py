@@ -7,7 +7,7 @@ Usage::
 Demonstrates the full Castor kernel lifecycle:
 1. Tool registration and LLM wrapper setup
 2. Agent execution with capability budgets
-3. HITL suspension and interactive approval
+3. HITL suspension with built-in ``interactive`` policy
 4. Checkpoint persistence and replay-based resume
 """
 
@@ -19,7 +19,7 @@ from pathlib import Path
 from agent import openclaw_agent
 from tools import register_tools
 
-from castor import Castor, CastorDam
+from castor import Castor, CastorDam, interactive
 from castor.dam.registry import ToolRegistry
 from castor.llm.wrapper import LLMSyscall
 from castor.stream.proxy import SyscallProxy
@@ -64,41 +64,6 @@ def setup_kernel(kb_path: Path, db_path: Path) -> tuple[Castor, LLMSyscall]:
     return kernel, llm
 
 
-# ── Interactive HITL handler ──
-
-
-async def handle_hitl(
-    checkpoint: AgentCheckpoint,  # noqa: F821
-    kernel: Castor,
-) -> None:
-    pending = checkpoint.pending_hitl
-    print("\n--- HUMAN-IN-THE-LOOP REQUIRED ---")
-    print(f"Tool:      {pending['tool_name']}")
-    print(f"Arguments: {pending['arguments']}")
-    print()
-    print("  [a] Approve")
-    print("  [r] Reject")
-    print("  [m] Modify (provide feedback)")
-    print()
-
-    choice = input("Your choice: ").strip().lower()
-
-    if choice == "a":
-        await kernel.approve(checkpoint)
-        print("-> Approved.")
-    elif choice == "r":
-        feedback = input("Rejection reason: ").strip()
-        kernel.reject(checkpoint, feedback or "Rejected by user.")
-        print("-> Rejected.")
-    elif choice == "m":
-        feedback = input("Modification feedback: ").strip()
-        kernel.modify(checkpoint, feedback or "Please modify.")
-        print("-> Modified.")
-    else:
-        print("-> Unknown choice, defaulting to reject.")
-        kernel.reject(checkpoint, "Unknown input — rejecting for safety.")
-
-
 # ── Main ──
 
 
@@ -116,18 +81,14 @@ async def main() -> None:
     async def agent_fn(proxy: SyscallProxy) -> str:
         return await openclaw_agent(proxy, llm)
 
-    # Run loop: execute → handle HITL → resume, until done.
-    cp = await kernel.run(
-        agent_fn, budgets={"network": 50.0, "disk": 20.0}, pid="openclaw-001"
+    # Run with built-in interactive HITL policy — handles the full
+    # suspend/approve/resume loop automatically.
+    result = await kernel.run_until_complete(
+        agent_fn,
+        budgets={"network": 50.0, "disk": 20.0},
+        on_hitl=interactive,
+        pid="openclaw-001",
     )
-
-    while cp.status == "SUSPENDED_FOR_HITL":
-        await kernel.save(cp)
-        await handle_hitl(cp, kernel)
-        # Resume via replay
-        cp = await kernel.run(agent_fn, checkpoint=cp)
-
-    result = cp
 
     # ── Print results ──
     print(f"\n=== Agent finished: {result.status} ===")
@@ -138,8 +99,11 @@ async def main() -> None:
         print(f"  {i + 1}. {tool}{hitl_tag}")
 
     print("\nBudget usage:")
-    for name, cap in result.capabilities.items():
-        print(f"  {name}: {cap.current_usage:.1f} / {cap.max_budget:.1f}")
+    for name in result.capabilities:
+        print(
+            f"  {name}: {result.budget_used(name):.1f}"
+            f" / {result.budget_used(name) + result.budget_remaining(name):.1f}"
+        )
 
     await kernel.save(result)
     print(f"\nCheckpoint saved to {db_path.resolve()}")
