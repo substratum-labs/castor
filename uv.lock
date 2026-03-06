@@ -352,6 +352,9 @@ docs = [
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extra = ["python"] },
 ]
+mcp = [
+    { name = "fastmcp" },
+]
 observability = [
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
@@ -374,6 +377,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=3.1.0" },
     { name = "litellm", marker = "extra == 'demo'", specifier = ">=1.0" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5" },
@@ -386,7 +390,7 @@ requires-dist = [
     { name = "smolagents", marker = "extra == 'smolagents'", specifier = ">=1.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },
 ]
-provides-extras = ["observability", "smolagents", "pydantic-ai", "demo", "docs"]
+provides-extras = ["observability", "smolagents", "pydantic-ai", "demo", "docs", "mcp"]
 
 [package.metadata.requires-dev]
 dev = [

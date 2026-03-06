@@ -45,9 +45,13 @@ docs = [
     "mkdocs-material>=9.5",
     "mkdocstrings[python]>=0.27",
 ]
+mcp = [
+    "fastmcp>=3.1.0",
+]
 
 [project.scripts]
 castor = "castor.cli:main"
+castor-mcp = "castor.mcp.server:main"
 
 [project.urls]
 Homepage = "https://github.com/substrate-lab/castor"
