@@ -52,10 +52,9 @@ Four kernel subsystems, all in `src/castor/`:
 - Never throw raw Python exceptions to user space — wrap in `SyscallResponse` with feedback
 - Prefer `dict[str, Any]` over `Dict[str, Any]` (Python 3.11+ builtins)
 
-## Design Documents
+## Documentation
 
-Detailed architecture and design rationale live in `docs/`:
-- `docs/PRD.md` — Product requirements
-- `docs/ADD.md` — Architecture design
-- `docs/DDD.md` — Detailed design (canonical source of truth for data models)
-- `docs/DESIGN_REVIEW.md` — Review notes and open questions
+Three repos:
+- `castor` (this repo) — Source code + `docs/` for MkDocs API reference (mkdocstrings)
+- `../castor-docs/` — Docusaurus site (whitepaper, blog, architecture guides) — **public**
+- `../castor-internal/` — Design docs (PRD/ADD/DDD), plans, worklog — **private**

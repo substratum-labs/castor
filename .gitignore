@@ -29,6 +29,12 @@ venv/
 .coverage
 htmlcov/
 
+# MkDocs build output
+site/
+
+# Internal design documents (local only)
+design/
+
 # Worktrees
 .worktrees/
 

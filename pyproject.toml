@@ -36,6 +36,15 @@ smolagents = [
 pydantic_ai = [
     "pydantic-ai>=0.1",
 ]
+demo = [
+    "rich>=13.0",
+    "litellm>=1.0",
+]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.27",
+]
 
 [project.scripts]
 castor = "castor.cli:main"
