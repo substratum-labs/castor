@@ -258,12 +258,11 @@ def act2() -> None:
         )
     except HITLSuspendError as exc:
         suspended_checkpoint = exc.checkpoint
-        pending = suspended_checkpoint.pending_hitl
         print(
             f"\n  *** SUSPENDED! ***"
-            f"\n  Pending: {pending['tool_name']}"
-            f" to {pending['arguments']['recipient']}"
-            f"\n  Status: {suspended_checkpoint.status}"
+            f"\n  Pending: {suspended_checkpoint.pending_tool}"
+            f" to {suspended_checkpoint.pending_args['recipient']}"
+            f"\n  Suspended: {suspended_checkpoint.is_suspended}"
         )
 
     assert suspended_checkpoint is not None

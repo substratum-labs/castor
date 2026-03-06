@@ -60,7 +60,9 @@ class HITLSuspendError(Exception):
 
     def __init__(self, checkpoint: AgentCheckpoint):
         self.checkpoint = checkpoint
-        super().__init__(f"Suspended for HITL: {checkpoint.pending_hitl}")
+        super().__init__(
+            f"Suspended for HITL: {checkpoint.pending_tool}({checkpoint.pending_args})"
+        )
 
 
 class ReplayDivergenceError(Exception):
@@ -218,11 +220,12 @@ class CastorResilientAgent(ToolCallingAgent):
 
     def budget_summary(self) -> dict[str, dict[str, float]]:
         """Return current budget usage for display."""
+        cp = self._checkpoint
         return {
             name: {
-                "used": cap.current_usage,
-                "max": cap.max_budget,
-                "remaining": cap.max_budget - cap.current_usage,
+                "used": cp.budget_used(name),
+                "max": cp.budget_used(name) + cp.budget_remaining(name),
+                "remaining": cp.budget_remaining(name),
             }
-            for name, cap in self.capabilities.items()
+            for name in self.capabilities
         }

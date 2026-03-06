@@ -201,11 +201,10 @@ async def act2_hitl_suspend_resume() -> None:
         await agent.run("Buy $500 of AAPL")
     except HITLSuspendError as e:
         cp = e.checkpoint
-        pending = cp.pending_hitl
         log_len = len(cp.syscall_log)
-        print(f"    [SUSPENDED] Pending approval: {pending}")
+        print(f"    [SUSPENDED] Pending: {cp.pending_tool}({cp.pending_args})")
         print(f"    Recorded {log_len} syscalls before suspension")
-        print(f"    Status: {cp.status}")
+        print(f"    Suspended: {cp.is_suspended}")
 
     # ── Phase 2: Human approves, agent resumes ──
     print("\n  Phase 2: Human approves trade, resuming...")
