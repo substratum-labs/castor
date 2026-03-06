@@ -13,7 +13,7 @@ def registry():
 
 class TestCastorToolDecorator:
     def test_registers_sync_function(self, registry):
-        @castor_tool(consumes="network_read", registry=registry)
+        @castor_tool(consumes="network_read", cost_per_use=1.0, registry=registry)
         def web_search(query: str, max_results: int = 10) -> list:
             return []
 

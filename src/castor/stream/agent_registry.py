@@ -46,23 +46,30 @@ class AgentRegistry:
         return sorted(self._agents.keys())
 
 
+default_agent_registry = AgentRegistry()
+
+
 def castor_agent(
     name: str | None = None,
     *,
-    registry: AgentRegistry,
+    registry: AgentRegistry | None = None,
 ) -> Callable:
     """Decorator to register an async function as a Castor agent.
 
     Usage::
 
-        @castor_agent(name="researcher", registry=my_registry)
+        @castor_agent(name="researcher")
         async def researcher_agent(proxy: SyscallProxy) -> str:
             ...
+
+    If ``registry`` is not provided, the agent is registered in the
+    module-level ``default_agent_registry`` (mirroring ``@castor_tool``).
     """
+    target_registry = registry or default_agent_registry
 
     def decorator(fn: AgentFn) -> AgentFn:
         agent_name = name or fn.__name__
-        registry.register(agent_name, fn)
+        target_registry.register(agent_name, fn)
         return fn
 
     return decorator

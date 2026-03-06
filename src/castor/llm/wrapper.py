@@ -103,12 +103,14 @@ class LLMSyscall:
 
     def __init__(
         self,
-        registry: ToolRegistry,
-        call_fn: Callable[..., Any],
+        registry: ToolRegistry | None = None,
+        call_fn: Callable[..., Any] | None = None,
         consumes: str = "api_usd",
         cost_per_use: float = 1.0,
         tool_name: str = DEFAULT_TOOL_NAME,
     ) -> None:
+        if call_fn is None:
+            raise TypeError("call_fn is required")
         self._tool_name = tool_name
         self._call_fn = call_fn
 
@@ -137,7 +139,9 @@ class LLMSyscall:
             func=call_fn,
             is_async=True,
         )
-        registry.register(metadata)
+        self._metadata = metadata
+        if registry is not None:
+            registry.register(metadata)
 
     async def infer(self, proxy: SyscallProxy, **kwargs: Any) -> Any:
         """Issue an LLM inference call through the proxy.
@@ -186,8 +190,8 @@ class StreamingLLMSyscall:
 
     def __init__(
         self,
-        registry: ToolRegistry,
-        stream_fn: Callable[..., AsyncIterator[str]],
+        registry: ToolRegistry | None = None,
+        stream_fn: Callable[..., AsyncIterator[str]] | None = None,
         consumes: str = "api_usd",
         cost_per_use: float = 1.0,
         cost_per_token: float | None = None,
@@ -195,6 +199,8 @@ class StreamingLLMSyscall:
         on_chunk: Callable[[str, str], None] | None = None,
         on_chunk_async: Callable[[str, str], Any] | None = None,
     ) -> None:
+        if stream_fn is None:
+            raise TypeError("stream_fn is required")
         self._tool_name = tool_name
         self._stream_fn = stream_fn
         self._on_chunk = on_chunk
@@ -254,7 +260,9 @@ class StreamingLLMSyscall:
             func=_accumulate,
             is_async=True,
         )
-        registry.register(metadata)
+        self._metadata = metadata
+        if registry is not None:
+            registry.register(metadata)
 
     async def infer(self, proxy: SyscallProxy, **kwargs: Any) -> Any:
         """Issue a streaming LLM inference call through the proxy.

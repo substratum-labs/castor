@@ -143,12 +143,16 @@ class TestCastorAgentDecorator:
 
         assert reg.has_agent("summarizer")
 
-    def test_decorator_requires_registry(self):
-        with pytest.raises(TypeError):
+    def test_decorator_uses_default_registry(self):
+        from castor.stream.agent_registry import default_agent_registry
 
-            @castor_agent(name="oops")
-            async def bad_agent(proxy):
-                return "never"
+        @castor_agent(name="auto_registered")
+        async def auto_agent(proxy):
+            return "auto"
+
+        assert default_agent_registry.has_agent("auto_registered")
+        # Clean up to avoid polluting other tests
+        default_agent_registry._agents.pop("auto_registered", None)
 
 
 # ── Spawn via SyscallProxy ──

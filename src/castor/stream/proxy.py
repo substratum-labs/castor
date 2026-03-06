@@ -22,6 +22,7 @@ from castor.models.checkpoint import (
     SuspendInterrupt,
     SyscallRecord,
 )
+from castor.models.result import SyscallResult
 
 _logger = get_logger("castor.stream")
 _meter = get_meter("castor.stream")
@@ -69,6 +70,7 @@ class SyscallProxy:
         kernel_tool_names: set[str] | None = None,
         agent_registry: AgentRegistry | None = None,
         checkpoint_store: CheckpointStore | None = None,
+        structured_results: bool = False,
     ) -> None:
         self.checkpoint = checkpoint
         self._dam = dam
@@ -78,6 +80,7 @@ class SyscallProxy:
         self._kernel_tool_names = kernel_tool_names or set()
         self._agent_registry = agent_registry
         self._store = checkpoint_store
+        self._structured_results = structured_results
         self._replay_index = 0
         # Cached spawn count — computed once from syscall_log at init, then
         # incremented per spawn.  Avoids O(N) log scan on every spawn call.
@@ -153,7 +156,7 @@ class SyscallProxy:
                     "index": self._replay_index - 1,
                 },
             )
-            return record.response
+            return self._wrap_if_needed(tool_name, record.response)
 
         # ── Spawn/join intercepts: kernel-internal, bypass Dam ──
         if tool_name == "spawn_agent":
@@ -192,21 +195,23 @@ class SyscallProxy:
             raise SuspendInterrupt(self.checkpoint)
 
         # ── Fast Path: deduct capability, execute, log ──
-        try:
-            self._cap_mgr.deduct(
-                self.checkpoint.capabilities,
-                tool_meta.consumes,
-                tool_meta.cost_per_use,
-            )
-        except CapabilityExhaustedError as e:
-            response = SyscallResponse(
-                status="INSUFFICIENT_CAPABILITY",
-                feedback_message=str(e),
-            )
-            self._append_record(
-                SyscallRecord(request=request, response=response.model_dump())
-            )
-            return response.model_dump()
+        # Zero-cost tools skip budget checks entirely — they may use a
+        # default resource type ("_default") that has no matching capability.
+        if tool_meta.cost_per_use > 0:
+            try:
+                self._cap_mgr.deduct(
+                    self.checkpoint.capabilities,
+                    tool_meta.consumes,
+                    tool_meta.cost_per_use,
+                )
+            except CapabilityExhaustedError as e:
+                response = SyscallResponse(
+                    status="INSUFFICIENT_CAPABILITY",
+                    feedback_message=str(e),
+                )
+                resp_dict = response.model_dump()
+                self._append_record(SyscallRecord(request=request, response=resp_dict))
+                return self._wrap_if_needed(tool_name, resp_dict)
 
         # ── WAL: log intent before execution ──
         # Snapshot captures usage BEFORE deduction so recover() restores correctly.
@@ -256,11 +261,12 @@ class SyscallProxy:
             # preemption) or failed (tool exception).  Without this, the record
             # is never logged, so replay will re-attempt the syscall and deduct
             # again, causing a permanent budget leak.
-            self._cap_mgr.refund(
-                self.checkpoint.capabilities,
-                tool_meta.consumes,
-                tool_meta.cost_per_use,
-            )
+            if tool_meta.cost_per_use > 0:
+                self._cap_mgr.refund(
+                    self.checkpoint.capabilities,
+                    tool_meta.consumes,
+                    tool_meta.cost_per_use,
+                )
             raise
 
         # ── WAL: mark complete after execution ──
@@ -284,7 +290,7 @@ class SyscallProxy:
         )
 
         self._append_record(SyscallRecord(request=request, response=result))
-        return result
+        return self._wrap_if_needed(tool_name, result)
 
     async def _handle_spawn(
         self,
@@ -560,6 +566,45 @@ class SyscallProxy:
         self.checkpoint.syscall_log.append(record)
         self._replay_index = len(self.checkpoint.syscall_log)
 
+    def _wrap_if_needed(self, tool_name: str, response: Any) -> Any:
+        """Wrap response in SyscallResult for destructive/HITL tools."""
+        if not self._structured_results:
+            return response
+        if not self._dam.registry.has_tool(tool_name):
+            return response
+        meta = self._dam.get_tool_meta(tool_name)
+        if not (meta.requires_hitl or meta.destructive):
+            return response
+        if isinstance(response, dict):
+            status = response.get("status")
+            if status == "HITL_REJECTED":
+                return SyscallResult(
+                    status="HITL_REJECTED",
+                    feedback=response.get("human_feedback"),
+                )
+            if status == "HITL_MODIFIED":
+                return SyscallResult(
+                    status="HITL_MODIFIED",
+                    feedback=response.get("human_feedback"),
+                )
+            if status == "INSUFFICIENT_CAPABILITY":
+                return SyscallResult(
+                    status="INSUFFICIENT_CAPABILITY",
+                    feedback=response.get("feedback_message"),
+                    resource=meta.consumes,
+                )
+        return SyscallResult(value=response)
+
+    def budget(self, resource: str) -> float:
+        """Return remaining budget for a resource type.
+
+        Returns 0.0 if the resource is not tracked.
+        """
+        cap = self.checkpoint.capabilities.get(resource)
+        if cap is None:
+            return 0.0
+        return cap.max_budget - cap.current_usage
+
     async def call(self, func: Any, /, **kwargs: Any) -> Any:
         """Call a tool by function reference.
 
@@ -573,6 +618,39 @@ class SyscallProxy:
                 f"only decorated functions can be used with proxy.call()"
             )
         return await self.syscall(meta.tool_name, **kwargs)
+
+    async def spawn(
+        self, agent_name: str, *, capabilities: dict[str, float] | None = None
+    ) -> str:
+        """Spawn a child agent asynchronously and return a join handle.
+
+        Sugar for ``proxy.syscall("spawn_agent_async", ...)``.
+        """
+        return await self.syscall(
+            "spawn_agent_async",
+            agent_name=agent_name,
+            capabilities=capabilities or {},
+        )
+
+    async def join(self, handle: str) -> Any:
+        """Wait for a spawned child agent to complete and return its result.
+
+        Sugar for ``proxy.syscall("join_agent", ...)``.
+        """
+        return await self.syscall("join_agent", handle=handle)
+
+    async def spawn_sync(
+        self, agent_name: str, *, capabilities: dict[str, float] | None = None
+    ) -> Any:
+        """Spawn a child agent synchronously and wait for its result.
+
+        Sugar for ``proxy.syscall("spawn_agent", ...)``.
+        """
+        return await self.syscall(
+            "spawn_agent",
+            agent_name=agent_name,
+            capabilities=capabilities or {},
+        )
 
     def __getattr__(self, name: str) -> Any:
         """Enable proxy.tool_name(...) style calls.

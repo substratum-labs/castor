@@ -13,8 +13,8 @@ from castor.dam.registry import ToolMetadata, ToolRegistry, default_registry
 
 
 def castor_tool(
-    consumes: str,
-    cost_per_use: float = 1.0,
+    consumes: str = "_default",
+    cost_per_use: float = 0.0,
     requires_hitl: bool = False,
     destructive: bool = False,
     registry: ToolRegistry | None = None,

@@ -43,11 +43,12 @@ class HITLHandler:
         validated = dam.validate(tool_name, arguments)
         tool_meta = dam.get_tool_meta(tool_name)
 
-        capability_manager.deduct(
-            checkpoint.capabilities,
-            tool_meta.consumes,
-            tool_meta.cost_per_use,
-        )
+        if tool_meta.cost_per_use > 0:
+            capability_manager.deduct(
+                checkpoint.capabilities,
+                tool_meta.consumes,
+                tool_meta.cost_per_use,
+            )
 
         result = await dam.execute(tool_name, validated)
 

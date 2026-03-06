@@ -39,11 +39,13 @@ class AgentRunner:
         capability_manager: CapabilityManager,
         lodge: CastorLodge | None = None,
         agent_registry: AgentRegistry | None = None,
+        structured_results: bool = False,
     ) -> None:
         self._dam = dam
         self._cap_mgr = capability_manager
         self._lodge = lodge
         self._agent_registry = agent_registry
+        self._structured_results = structured_results
         self._task: asyncio.Task | None = None
         self._current_checkpoint: AgentCheckpoint | None = None
 
@@ -73,6 +75,7 @@ class AgentRunner:
             lodge=self._lodge,
             kernel_tool_names=kernel_tools,
             agent_registry=self._agent_registry,
+            structured_results=self._structured_results,
         )
 
         try:

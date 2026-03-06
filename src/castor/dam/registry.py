@@ -22,8 +22,8 @@ class ToolMetadata(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     tool_name: str
-    consumes: str
-    cost_per_use: float = 1.0
+    consumes: str = "_default"
+    cost_per_use: float = 0.0
     cost_per_token: float | None = None
     requires_hitl: bool = False
     destructive: bool = False
