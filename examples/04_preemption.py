@@ -42,17 +42,42 @@ def _err(text: str) -> None:
 
 # The LLM will generate a plan that includes a dangerous action mid-stream.
 DANGEROUS_RESPONSE = [
-    "Step 1:", " Back up", " the database.", "\n",
-    "Step 2:", " Validate", " schema.", "\n",
-    "Step 3:", " Run", " DELETE", " /production", "/data", "\n",
-    "Step 4:", " Send", " notification.",
+    "Step 1:",
+    " Back up",
+    " the database.",
+    "\n",
+    "Step 2:",
+    " Validate",
+    " schema.",
+    "\n",
+    "Step 3:",
+    " Run",
+    " DELETE",
+    " /production",
+    "/data",
+    "\n",
+    "Step 4:",
+    " Send",
+    " notification.",
 ]
 
 SAFE_RESPONSE = [
-    "Step 1:", " Back up", " the database.", "\n",
-    "Step 2:", " Validate", " schema.", "\n",
-    "Step 3:", " Deploy", " to staging.", "\n",
-    "Step 4:", " Run", " integration", " tests.",
+    "Step 1:",
+    " Back up",
+    " the database.",
+    "\n",
+    "Step 2:",
+    " Validate",
+    " schema.",
+    "\n",
+    "Step 3:",
+    " Deploy",
+    " to staging.",
+    "\n",
+    "Step 4:",
+    " Run",
+    " integration",
+    " tests.",
 ]
 
 _use_safe = False
@@ -119,8 +144,10 @@ async def main() -> None:
     _h("Streaming LLM with Content Safety")
     caps = cap_mgr.create_capabilities({"api_usd": 5.0})
     checkpoint = AgentCheckpoint(
-        pid="preempt-001", status="RUNNING",
-        agent_function_name="planning_agent", capabilities=caps,
+        pid="preempt-001",
+        status="RUNNING",
+        agent_function_name="planning_agent",
+        capabilities=caps,
     )
 
     runner = AgentRunner(dam, cap_mgr)
@@ -140,8 +167,7 @@ async def main() -> None:
         print(f"  Partial work: {checkpoint.partial_work!r:.70s}")
     budget = checkpoint.capabilities["api_usd"]
     charged = budget.current_usage
-    print(f"  Budget charged: ${charged:.2f} (proportional) "
-          f"instead of $1.00 flat rate")
+    print(f"  Budget charged: ${charged:.2f} (proportional) instead of $1.00 flat rate")
 
     # --- Resume: agent adapts based on preemption context ---
     _h("Resuming with safety context")
@@ -155,8 +181,10 @@ async def main() -> None:
     print(f"\n  Status: \033[32m{checkpoint.status}\033[0m")
     print(f"  Result: {checkpoint.result!r:.70s}")
     final_budget = checkpoint.capabilities["api_usd"]
-    print(f"  Total budget: ${final_budget.current_usage:.2f}"
-          f"/${final_budget.max_budget:.2f} used")
+    print(
+        f"  Total budget: ${final_budget.current_usage:.2f}"
+        f"/${final_budget.max_budget:.2f} used"
+    )
 
 
 if __name__ == "__main__":

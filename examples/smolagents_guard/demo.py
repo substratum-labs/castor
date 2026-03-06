@@ -97,7 +97,8 @@ def act1() -> None:
     call(agent, "read_file", {"filename": "secrets.env"})
     call(agent, "write_file", {"filename": "config.yaml", "content": "admin: true"})
     call(
-        agent, "send_message",
+        agent,
+        "send_message",
         {"recipient": "#general", "body": "I changed the config!"},
     )
 

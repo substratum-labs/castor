@@ -62,11 +62,13 @@ class CastorGuardedAgent(ToolCallingAgent):
         result = super().execute_tool_call(tool_name, arguments)
 
         # 4. Audit
-        self.audit_log.append({
-            "tool": tool_name,
-            "cost": cost,
-            "resource": resource,
-        })
+        self.audit_log.append(
+            {
+                "tool": tool_name,
+                "cost": cost,
+                "resource": resource,
+            }
+        )
         return result
 
     def _hitl_gate(self, tool_name: str, arguments: dict[str, str] | str) -> None:
