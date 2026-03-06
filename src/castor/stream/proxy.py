@@ -116,8 +116,7 @@ class SyscallProxy:
         """
         if arguments is not None and kwargs:
             raise TypeError(
-                "Cannot pass both positional arguments dict"
-                " and keyword arguments"
+                "Cannot pass both positional arguments dict and keyword arguments"
             )
         if arguments is None:
             arguments = kwargs
