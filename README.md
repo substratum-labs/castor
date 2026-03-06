@@ -29,31 +29,19 @@ uv add castor
 ```
 
 ```python
-from castor import (
-    castor_tool, CastorDam, CapabilityManager,
-    AgentRunner, AgentCheckpoint, SyscallProxy, ToolRegistry,
-)
+from castor import Castor, castor_tool, SyscallProxy
 
-registry = ToolRegistry()
-
-@castor_tool(consumes="api", cost_per_use=1.0, registry=registry)
+@castor_tool(consumes="api", cost_per_use=1.0)
 async def search(query: str) -> list[str]:
     return [f"Result for: {query}"]
 
-dam = CastorDam(registry)
-cap_mgr = CapabilityManager()
-caps = cap_mgr.create_capabilities({"api": 50.0})
+kernel = Castor()
 
 async def my_agent(proxy: SyscallProxy) -> str:
-    results = await proxy.syscall("search", {"query": "hello"})
+    results = await proxy.search(query="hello")
     return f"Found: {results}"
 
-checkpoint = AgentCheckpoint(
-    pid="agent-001", status="RUNNING",
-    agent_function_name="my_agent", capabilities=caps,
-)
-runner = AgentRunner(dam, cap_mgr)
-# result = asyncio.run(runner.run(my_agent, checkpoint))
+# cp = asyncio.run(kernel.run(my_agent, budgets={"api": 50.0}))
 ```
 
 See [examples/quickstart.py](examples/quickstart.py) for a runnable example with HITL.
@@ -63,45 +51,36 @@ See [examples/quickstart.py](examples/quickstart.py) for a runnable example with
 
 ```python
 import asyncio
-from castor import (
-    castor_tool, CastorDam, CapabilityManager, AgentRunner,
-    AgentCheckpoint, SyscallProxy, ToolRegistry,
-)
+from castor import Castor, castor_tool, SyscallProxy
 
 # 1. Register tools
-registry = ToolRegistry()
-
-@castor_tool(consumes="api", cost_per_use=1.0, registry=registry)
+@castor_tool(consumes="api", cost_per_use=1.0)
 async def web_search(query: str) -> list[str]:
     return [f"Result for: {query}"]
 
-@castor_tool(consumes="disk", destructive=True, requires_hitl=True, registry=registry)
+@castor_tool(consumes="disk", destructive=True, requires_hitl=True)
 def delete_files(paths: list[str]) -> int:
     return len(paths)  # actual deletion logic here
 
 # 2. Set up kernel
-dam = CastorDam(registry)
-cap_mgr = CapabilityManager()
+kernel = Castor(tools=[web_search, delete_files])
 
 # 3. Define an agent function
 async def my_agent(proxy: SyscallProxy) -> str:
-    results = await proxy.syscall("web_search", {"query": "climate data"})
+    results = await proxy.web_search(query="climate data")
     # This will suspend for human approval:
-    deleted = await proxy.syscall("delete_files", {"paths": ["/tmp/old"]})
+    deleted = await proxy.delete_files(paths=["/tmp/old"])
     return f"Found {results}, deleted {deleted} files"
 
 # 4. Run it
 async def main():
-    caps = cap_mgr.create_capabilities({"api": 100.0, "disk": 10.0})
-    checkpoint = AgentCheckpoint(
-        pid="agent-001",
-        status="RUNNING",
-        agent_function_name="my_agent",
-        capabilities=caps,
-    )
-    runner = AgentRunner(dam, cap_mgr)
-    result = await runner.run(my_agent, checkpoint)
-    print(f"Status: {result.status}")  # SUSPENDED_FOR_HITL
+    cp = await kernel.run(my_agent, budgets={"api": 100.0, "disk": 10.0})
+    print(f"Status: {cp.status}")  # SUSPENDED_FOR_HITL
+
+    # Human approves, then resume:
+    await kernel.approve(cp)
+    cp = await kernel.run(my_agent, checkpoint=cp)
+    print(f"Result: {cp.result}")
 
 asyncio.run(main())
 ```
@@ -129,7 +108,7 @@ Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 git clone https://github.com/substrate-lab/castor.git
 cd castor
 uv sync
-uv run pytest          # 185+ tests
+uv run pytest          # 245+ tests
 uv run ruff check src/ # lint
 uv run ruff format src/ # format
 ```
