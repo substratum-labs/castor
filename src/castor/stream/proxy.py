@@ -561,6 +561,20 @@ class SyscallProxy:
         self.checkpoint.syscall_log.append(record)
         self._replay_index = len(self.checkpoint.syscall_log)
 
+    async def call(self, func: Any, /, **kwargs: Any) -> Any:
+        """Call a tool by function reference.
+
+        Usage: await proxy.call(search, query="hello")
+        The function must be decorated with @castor_tool.
+        """
+        meta = getattr(func, "_castor_metadata", None)
+        if meta is None:
+            raise TypeError(
+                f"{func!r} is not a @castor_tool — "
+                f"only decorated functions can be used with proxy.call()"
+            )
+        return await self.syscall(meta.tool_name, **kwargs)
+
     def __getattr__(self, name: str) -> Any:
         """Enable proxy.tool_name(...) style calls.
 

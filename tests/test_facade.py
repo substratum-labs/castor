@@ -118,3 +118,32 @@ class TestDynamicToolCalls:
         """Accessing a non-existent tool raises AttributeError."""
         with pytest.raises(AttributeError):
             proxy.nonexistent_tool_xyz
+
+
+# ── Task 3: proxy.call(func, ...) function-reference style ──
+
+
+class TestCallMethod:
+    @pytest.mark.asyncio
+    async def test_call_with_function_ref(self, proxy, registry):
+        """proxy.call(search, query='hello') uses function's tool name."""
+        search_fn = registry.get("search").func
+        result = await proxy.call(search_fn, query="hello")
+        assert result == ["Result: hello"]
+
+    @pytest.mark.asyncio
+    async def test_call_logs_correctly(self, proxy, registry):
+        """proxy.call() logs to syscall_log with correct tool name."""
+        search_fn = registry.get("search").func
+        await proxy.call(search_fn, query="test")
+        assert proxy.checkpoint.syscall_log[0].request["tool_name"] == "search"
+
+    @pytest.mark.asyncio
+    async def test_call_without_metadata_raises(self, proxy):
+        """proxy.call() raises if function has no _castor_metadata."""
+
+        async def plain_func(x: int) -> int:
+            return x
+
+        with pytest.raises(TypeError, match="not a @castor_tool"):
+            await proxy.call(plain_func, x=1)
