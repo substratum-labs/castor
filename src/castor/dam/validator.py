@@ -29,8 +29,12 @@ class CastorDam:
         """Validate arguments against the tool's schema.
 
         Returns validated arguments (with defaults applied).
+        Passes through unchanged if the tool has no schema (e.g. LLM tools).
         Raises pydantic.ValidationError on invalid input.
         """
+        meta = self.registry.get(tool_name)
+        if not meta.input_schema:
+            return arguments  # No schema → pass through (e.g. LLM wrappers)
         model_cls = self._get_or_build_model(tool_name)
         instance = model_cls(**arguments)
         return instance.model_dump()

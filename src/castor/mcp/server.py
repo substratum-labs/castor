@@ -197,8 +197,7 @@ def _register_meta_tools(server: FastMCP) -> None:
     @server.tool(
         name="castor_status",
         description=(
-            "Show current Castor session status: "
-            "budget usage and pending approvals."
+            "Show current Castor session status: budget usage and pending approvals."
         ),
     )
     async def castor_status(ctx: Context) -> str:
@@ -224,8 +223,7 @@ def _register_meta_tools(server: FastMCP) -> None:
     @server.tool(
         name="castor_approve",
         description=(
-            "Approve and execute a pending tool call "
-            "that required human approval."
+            "Approve and execute a pending tool call that required human approval."
         ),
     )
     async def castor_approve(request_id: str, ctx: Context) -> str:

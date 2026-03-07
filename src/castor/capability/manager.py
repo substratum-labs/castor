@@ -47,10 +47,13 @@ class CapabilityManager:
     def check(
         self, capabilities: dict[str, Capability], resource_type: str, cost: float
     ) -> bool:
-        """Check if sufficient budget exists for the given cost."""
+        """Check if sufficient budget exists for the given cost.
+
+        Returns True if the resource type is not tracked (no budget = no limit).
+        """
         cap = capabilities.get(resource_type)
         if cap is None:
-            return False
+            return True  # Not tracked → allowed
         return (cap.max_budget - cap.current_usage) >= cost
 
     def deduct(
@@ -58,11 +61,12 @@ class CapabilityManager:
     ) -> None:
         """Deduct cost from a capability budget.
 
-        Raises CapabilityExhaustedError if insufficient budget.
+        No-ops if the resource type is not tracked (no budget = no limit).
+        Raises CapabilityExhaustedError if tracked but insufficient.
         """
         cap = capabilities.get(resource_type)
         if cap is None:
-            raise CapabilityExhaustedError(resource_type, cost, 0.0)
+            return  # Not tracked → no enforcement
 
         remaining = cap.max_budget - cap.current_usage
         if remaining < cost:

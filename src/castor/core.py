@@ -34,6 +34,7 @@ class Castor:
         store: str | Any | None = None,
         dam: CastorDam | None = None,
         capability_manager: CapabilityManager | None = None,
+        default_budgets: dict[str, float] | None = None,
         structured_results: bool = False,
     ) -> None:
         # ── Dam (tool validation + execution) ──
@@ -71,6 +72,7 @@ class Castor:
                 self._agent_registry = default_agent_registry
             else:
                 self._agent_registry = None
+        self._default_budgets = default_budgets
         self._structured_results = structured_results
         self._hitl = HITLHandler()
 
@@ -83,6 +85,52 @@ class Castor:
                 self._store = CheckpointStore(store)
             else:
                 self._store = store
+
+    # ── Public properties ──
+
+    @property
+    def dam(self) -> CastorDam:
+        """The CastorDam (tool validation + execution engine)."""
+        return self._dam
+
+    @property
+    def capability_manager(self) -> CapabilityManager:
+        """The CapabilityManager (budget tracking)."""
+        return self._cap_mgr
+
+    @property
+    def store(self) -> Any | None:
+        """The configured checkpoint store, or None."""
+        return self._store
+
+    # ── Internal helpers ──
+
+    def _resolve_budgets(
+        self, budgets: dict[str, float] | None
+    ) -> dict[str, float] | None:
+        """Return explicit budgets, or fall back to default_budgets."""
+        if budgets is not None:
+            return budgets
+        return self._default_budgets
+
+    def _make_checkpoint(
+        self,
+        agent_fn: Callable,
+        budgets: dict[str, float] | None,
+        pid: str | None,
+    ) -> AgentCheckpoint:
+        effective = self._resolve_budgets(budgets)
+        caps = self._cap_mgr.create_capabilities(effective) if effective else {}
+        if pid is None:
+            pid = f"{agent_fn.__name__}-{uuid.uuid4().hex[:8]}"
+        return AgentCheckpoint(
+            pid=pid,
+            status="RUNNING",
+            agent_function_name=agent_fn.__name__,
+            capabilities=caps,
+        )
+
+    # ── Execution ──
 
     async def run(
         self,
@@ -97,23 +145,13 @@ class Castor:
         Args:
             agent_fn: The agent coroutine ``async def agent(proxy) -> result``.
             budgets: Resource budgets like ``{"api": 50.0}``.
-                     Not provided = unlimited (no budget enforcement).
+                     Not provided = falls back to ``default_budgets``.
+                     Neither provided = unlimited (no budget enforcement).
             checkpoint: Pass an existing checkpoint to resume (e.g. after HITL).
             pid: Custom process ID. Auto-generated if not provided.
         """
         if checkpoint is None:
-            if budgets is not None:
-                caps = self._cap_mgr.create_capabilities(budgets)
-            else:
-                caps = {}
-            if pid is None:
-                pid = f"{agent_fn.__name__}-{uuid.uuid4().hex[:8]}"
-            checkpoint = AgentCheckpoint(
-                pid=pid,
-                status="RUNNING",
-                agent_function_name=agent_fn.__name__,
-                capabilities=caps,
-            )
+            checkpoint = self._make_checkpoint(agent_fn, budgets, pid)
 
         runner = AgentRunner(
             self._dam,
@@ -226,18 +264,7 @@ class Castor:
         ``kernel.preempt(task, reason)``.
         """
         if checkpoint is None:
-            if budgets is not None:
-                caps = self._cap_mgr.create_capabilities(budgets)
-            else:
-                caps = {}
-            if pid is None:
-                pid = f"{agent_fn.__name__}-{uuid.uuid4().hex[:8]}"
-            checkpoint = AgentCheckpoint(
-                pid=pid,
-                status="RUNNING",
-                agent_function_name=agent_fn.__name__,
-                capabilities=caps,
-            )
+            checkpoint = self._make_checkpoint(agent_fn, budgets, pid)
 
         runner = AgentRunner(
             self._dam,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import Any
 
@@ -31,6 +32,37 @@ class ToolMetadata(BaseModel):
     func: Callable | None = None
     is_async: bool = False
     timeout_seconds: float | None = None
+
+    @classmethod
+    def from_function(
+        cls,
+        func: Callable,
+        *,
+        consumes: str = "_default",
+        cost_per_use: float = 0.0,
+        cost_per_token: float | None = None,
+        requires_hitl: bool = False,
+        destructive: bool = False,
+        timeout_seconds: float | None = None,
+    ) -> ToolMetadata:
+        """Create ToolMetadata from a plain function.
+
+        Auto-generates the JSON Schema from type hints and detects async.
+        """
+        from castor.dam.decorator import _generate_schema
+
+        return cls(
+            tool_name=func.__name__,
+            consumes=consumes,
+            cost_per_use=cost_per_use,
+            cost_per_token=cost_per_token,
+            requires_hitl=requires_hitl,
+            destructive=destructive,
+            input_schema=_generate_schema(func),
+            func=func,
+            is_async=asyncio.iscoroutinefunction(func),
+            timeout_seconds=timeout_seconds,
+        )
 
 
 class ToolRegistry:

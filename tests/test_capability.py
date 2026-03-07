@@ -40,9 +40,10 @@ class TestCheck:
         caps = mgr.create_capabilities({"api": 10.0})
         assert mgr.check(caps, "api", 11.0) is False
 
-    def test_missing_resource_type(self, mgr):
+    def test_missing_resource_type_returns_true(self, mgr):
+        """Missing resource = not tracked = allowed."""
         caps = mgr.create_capabilities({"api": 10.0})
-        assert mgr.check(caps, "nonexistent", 1.0) is False
+        assert mgr.check(caps, "nonexistent", 1.0) is True
 
     def test_partially_used(self, mgr):
         caps = mgr.create_capabilities({"api": 10.0})
@@ -72,10 +73,10 @@ class TestDeduct:
         assert exc_info.value.requested == 5.0
         assert exc_info.value.remaining == 2.0
 
-    def test_deduct_missing_resource(self, mgr):
+    def test_deduct_missing_resource_is_noop(self, mgr):
+        """Missing resource = not tracked = no enforcement."""
         caps = mgr.create_capabilities({"api": 10.0})
-        with pytest.raises(CapabilityExhaustedError):
-            mgr.deduct(caps, "nonexistent", 1.0)
+        mgr.deduct(caps, "nonexistent", 1.0)  # Should not raise
 
 
 class TestDelegate:

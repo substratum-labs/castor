@@ -1,10 +1,10 @@
-"""Checkpoint persistence to SQLite via SQLAlchemy."""
+"""Checkpoint persistence: Protocol, in-memory store, and SQLite store."""
 
 from __future__ import annotations
 
 import json as _json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
@@ -21,6 +21,44 @@ class CheckpointNotFoundError(Exception):
     def __init__(self, pid: str):
         self.pid = pid
         super().__init__(f"Checkpoint not found: {pid!r}")
+
+
+# ── Protocol ──────────────────────────────────────────────────────────────────
+
+
+@runtime_checkable
+class CheckpointStoreProtocol(Protocol):
+    """Minimal interface that any checkpoint store must implement."""
+
+    def save(self, checkpoint: AgentCheckpoint) -> None: ...
+    def load(self, pid: str) -> AgentCheckpoint: ...
+    def delete(self, pid: str) -> None: ...
+    def list_pids(self) -> list[str]: ...
+
+
+# ── In-memory store (for testing) ────────────────────────────────────────────
+
+
+class MemoryCheckpointStore:
+    """Dict-backed checkpoint store. No external dependencies."""
+
+    def __init__(self) -> None:
+        self._store: dict[str, str] = {}  # pid → JSON string
+
+    def save(self, checkpoint: AgentCheckpoint) -> None:
+        self._store[checkpoint.pid] = checkpoint.model_dump_json()
+
+    def load(self, pid: str) -> AgentCheckpoint:
+        data = self._store.get(pid)
+        if data is None:
+            raise CheckpointNotFoundError(pid)
+        return AgentCheckpoint.model_validate_json(data)
+
+    def delete(self, pid: str) -> None:
+        self._store.pop(pid, None)
+
+    def list_pids(self) -> list[str]:
+        return list(self._store.keys())
 
 
 class Base(DeclarativeBase):

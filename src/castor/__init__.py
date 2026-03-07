@@ -8,6 +8,7 @@ from castor.api_status import experimental, stable
 from castor.capability.manager import CapabilityManager
 from castor.core import Castor, CastorTask
 from castor.dam.decorator import castor_tool
+from castor.dam.registry import ToolMetadata
 from castor.dam.validator import CastorDam
 from castor.hitl_policies import auto_approve, auto_reject, interactive
 from castor.llm.wrapper import LLMSyscall, StreamingLLMSyscall
@@ -27,7 +28,11 @@ from castor.stream.agent_registry import (
     default_agent_registry,
 )
 from castor.stream.hitl import HITLHandler
-from castor.stream.persistence import CheckpointStore
+from castor.stream.persistence import (
+    CheckpointStore,
+    CheckpointStoreProtocol,
+    MemoryCheckpointStore,
+)
 from castor.stream.proxy import SyscallProxy
 from castor.stream.runner import AgentRunner
 
@@ -43,6 +48,9 @@ stable(CapabilityManager)
 stable(HITLHandler)
 stable(AgentRunner)
 stable(CheckpointStore)
+stable(CheckpointStoreProtocol)
+stable(MemoryCheckpointStore)
+stable(ToolMetadata)
 stable(castor_tool)
 stable(SuspendInterrupt)
 stable(CastorMessage)
@@ -73,6 +81,7 @@ __all__ = [
     "CastorMessage",
     "CastorTask",
     "CheckpointStore",
+    "CheckpointStoreProtocol",
     "HITLHandler",
     "LLMSyscall",
     "StreamingLLMSyscall",
@@ -82,6 +91,8 @@ __all__ = [
     "SyscallRequest",
     "SyscallResponse",
     "SyscallResult",
+    "MemoryCheckpointStore",
+    "ToolMetadata",
     "auto_approve",
     "auto_reject",
     "castor_agent",
