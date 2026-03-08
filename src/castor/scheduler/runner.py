@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -78,8 +79,26 @@ class AgentRunner:
             structured_results=self._structured_results,
         )
 
+        # Set ContextVar so castor.lib functions work (both new and legacy agents)
+        from castor.lib._context import set_proxy
+
+        set_proxy(proxy)
+
+        # Detect agent signature: 0 required params = new-style, 1+ = legacy
+        sig = inspect.signature(agent_fn)
+        required = [
+            p
+            for p in sig.parameters.values()
+            if p.default is inspect.Parameter.empty
+            and p.kind
+            not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        ]
+
         try:
-            checkpoint.result = await agent_fn(proxy)
+            if len(required) == 0:
+                checkpoint.result = await agent_fn()
+            else:
+                checkpoint.result = await agent_fn(proxy)
             checkpoint.status = "COMPLETED"
             # Clear stale preemption context on successful completion so it
             # doesn't leak into future run cycles on the same checkpoint.
