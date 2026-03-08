@@ -173,7 +173,7 @@ def bench_budget_operations():
 
 def bench_lodge_token_counting():
     """Token counting + FIFO eviction victim selection."""
-    from castor.lodge.token_counter import CharCountEstimator
+    from castor.mmu.token_counter import CharCountEstimator
 
     counter = CharCountEstimator()
     msgs = [

@@ -13,7 +13,7 @@ from castor.dam.validator import CastorDam
 from castor.observability import get_logger, get_meter
 
 if TYPE_CHECKING:
-    from castor.lodge.core import CastorLodge
+    from castor.mmu.core import MMU
     from castor.stream.agent_registry import AgentRegistry
     from castor.stream.persistence import CheckpointStore
 from castor.models.capability import SyscallResponse
@@ -65,7 +65,7 @@ class SyscallProxy:
         checkpoint: AgentCheckpoint,
         dam: CastorDam,
         capability_manager: CapabilityManager,
-        lodge: CastorLodge | None = None,
+        lodge: MMU | None = None,
         llm_tool_names: set[str] | None = None,
         kernel_tool_names: set[str] | None = None,
         agent_registry: AgentRegistry | None = None,

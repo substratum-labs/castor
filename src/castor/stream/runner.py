@@ -15,7 +15,7 @@ from castor.stream.proxy import SyscallProxy
 _logger = get_logger("castor.stream")
 
 if TYPE_CHECKING:
-    from castor.lodge.core import CastorLodge
+    from castor.mmu.core import MMU
     from castor.stream.agent_registry import AgentRegistry
 
 
@@ -37,7 +37,7 @@ class AgentRunner:
         self,
         dam: CastorDam,
         capability_manager: CapabilityManager,
-        lodge: CastorLodge | None = None,
+        lodge: MMU | None = None,
         agent_registry: AgentRegistry | None = None,
         structured_results: bool = False,
     ) -> None:

@@ -1,13 +1,13 @@
-"""Unit tests for Castor Lodge: token counting, drivers, and eviction logic."""
+"""Unit tests for MMU: token counting, drivers, and eviction logic."""
 
 from __future__ import annotations
 
 from castor.capability.manager import CapabilityManager
 from castor.dam.registry import ToolRegistry
 from castor.dam.validator import CastorDam
-from castor.lodge.core import PAGE_OUT_TOOL, SEARCH_MEMORY_TOOL, CastorLodge
-from castor.lodge.drivers.mock_driver import InMemoryDriver
-from castor.lodge.token_counter import CharCountEstimator, TokenCounter
+from castor.mmu.core import MMU, PAGE_OUT_TOOL, SEARCH_MEMORY_TOOL
+from castor.mmu.drivers.mock_driver import InMemoryDriver
+from castor.mmu.token_counter import CharCountEstimator, TokenCounter
 from castor.models.checkpoint import AgentCheckpoint, CastorMessage
 from castor.stream.proxy import SyscallProxy
 
@@ -83,15 +83,15 @@ class TestInMemoryDriver:
         assert "no matching" in (await driver.search("alpha", pid="b")).lower()
 
 
-# ── CastorLodge: eviction logic ──
+# ── MMU: eviction logic ──
 
 
 def _make_lodge(
     registry: ToolRegistry,
     watermark: int = 100,
-) -> tuple[CastorLodge, InMemoryDriver]:
+) -> tuple[MMU, InMemoryDriver]:
     driver = InMemoryDriver()
-    lodge = CastorLodge(
+    lodge = MMU(
         registry, driver, watermark=watermark, consumes="system", cost_per_use=0.0
     )
     return lodge, driver
@@ -113,7 +113,7 @@ def _make_checkpoint(
     return cp
 
 
-class TestCastorLodgeEviction:
+class TestMMUEviction:
     def test_total_tokens_uses_token_count_field(self):
         registry = ToolRegistry()
         lodge, _ = _make_lodge(registry, watermark=100)
@@ -191,7 +191,7 @@ class TestCastorLodgeEviction:
         assert len(victims) == 0
 
 
-# ── CastorLodge: eviction via syscall ──
+# ── MMU: eviction via syscall ──
 
 
 class TestEvictionViaSyscall:

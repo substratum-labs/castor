@@ -1,4 +1,4 @@
-"""CastorLodge: the MMU controller for LLM context windows."""
+"""MMU: context window memory management controller."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from castor.dam.registry import ToolMetadata, ToolRegistry
-from castor.lodge.driver import SemanticMemoryDriver
-from castor.lodge.token_counter import CharCountEstimator, TokenCounter
+from castor.mmu.driver import SemanticMemoryDriver
+from castor.mmu.token_counter import CharCountEstimator, TokenCounter
 from castor.models.checkpoint import AgentCheckpoint, CastorMessage
 
 if TYPE_CHECKING:
@@ -17,7 +17,7 @@ PAGE_OUT_TOOL = "sys_kernel_page_out"
 SEARCH_MEMORY_TOOL = "search_memory"
 
 
-class CastorLodge:
+class MMU:
     """Context window memory manager.
 
     Monitors ``context_history`` token usage and evicts unpinned messages

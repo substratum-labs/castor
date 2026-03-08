@@ -12,7 +12,7 @@ from castor.dam.registry import ToolMetadata
 from castor.dam.validator import CastorDam
 from castor.hitl_policies import auto_approve, auto_reject, interactive
 from castor.llm.wrapper import LLMSyscall, StreamingLLMSyscall
-from castor.lodge.core import CastorLodge
+from castor.mmu.core import MMU
 from castor.models.capability import Capability, SyscallRequest, SyscallResponse
 from castor.models.checkpoint import (
     AgentCheckpoint,
@@ -59,7 +59,7 @@ stable(auto_approve)
 stable(auto_reject)
 stable(interactive)
 
-experimental(CastorLodge)
+experimental(MMU)
 experimental(CastorTask)
 experimental(LLMSyscall)
 experimental(StreamingLLMSyscall)
@@ -77,7 +77,7 @@ __all__ = [
     "CapabilityManager",
     "Castor",
     "CastorDam",
-    "CastorLodge",
+    "MMU",
     "CastorMessage",
     "CastorTask",
     "CheckpointStore",

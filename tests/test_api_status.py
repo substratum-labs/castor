@@ -55,9 +55,9 @@ class TestAPIStatusExports:
 
     def test_experimental_exports(self):
         """Experimental APIs are marked."""
-        from castor import AgentRegistry, CastorLodge, LLMSyscall, castor_agent
+        from castor import MMU, AgentRegistry, LLMSyscall, castor_agent
 
-        assert getattr(CastorLodge, "__api_status__", None) == "experimental"
+        assert getattr(MMU, "__api_status__", None) == "experimental"
         assert getattr(LLMSyscall, "__api_status__", None) == "experimental"
         assert getattr(AgentRegistry, "__api_status__", None) == "experimental"
         assert getattr(castor_agent, "__api_status__", None) == "experimental"

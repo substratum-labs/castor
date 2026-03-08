@@ -1,11 +1,11 @@
-"""In-memory mock driver for Lodge testing."""
+"""In-memory mock driver for MMU testing."""
 
 from __future__ import annotations
 
 import json
 from typing import Any
 
-from castor.lodge.driver import SemanticMemoryDriver
+from castor.mmu.driver import SemanticMemoryDriver
 
 
 class InMemoryDriver(SemanticMemoryDriver):

@@ -1,6 +1,6 @@
-"""Integration tests for Lodge: eviction + page-in + replay determinism.
+"""Integration tests for MMU: eviction + page-in + replay determinism.
 
-These tests exercise the full kernel workflow with Lodge enabled:
+These tests exercise the full kernel workflow with MMU enabled:
 agent execution, automatic eviction before LLM calls, search_memory
 page-in, HITL suspension, and replay determinism.
 """
@@ -14,8 +14,8 @@ from castor.dam.decorator import castor_tool
 from castor.dam.registry import ToolRegistry
 from castor.dam.validator import CastorDam
 from castor.llm.wrapper import LLMSyscall
-from castor.lodge.core import PAGE_OUT_TOOL, SEARCH_MEMORY_TOOL, CastorLodge
-from castor.lodge.drivers.mock_driver import InMemoryDriver
+from castor.mmu.core import MMU, PAGE_OUT_TOOL, SEARCH_MEMORY_TOOL
+from castor.mmu.drivers.mock_driver import InMemoryDriver
 from castor.models.checkpoint import AgentCheckpoint, CastorMessage
 from castor.stream.hitl import HITLHandler
 from castor.stream.proxy import SyscallProxy
@@ -36,7 +36,7 @@ def driver():
 
 @pytest.fixture
 def lodge(registry, driver):
-    return CastorLodge(
+    return MMU(
         registry,
         driver,
         watermark=50,  # low watermark to trigger eviction easily

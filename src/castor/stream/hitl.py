@@ -9,7 +9,7 @@ from castor.dam.validator import CastorDam
 from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
 
 if TYPE_CHECKING:
-    from castor.lodge.core import CastorLodge
+    from castor.mmu.core import MMU
     from castor.stream.agent_registry import AgentRegistry
 
 
@@ -120,7 +120,7 @@ class HITLHandler:
         dam: CastorDam,
         capability_manager: CapabilityManager,
         agent_registry: AgentRegistry,
-        lodge: CastorLodge | None = None,
+        lodge: MMU | None = None,
     ) -> None:
         """Approve HITL on a child's suspended syscall, then resume child."""
         if not self.is_child_hitl(checkpoint):
@@ -144,7 +144,7 @@ class HITLHandler:
         dam: CastorDam,
         capability_manager: CapabilityManager,
         agent_registry: AgentRegistry,
-        lodge: CastorLodge | None = None,
+        lodge: MMU | None = None,
     ) -> None:
         """Reject a child's pending HITL and resume child."""
         if not self.is_child_hitl(checkpoint):
@@ -168,7 +168,7 @@ class HITLHandler:
         dam: CastorDam,
         capability_manager: CapabilityManager,
         agent_registry: AgentRegistry,
-        lodge: CastorLodge | None = None,
+        lodge: MMU | None = None,
     ) -> None:
         """Modify a child's pending HITL and resume child."""
         if not self.is_child_hitl(checkpoint):
@@ -199,7 +199,7 @@ class HITLHandler:
         dam: CastorDam,
         capability_manager: CapabilityManager,
         agent_registry: AgentRegistry,
-        lodge: CastorLodge | None = None,
+        lodge: MMU | None = None,
     ) -> None:
         """Replay a child agent after its HITL was resolved."""
         import asyncio
