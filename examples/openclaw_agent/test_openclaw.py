@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from castor import Castor, CastorDam
-from castor.dam.registry import ToolRegistry
+from castor import Castor, SyscallGate
+from castor.gate.registry import ToolRegistry
 from castor.llm.wrapper import LLMSyscall
 from castor.stream.proxy import SyscallProxy
 from examples.openclaw_agent.agent import openclaw_agent
@@ -53,14 +53,14 @@ def llm(registry, llm_call_log):
 
 
 @pytest.fixture
-def dam(registry, knowledge_base):
+def gate(registry, knowledge_base):
     register_tools(registry, knowledge_base)
-    return CastorDam(registry)
+    return SyscallGate(registry)
 
 
 @pytest.fixture
-def kernel(dam):
-    return Castor(dam=dam)
+def kernel(gate):
+    return Castor(gate=gate)
 
 
 def _make_agent_fn(llm):

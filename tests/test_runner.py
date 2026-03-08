@@ -5,9 +5,9 @@ import asyncio
 import pytest
 
 from castor.capability.manager import CapabilityManager
-from castor.dam.decorator import castor_tool
-from castor.dam.registry import ToolRegistry
-from castor.dam.validator import CastorDam
+from castor.gate.decorator import castor_tool
+from castor.gate.registry import ToolRegistry
+from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import AgentCheckpoint
 from castor.stream.proxy import SyscallProxy
 from castor.stream.runner import AgentRunner
@@ -35,8 +35,8 @@ def registry():
 
 
 @pytest.fixture
-def dam(registry):
-    return CastorDam(registry)
+def gate(registry):
+    return SyscallGate(registry)
 
 
 @pytest.fixture
@@ -45,8 +45,8 @@ def cap_mgr():
 
 
 @pytest.fixture
-def runner(dam, cap_mgr):
-    return AgentRunner(dam, cap_mgr)
+def runner(gate, cap_mgr):
+    return AgentRunner(gate, cap_mgr)
 
 
 def make_checkpoint(cap_mgr):

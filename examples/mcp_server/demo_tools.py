@@ -1,6 +1,6 @@
 """Example Castor tools for the MCP server demo."""
 
-from castor.dam.decorator import castor_tool
+from castor.gate.decorator import castor_tool
 
 
 @castor_tool(consumes="api", cost_per_use=0.5)

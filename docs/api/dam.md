@@ -1,6 +1,6 @@
-# Dam (Tool Registry & Validation)
+# Gate (Tool Registry & Validation)
 
-The Dam subsystem handles tool registration, Pydantic input validation, and execution dispatch.
+The Gate subsystem handles tool registration, Pydantic input validation, and execution dispatch.
 
 ## Registering Tools
 
@@ -15,16 +15,16 @@ async def send_email(to: str, subject: str, body: str) -> str:
 
 ## castor_tool
 
-::: castor.dam.decorator.castor_tool
+::: castor.gate.decorator.castor_tool
 
-## CastorDam
+## SyscallGate
 
-::: castor.dam.validator.CastorDam
+::: castor.gate.validator.SyscallGate
 
 ## ToolMetadata
 
-::: castor.dam.registry.ToolMetadata
+::: castor.gate.registry.ToolMetadata
 
 ## ToolRegistry
 
-::: castor.dam.registry.ToolRegistry
+::: castor.gate.registry.ToolRegistry

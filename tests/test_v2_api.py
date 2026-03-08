@@ -20,8 +20,8 @@ from castor import (
     default_agent_registry,
 )
 from castor.capability.manager import CapabilityManager
-from castor.dam.registry import ToolRegistry
-from castor.dam.validator import CastorDam
+from castor.gate.registry import ToolRegistry
+from castor.gate.validator import SyscallGate
 from castor.stream.proxy import SyscallProxy as ProxyClass
 
 # ── Fixtures ──
@@ -72,14 +72,14 @@ class TestCastorToolDefaults:
 
         registry = ToolRegistry()
         registry.register(ping._castor_metadata)
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
 
         # No budgets at all — should still work for zero-cost tool
         cp = AgentCheckpoint(
             pid="test", status="RUNNING", agent_function_name="agent", capabilities={}
         )
-        proxy = ProxyClass(cp, dam, cap_mgr)
+        proxy = ProxyClass(cp, gate, cap_mgr)
         result = await proxy.syscall("ping")
         assert result == "pong"
 
@@ -92,13 +92,13 @@ class TestCastorToolDefaults:
         async def search(query: str) -> str:
             return f"results for {query}"
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
         caps = cap_mgr.create_capabilities({"api": 2.0})
         cp = AgentCheckpoint(
             pid="test", status="RUNNING", agent_function_name="agent", capabilities=caps
         )
-        proxy = ProxyClass(cp, dam, cap_mgr)
+        proxy = ProxyClass(cp, gate, cap_mgr)
 
         result = await proxy.syscall("search", query="hello")
         assert result == "results for hello"
@@ -113,9 +113,9 @@ class TestCastorToolDefaults:
         def danger() -> str:
             return "done"
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
-        kernel = Castor(dam=dam, capability_manager=cap_mgr)
+        kernel = Castor(gate=gate, capability_manager=cap_mgr)
 
         async def agent(proxy: SyscallProxy) -> str:
             return await proxy.danger()
@@ -199,7 +199,7 @@ class TestProxyBudget:
         async def search(query: str) -> str:
             return "ok"
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
         caps = {
             "api": Capability(resource_type="api", max_budget=10.0, current_usage=3.0)
@@ -207,7 +207,7 @@ class TestProxyBudget:
         cp = AgentCheckpoint(
             pid="test", status="RUNNING", agent_function_name="agent", capabilities=caps
         )
-        proxy = ProxyClass(cp, dam, cap_mgr)
+        proxy = ProxyClass(cp, gate, cap_mgr)
 
         assert proxy.budget("api") == 7.0
         assert proxy.budget("missing") == 0.0
@@ -257,9 +257,9 @@ class TestSyscallResult:
         async def search(query: str) -> str:
             return f"results for {query}"
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
-        kernel = Castor(dam=dam, capability_manager=cap_mgr, structured_results=True)
+        kernel = Castor(gate=gate, capability_manager=cap_mgr, structured_results=True)
 
         async def agent(proxy: SyscallProxy) -> str:
             r1 = await proxy.search(query="hello")
@@ -285,9 +285,9 @@ class TestSyscallResult:
         async def send_email(to: str) -> str:
             return f"sent to {to}"
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
-        kernel = Castor(dam=dam, capability_manager=cap_mgr, structured_results=True)
+        kernel = Castor(gate=gate, capability_manager=cap_mgr, structured_results=True)
 
         async def agent(proxy: SyscallProxy) -> str:
             result = await proxy.send_email(to="team@co.com")
@@ -317,9 +317,9 @@ class TestSyscallResult:
         async def send_email(to: str) -> str:
             return f"sent to {to}"
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
-        kernel = Castor(dam=dam, capability_manager=cap_mgr, structured_results=True)
+        kernel = Castor(gate=gate, capability_manager=cap_mgr, structured_results=True)
 
         async def agent(proxy: SyscallProxy) -> str:
             result = await proxy.send_email(to="team@co.com")
@@ -349,9 +349,9 @@ class TestSyscallResult:
         async def send_email(to: str) -> str:
             return f"sent to {to}"
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
-        kernel = Castor(dam=dam, capability_manager=cap_mgr)  # no structured_results
+        kernel = Castor(gate=gate, capability_manager=cap_mgr)  # no structured_results
 
         async def agent(proxy: SyscallProxy) -> str:
             result = await proxy.send_email(to="team@co.com")
@@ -382,9 +382,9 @@ class TestRunUntilComplete:
         async def send_email(to: str) -> str:
             return f"sent to {to}"
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
-        kernel = Castor(dam=dam, capability_manager=cap_mgr)
+        kernel = Castor(gate=gate, capability_manager=cap_mgr)
 
         async def agent(proxy: SyscallProxy) -> str:
             return await proxy.send_email(to="team@co.com")
@@ -409,9 +409,9 @@ class TestRunUntilComplete:
         async def send_email(to: str) -> str:
             return f"sent to {to}"
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
-        kernel = Castor(dam=dam, capability_manager=cap_mgr)
+        kernel = Castor(gate=gate, capability_manager=cap_mgr)
 
         async def agent(proxy: SyscallProxy) -> str:
             result = await proxy.send_email(to="team@co.com")
@@ -439,9 +439,9 @@ class TestRunUntilComplete:
         async def send_email(to: str) -> str:
             return f"sent to {to}"
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
-        kernel = Castor(dam=dam, capability_manager=cap_mgr)
+        kernel = Castor(gate=gate, capability_manager=cap_mgr)
 
         async def my_policy(cp):
             return ("modify", "add CC: boss@co.com")
@@ -472,9 +472,9 @@ class TestRunUntilComplete:
         async def danger() -> str:
             return "done"
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
-        kernel = Castor(dam=dam, capability_manager=cap_mgr)
+        kernel = Castor(gate=gate, capability_manager=cap_mgr)
 
         async def agent(proxy: SyscallProxy) -> str:
             # Each call to danger() triggers a separate HITL suspend.
@@ -509,9 +509,9 @@ class TestSpawnJoinSugar:
         async def worker(proxy: SyscallProxy) -> str:
             return await proxy.search(query="test")
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
-        kernel = Castor(dam=dam, capability_manager=cap_mgr, agent_registry=agent_reg)
+        kernel = Castor(gate=gate, capability_manager=cap_mgr, agent_registry=agent_reg)
 
         async def coordinator(proxy: SyscallProxy) -> str:
             handle = await proxy.spawn("worker", capabilities={"api": 5.0})
@@ -536,9 +536,9 @@ class TestSpawnJoinSugar:
         async def echo(proxy: SyscallProxy) -> str:
             return await proxy.ping()
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
-        kernel = Castor(dam=dam, capability_manager=cap_mgr, agent_registry=agent_reg)
+        kernel = Castor(gate=gate, capability_manager=cap_mgr, agent_registry=agent_reg)
 
         async def parent(proxy: SyscallProxy) -> str:
             return await proxy.spawn_sync("echo", capabilities={"api": 5.0})
@@ -596,8 +596,8 @@ class TestLLMFacade:
             return "ok"
 
         kernel = Castor(tools=[search, llm])
-        assert kernel._dam.registry.has_tool("llm_inference")
-        assert kernel._dam.registry.has_tool("search")
+        assert kernel._gate.registry.has_tool("llm_inference")
+        assert kernel._gate.registry.has_tool("search")
 
     def test_llm_with_explicit_registry_still_works(self):
         """Passing registry= still registers immediately (backward compat)."""
@@ -640,9 +640,9 @@ class TestPreemptionFacade:
         async def search(query: str) -> str:
             return "ok"
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
-        kernel = Castor(dam=dam, capability_manager=cap_mgr)
+        kernel = Castor(gate=gate, capability_manager=cap_mgr)
 
         async def agent(proxy: SyscallProxy) -> str:
             return await proxy.search(query="test")
@@ -663,9 +663,9 @@ class TestPreemptionFacade:
             await asyncio.sleep(10)
             return "ok"
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
-        kernel = Castor(dam=dam, capability_manager=cap_mgr)
+        kernel = Castor(gate=gate, capability_manager=cap_mgr)
 
         async def agent(proxy: SyscallProxy) -> str:
             return await proxy.slow_search(query="test")

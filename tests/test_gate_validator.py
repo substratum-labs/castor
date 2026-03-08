@@ -1,11 +1,11 @@
-"""Tests for CastorDam validation and execution engine."""
+"""Tests for SyscallGate validation and execution engine."""
 
 import pytest
 from pydantic import ValidationError
 
-from castor.dam.decorator import castor_tool
-from castor.dam.registry import ToolRegistry
-from castor.dam.validator import CastorDam
+from castor.gate.decorator import castor_tool
+from castor.gate.registry import ToolRegistry
+from castor.gate.validator import SyscallGate
 
 
 @pytest.fixture
@@ -14,8 +14,8 @@ def registry():
 
 
 @pytest.fixture
-def dam(registry):
-    return CastorDam(registry)
+def gate(registry):
+    return SyscallGate(registry)
 
 
 def register_tool(registry, func, **kwargs):
@@ -26,107 +26,107 @@ def register_tool(registry, func, **kwargs):
 
 
 class TestValidation:
-    def test_valid_input(self, registry, dam):
+    def test_valid_input(self, registry, gate):
         def search(query: str, limit: int = 10) -> list:
             return []
 
         register_tool(registry, search)
-        result = dam.validate("search", {"query": "hello"})
+        result = gate.validate("search", {"query": "hello"})
         assert result == {"query": "hello", "limit": 10}
 
-    def test_valid_input_all_fields(self, registry, dam):
+    def test_valid_input_all_fields(self, registry, gate):
         def search(query: str, limit: int = 10) -> list:
             return []
 
         register_tool(registry, search)
-        result = dam.validate("search", {"query": "hello", "limit": 5})
+        result = gate.validate("search", {"query": "hello", "limit": 5})
         assert result == {"query": "hello", "limit": 5}
 
-    def test_missing_required_field(self, registry, dam):
+    def test_missing_required_field(self, registry, gate):
         def search(query: str) -> list:
             return []
 
         register_tool(registry, search)
         with pytest.raises(ValidationError):
-            dam.validate("search", {})
+            gate.validate("search", {})
 
-    def test_wrong_type(self, registry, dam):
+    def test_wrong_type(self, registry, gate):
         def compute(x: int) -> int:
             return x
 
         register_tool(registry, compute)
         with pytest.raises(ValidationError):
-            dam.validate("compute", {"x": "not_a_number"})
+            gate.validate("compute", {"x": "not_a_number"})
 
-    def test_extra_fields_ignored(self, registry, dam):
+    def test_extra_fields_ignored(self, registry, gate):
         def ping() -> str:
             return "pong"
 
         register_tool(registry, ping)
-        result = dam.validate("ping", {})
+        result = gate.validate("ping", {})
         assert result == {}
 
 
 class TestExecution:
-    async def test_sync_tool_execution(self, registry, dam):
+    async def test_sync_tool_execution(self, registry, gate):
         def add(a: int, b: int) -> int:
             return a + b
 
         register_tool(registry, add)
-        result = await dam.execute("add", {"a": 3, "b": 4})
+        result = await gate.execute("add", {"a": 3, "b": 4})
         assert result == 7
 
-    async def test_async_tool_execution(self, registry, dam):
+    async def test_async_tool_execution(self, registry, gate):
         async def fetch(url: str) -> str:
             return f"content of {url}"
 
         register_tool(registry, fetch)
-        result = await dam.execute("fetch", {"url": "https://example.com"})
+        result = await gate.execute("fetch", {"url": "https://example.com"})
         assert result == "content of https://example.com"
 
-    async def test_tool_with_defaults(self, registry, dam):
+    async def test_tool_with_defaults(self, registry, gate):
         def greet(name: str, greeting: str = "Hello") -> str:
             return f"{greeting}, {name}!"
 
         register_tool(registry, greet)
-        validated = dam.validate("greet", {"name": "World"})
-        result = await dam.execute("greet", validated)
+        validated = gate.validate("greet", {"name": "World"})
+        result = await gate.execute("greet", validated)
         assert result == "Hello, World!"
 
 
 class TestValidationErrorFormatting:
-    def test_format_missing_field(self, registry, dam):
+    def test_format_missing_field(self, registry, gate):
         def search(query: str) -> list:
             return []
 
         register_tool(registry, search)
         try:
-            dam.validate("search", {})
+            gate.validate("search", {})
         except ValidationError as e:
-            response = dam.format_validation_error("search", e)
+            response = gate.format_validation_error("search", e)
             assert response.status == "VALIDATION_ERROR"
             assert "query" in response.feedback_message
             assert "fix the arguments" in response.feedback_message
 
-    def test_format_wrong_type(self, registry, dam):
+    def test_format_wrong_type(self, registry, gate):
         def compute(x: int) -> int:
             return x
 
         register_tool(registry, compute)
         try:
-            dam.validate("compute", {"x": "bad"})
+            gate.validate("compute", {"x": "bad"})
         except ValidationError as e:
-            response = dam.format_validation_error("compute", e)
+            response = gate.format_validation_error("compute", e)
             assert response.status == "VALIDATION_ERROR"
             assert "x" in response.feedback_message
 
 
 class TestGetToolMeta:
-    def test_get_metadata(self, registry, dam):
+    def test_get_metadata(self, registry, gate):
         def my_tool(x: int) -> int:
             return x
 
         register_tool(registry, my_tool, cost_per_use=5.0, destructive=True)
-        meta = dam.get_tool_meta("my_tool")
+        meta = gate.get_tool_meta("my_tool")
         assert meta.cost_per_use == 5.0
         assert meta.destructive is True

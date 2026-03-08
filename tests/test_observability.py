@@ -30,9 +30,9 @@ class TestLoggingIntegration:
     async def test_syscall_emits_log(self, caplog):
         """Syscall execution emits structured log messages."""
         from castor.capability.manager import CapabilityManager
-        from castor.dam.decorator import castor_tool
-        from castor.dam.registry import ToolRegistry
-        from castor.dam.validator import CastorDam
+        from castor.gate.decorator import castor_tool
+        from castor.gate.registry import ToolRegistry
+        from castor.gate.validator import SyscallGate
         from castor.models.checkpoint import AgentCheckpoint
         from castor.stream.proxy import SyscallProxy
 
@@ -42,7 +42,7 @@ class TestLoggingIntegration:
         def search(query: str) -> list:
             return [f"result for {query}"]
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
         caps = cap_mgr.create_capabilities({"test": 100.0})
         cp = AgentCheckpoint(
@@ -51,7 +51,7 @@ class TestLoggingIntegration:
             agent_function_name="test",
             capabilities=caps,
         )
-        proxy = SyscallProxy(cp, dam, cap_mgr)
+        proxy = SyscallProxy(cp, gate, cap_mgr)
 
         with caplog.at_level(logging.DEBUG, logger="castor.stream"):
             await proxy.syscall("search", {"query": "hello"})

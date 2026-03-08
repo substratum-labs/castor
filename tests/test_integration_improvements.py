@@ -8,15 +8,15 @@ from castor import (
     AgentCheckpoint,
     Capability,
     Castor,
-    CastorDam,
     CheckpointStoreProtocol,
     MemoryCheckpointStore,
+    SyscallGate,
     SyscallProxy,
     ToolMetadata,
     castor_tool,
 )
 from castor.capability.manager import CapabilityExhaustedError, CapabilityManager
-from castor.dam.registry import ToolRegistry
+from castor.gate.registry import ToolRegistry
 from castor.stream.persistence import CheckpointNotFoundError
 
 # ── A1: Budget skip on missing resource ────────────────────────────────────
@@ -231,10 +231,10 @@ def test_sqlite_store_satisfies_protocol():
 
 
 class TestCastorPublicProperties:
-    def test_dam_property(self):
+    def test_gate_property(self):
         kernel = Castor(tools=[_cost_tool])
-        assert isinstance(kernel.dam, CastorDam)
-        assert kernel.dam.registry.has_tool("_cost_tool")
+        assert isinstance(kernel.gate, SyscallGate)
+        assert kernel.gate.registry.has_tool("_cost_tool")
 
     def test_capability_manager_property(self):
         kernel = Castor(tools=[_cost_tool])
@@ -306,7 +306,7 @@ class TestEmptySchemaPassthrough:
             is_async=False,
         )
         registry.register(meta)
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
 
         # Complex args should pass through without validation
         args = {
@@ -314,7 +314,7 @@ class TestEmptySchemaPassthrough:
             "tools": [{"name": "search"}],
             "nested": {"deep": [1, 2, 3]},
         }
-        result = dam.validate("llm_inference", args)
+        result = gate.validate("llm_inference", args)
         assert result == args
 
     def test_validate_with_schema_still_validates(self):
@@ -325,10 +325,10 @@ class TestEmptySchemaPassthrough:
         registry = ToolRegistry()
         meta = getattr(typed_tool, "_castor_metadata")
         registry.register(meta)
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
 
         # Valid args
-        result = dam.validate("typed_tool", {"name": "test"})
+        result = gate.validate("typed_tool", {"name": "test"})
         assert result["name"] == "test"
         assert result["count"] == 5
 
@@ -336,4 +336,4 @@ class TestEmptySchemaPassthrough:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            dam.validate("typed_tool", {"name": 123, "count": "not_an_int"})
+            gate.validate("typed_tool", {"name": 123, "count": "not_an_int"})

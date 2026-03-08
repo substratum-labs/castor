@@ -7,8 +7,8 @@ import json
 import pytest
 from fastmcp import Client
 
-from castor.dam.decorator import castor_tool
-from castor.dam.registry import ToolRegistry
+from castor.gate.decorator import castor_tool
+from castor.gate.registry import ToolRegistry
 from castor.mcp.server import create_mcp_server
 
 # ── Fixtures ────────────────────────────────────────────────────────────────

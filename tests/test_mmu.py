@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from castor.capability.manager import CapabilityManager
-from castor.dam.registry import ToolRegistry
-from castor.dam.validator import CastorDam
+from castor.gate.registry import ToolRegistry
+from castor.gate.validator import SyscallGate
 from castor.mmu.core import MMU, PAGE_OUT_TOOL, SEARCH_MEMORY_TOOL
 from castor.mmu.drivers.mock_driver import InMemoryDriver
 from castor.mmu.token_counter import CharCountEstimator, TokenCounter
@@ -199,7 +199,7 @@ class TestEvictionViaSyscall:
         """Eviction goes through proxy.syscall() and produces a SyscallRecord."""
         registry = ToolRegistry()
         lodge, driver = _make_lodge(registry, watermark=10)
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
 
         cp = _make_checkpoint(
@@ -212,7 +212,7 @@ class TestEvictionViaSyscall:
             ],
         )
 
-        proxy = SyscallProxy(cp, dam, cap_mgr, lodge=lodge)
+        proxy = SyscallProxy(cp, gate, cap_mgr, lodge=lodge)
         await lodge.check_and_evict(proxy, cp)
 
         # Should have logged a sys_kernel_page_out syscall
@@ -231,7 +231,7 @@ class TestEvictionViaSyscall:
         """search_memory tool routes through proxy and returns results."""
         registry = ToolRegistry()
         lodge, driver = _make_lodge(registry, watermark=10)
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
 
         # Pre-populate driver with some data
@@ -241,7 +241,7 @@ class TestEvictionViaSyscall:
         )
 
         cp = _make_checkpoint(cap_mgr)
-        proxy = SyscallProxy(cp, dam, cap_mgr, lodge=lodge)
+        proxy = SyscallProxy(cp, gate, cap_mgr, lodge=lodge)
 
         result = await proxy.syscall(
             SEARCH_MEMORY_TOOL,
@@ -255,7 +255,7 @@ class TestEvictionViaSyscall:
         """No syscall logged when under watermark."""
         registry = ToolRegistry()
         lodge, _ = _make_lodge(registry, watermark=1000)
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
 
         cp = _make_checkpoint(
@@ -265,7 +265,7 @@ class TestEvictionViaSyscall:
             ],
         )
 
-        proxy = SyscallProxy(cp, dam, cap_mgr, lodge=lodge)
+        proxy = SyscallProxy(cp, gate, cap_mgr, lodge=lodge)
         await lodge.check_and_evict(proxy, cp)
 
         assert len(cp.syscall_log) == 0

@@ -51,8 +51,8 @@ from ui import (
     rich_interactive,
 )
 
-from castor import Castor, CastorDam
-from castor.dam.registry import ToolRegistry
+from castor import Castor, SyscallGate
+from castor.gate.registry import ToolRegistry
 from castor.llm.wrapper import LLMSyscall
 from castor.stream.proxy import SyscallProxy
 
@@ -94,7 +94,7 @@ def setup_kernel(
         tool_name="llm_inference",
     )
 
-    kernel = Castor(dam=CastorDam(registry), structured_results=True)
+    kernel = Castor(gate=SyscallGate(registry), structured_results=True)
     return kernel, llm
 
 

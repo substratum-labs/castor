@@ -10,9 +10,9 @@ from __future__ import annotations
 import pytest
 
 from castor.capability.manager import CapabilityManager
-from castor.dam.decorator import castor_tool
-from castor.dam.registry import ToolRegistry
-from castor.dam.validator import CastorDam
+from castor.gate.decorator import castor_tool
+from castor.gate.registry import ToolRegistry
+from castor.gate.validator import SyscallGate
 from castor.llm.wrapper import LLMSyscall
 from castor.mmu.core import MMU, PAGE_OUT_TOOL, SEARCH_MEMORY_TOOL
 from castor.mmu.drivers.mock_driver import InMemoryDriver
@@ -60,12 +60,12 @@ def llm(registry, llm_call_log):
 
 
 @pytest.fixture
-def dam(registry):
+def gate(registry):
     @castor_tool(consumes="network", cost_per_use=0.5, registry=registry)
     def summarize(text: str) -> str:
         return f"Summary of: {text[:20]}"
 
-    return CastorDam(registry)
+    return SyscallGate(registry)
 
 
 @pytest.fixture
@@ -95,7 +95,7 @@ def _make_checkpoint(cap_mgr, messages=None):
 
 
 class TestEvictionAndPageIn:
-    async def test_eviction_and_search_memory(self, dam, cap_mgr, lodge, llm, driver):
+    async def test_eviction_and_search_memory(self, gate, cap_mgr, lodge, llm, driver):
         """Large context triggers eviction before LLM, search retrieves it."""
         messages = [
             CastorMessage(
@@ -122,7 +122,7 @@ class TestEvictionAndPageIn:
             )
             return result
 
-        runner = AgentRunner(dam, cap_mgr, lodge=lodge)
+        runner = AgentRunner(gate, cap_mgr, lodge=lodge)
         result = await runner.run(agent_fn, checkpoint)
 
         assert result.status == "COMPLETED"
@@ -155,7 +155,7 @@ class TestEvictionAndPageIn:
 
 
 class TestPinnedSurvival:
-    async def test_pinned_messages_never_evicted(self, dam, cap_mgr, lodge, llm):
+    async def test_pinned_messages_never_evicted(self, gate, cap_mgr, lodge, llm):
         """Even with massive context, pinned messages are never evicted."""
         messages = [
             CastorMessage(
@@ -174,7 +174,7 @@ class TestPinnedSurvival:
             await llm.infer(proxy, model="gpt-4", prompt="test")
             return "done"
 
-        runner = AgentRunner(dam, cap_mgr, lodge=lodge)
+        runner = AgentRunner(gate, cap_mgr, lodge=lodge)
         result = await runner.run(agent_fn, checkpoint)
 
         assert result.status == "COMPLETED"
@@ -192,7 +192,7 @@ class TestPinnedSurvival:
 
 class TestEvictionReplayDeterminism:
     async def test_driver_not_called_on_replay(
-        self, registry, dam, cap_mgr, lodge, llm, llm_call_log, driver, hitl
+        self, registry, gate, cap_mgr, lodge, llm, llm_call_log, driver, hitl
     ):
         """After HITL approve + replay, driver.ingest is NOT called again."""
 
@@ -207,8 +207,8 @@ class TestEvictionReplayDeterminism:
         def dangerous_action(action: str) -> str:
             return f"executed: {action}"
 
-        # Rebuild dam with new tool
-        dam = CastorDam(registry)
+        # Rebuild gate with new tool
+        gate = SyscallGate(registry)
 
         messages = [
             CastorMessage(role="system", content="sys", pinned=True, token_count=5),
@@ -234,7 +234,7 @@ class TestEvictionReplayDeterminism:
             return "done"
 
         # Run 1: eviction + LLM → suspends at dangerous_action
-        runner1 = AgentRunner(dam, cap_mgr, lodge=lodge)
+        runner1 = AgentRunner(gate, cap_mgr, lodge=lodge)
         await runner1.run(agent_fn, checkpoint)
 
         assert checkpoint.status == "SUSPENDED_FOR_HITL"
@@ -242,10 +242,10 @@ class TestEvictionReplayDeterminism:
         assert len(llm_call_log) == 1
 
         # Approve HITL
-        await hitl.approve(checkpoint, dam, cap_mgr)
+        await hitl.approve(checkpoint, gate, cap_mgr)
 
         # Run 2: full replay — driver.ingest must NOT be called again
-        runner2 = AgentRunner(dam, cap_mgr, lodge=lodge)
+        runner2 = AgentRunner(gate, cap_mgr, lodge=lodge)
         result = await runner2.run(agent_fn, checkpoint)
 
         assert result.status == "COMPLETED"

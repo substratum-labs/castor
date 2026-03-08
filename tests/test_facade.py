@@ -5,12 +5,12 @@ import pytest
 from castor import (
     AgentCheckpoint,
     CapabilityManager,
-    CastorDam,
+    SyscallGate,
     SyscallProxy,
     castor_tool,
 )
 from castor.core import Castor
-from castor.dam.registry import ToolRegistry
+from castor.gate.registry import ToolRegistry
 
 # ── Fixtures ──
 
@@ -31,8 +31,8 @@ def registry():
 
 
 @pytest.fixture()
-def dam(registry):
-    return CastorDam(registry)
+def gate(registry):
+    return SyscallGate(registry)
 
 
 @pytest.fixture()
@@ -52,8 +52,8 @@ def checkpoint(cap_mgr):
 
 
 @pytest.fixture()
-def proxy(checkpoint, dam, cap_mgr):
-    return SyscallProxy(checkpoint, dam, cap_mgr)
+def proxy(checkpoint, gate, cap_mgr):
+    return SyscallProxy(checkpoint, gate, cap_mgr)
 
 
 # ── Task 1: syscall kwargs ──
@@ -156,7 +156,7 @@ class TestCallMethod:
 class TestCastorFacade:
     def test_create_with_default_registry(self):
         """Castor() picks up tools from default_registry."""
-        from castor.dam.registry import default_registry
+        from castor.gate.registry import default_registry
 
         @castor_tool(consumes="api", cost_per_use=1.0)
         async def default_tool(x: int) -> int:
@@ -164,7 +164,7 @@ class TestCastorFacade:
 
         try:
             kernel = Castor()
-            assert kernel._dam.registry.has_tool("default_tool")
+            assert kernel._gate.registry.has_tool("default_tool")
         finally:
             default_registry._tools.pop("default_tool", None)
 
@@ -177,14 +177,14 @@ class TestCastorFacade:
             return x + 1
 
         kernel = Castor(tools=[explicit_tool])
-        assert kernel._dam.registry.has_tool("explicit_tool")
+        assert kernel._gate.registry.has_tool("explicit_tool")
 
-    def test_create_with_custom_dam(self):
-        """Castor(dam=...) uses the provided dam."""
+    def test_create_with_custom_gate(self):
+        """Castor(gate=...) uses the provided gate."""
         reg = ToolRegistry()
-        dam = CastorDam(reg)
-        kernel = Castor(dam=dam)
-        assert kernel._dam is dam
+        gate = SyscallGate(reg)
+        kernel = Castor(gate=gate)
+        assert kernel._gate is gate
 
     @pytest.mark.asyncio
     async def test_run_simple_agent(self):

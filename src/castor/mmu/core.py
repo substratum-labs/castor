@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from castor.dam.registry import ToolMetadata, ToolRegistry
+from castor.gate.registry import ToolMetadata, ToolRegistry
 from castor.mmu.driver import SemanticMemoryDriver
 from castor.mmu.token_counter import CharCountEstimator, TokenCounter
 from castor.models.checkpoint import AgentCheckpoint, CastorMessage

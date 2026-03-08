@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from castor.capability.manager import CapabilityExhaustedError, CapabilityManager
-from castor.dam.validator import CastorDam
+from castor.gate.validator import SyscallGate
 from castor.observability import get_logger, get_meter
 
 if TYPE_CHECKING:
@@ -63,7 +63,7 @@ class SyscallProxy:
     def __init__(
         self,
         checkpoint: AgentCheckpoint,
-        dam: CastorDam,
+        gate: SyscallGate,
         capability_manager: CapabilityManager,
         lodge: MMU | None = None,
         llm_tool_names: set[str] | None = None,
@@ -73,7 +73,7 @@ class SyscallProxy:
         structured_results: bool = False,
     ) -> None:
         self.checkpoint = checkpoint
-        self._dam = dam
+        self._gate = gate
         self._cap_mgr = capability_manager
         self._lodge = lodge
         self._llm_tool_names = llm_tool_names or {"llm_inference"}
@@ -105,7 +105,7 @@ class SyscallProxy:
 
         Flow:
         1. Replay path: serve cached response if available
-        2. Validate via Dam
+        2. Validate via Gate
         3. Slow path: suspend if HITL required
         4. Fast path: deduct capability, execute, log result
 
@@ -166,19 +166,19 @@ class SyscallProxy:
         if tool_name == "join_agent":
             return await self._handle_join(request, arguments)
 
-        # ── New syscall: validate via Dam ──
+        # ── New syscall: validate via Gate ──
         try:
-            validated = self._dam.validate(tool_name, arguments)
+            validated = self._gate.validate(tool_name, arguments)
         except ValidationError as e:
             # Return validation error as a response (not an exception)
             # so the LLM can self-correct
-            response = self._dam.format_validation_error(tool_name, e)
+            response = self._gate.format_validation_error(tool_name, e)
             self._append_record(
                 SyscallRecord(request=request, response=response.model_dump())
             )
             return response.model_dump()
 
-        tool_meta = self._dam.get_tool_meta(tool_name)
+        tool_meta = self._gate.get_tool_meta(tool_name)
 
         # ── Slow Path: suspend for HITL ──
         if tool_meta.requires_hitl or tool_meta.destructive:
@@ -248,11 +248,11 @@ class SyscallProxy:
             elif tool_meta.timeout_seconds is not None:
                 # Async tool with timeout
                 result = await asyncio.wait_for(
-                    self._dam.execute(tool_name, validated),
+                    self._gate.execute(tool_name, validated),
                     timeout=tool_meta.timeout_seconds,
                 )
             else:
-                result = await self._dam.execute(tool_name, validated)
+                result = await self._gate.execute(tool_name, validated)
         except BaseException:
             # Abandon WAL entry — tool did not complete successfully
             if self._store is not None:
@@ -329,7 +329,7 @@ class SyscallProxy:
         child_kernel_tools = self._lodge.kernel_tool_names if self._lodge else set()
         child_proxy = SyscallProxy(
             checkpoint=child_cp,
-            dam=self._dam,
+            gate=self._gate,
             capability_manager=self._cap_mgr,
             lodge=self._lodge,
             llm_tool_names=self._llm_tool_names,
@@ -411,7 +411,7 @@ class SyscallProxy:
             child_kernel_tools = self._lodge.kernel_tool_names if self._lodge else set()
             child_proxy = SyscallProxy(
                 checkpoint=child_cp,
-                dam=self._dam,
+                gate=self._gate,
                 capability_manager=self._cap_mgr,
                 lodge=self._lodge,
                 llm_tool_names=self._llm_tool_names,
@@ -570,9 +570,9 @@ class SyscallProxy:
         """Wrap response in SyscallResult for destructive/HITL tools."""
         if not self._structured_results:
             return response
-        if not self._dam.registry.has_tool(tool_name):
+        if not self._gate.registry.has_tool(tool_name):
             return response
-        meta = self._dam.get_tool_meta(tool_name)
+        meta = self._gate.get_tool_meta(tool_name)
         if not (meta.requires_hitl or meta.destructive):
             return response
         if isinstance(response, dict):
@@ -659,7 +659,7 @@ class SyscallProxy:
         Only triggers for names not found via normal attribute lookup.
         """
         # Check if it's a registered tool
-        if self._dam.registry.has_tool(name):
+        if self._gate.registry.has_tool(name):
 
             async def _tool_call(**kwargs: Any) -> Any:
                 return await self.syscall(name, **kwargs)

@@ -11,9 +11,9 @@ import statistics
 import time
 
 from castor.capability.manager import CapabilityManager
-from castor.dam.decorator import castor_tool
-from castor.dam.registry import ToolRegistry
-from castor.dam.validator import CastorDam
+from castor.gate.decorator import castor_tool
+from castor.gate.registry import ToolRegistry
+from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import (
     AgentCheckpoint,
     CastorMessage,
@@ -32,7 +32,7 @@ def noop_tool(value: str) -> str:
     return value
 
 
-dam = CastorDam(registry)
+gate = SyscallGate(registry)
 cap_mgr = CapabilityManager()
 
 
@@ -104,7 +104,7 @@ async def bench_syscall_fast_path():
 
     async def fn():
         cp = make_checkpoint(0)
-        proxy = SyscallProxy(cp, dam, cap_mgr)
+        proxy = SyscallProxy(cp, gate, cap_mgr)
         await proxy.syscall("noop_tool", {"value": "x"})
 
     await bench_async("syscall fast path", fn)
@@ -115,19 +115,19 @@ async def bench_syscall_replay_path():
 
     async def fn():
         cp = make_checkpoint(1)
-        proxy = SyscallProxy(cp, dam, cap_mgr)
+        proxy = SyscallProxy(cp, gate, cap_mgr)
         await proxy.syscall("noop_tool", {"value": "v0"})
 
     await bench_async("syscall replay path", fn)
 
 
-def bench_dam_validation():
-    """Dam.validate() — Pydantic schema validation."""
+def bench_gate_validation():
+    """SyscallGate.validate() -- Pydantic schema validation."""
 
     def fn():
-        dam.validate("noop_tool", {"value": "hello"})
+        gate.validate("noop_tool", {"value": "hello"})
 
-    bench_sync("dam validation", fn)
+    bench_sync("gate validation", fn)
 
 
 def bench_checkpoint_serialization():
@@ -204,7 +204,7 @@ async def main():
 
     await bench_syscall_fast_path()
     await bench_syscall_replay_path()
-    bench_dam_validation()
+    bench_gate_validation()
     bench_checkpoint_serialization()
     bench_checkpoint_persistence()
     bench_budget_operations()

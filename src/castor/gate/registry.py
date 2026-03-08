@@ -1,4 +1,4 @@
-"""Tool registry and metadata for Castor Dam."""
+"""Tool registry and metadata for Castor Gate."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ class ToolMetadata(BaseModel):
 
         Auto-generates the JSON Schema from type hints and detects async.
         """
-        from castor.dam.decorator import _generate_schema
+        from castor.gate.decorator import _generate_schema
 
         return cls(
             tool_name=func.__name__,

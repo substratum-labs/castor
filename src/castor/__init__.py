@@ -3,13 +3,13 @@
 __version__ = "0.1.0"
 
 # Core public API
-# ── API stability markers ──
+# -- API stability markers --
 from castor.api_status import experimental, stable
 from castor.capability.manager import CapabilityManager
 from castor.core import Castor, CastorTask
-from castor.dam.decorator import castor_tool
-from castor.dam.registry import ToolMetadata
-from castor.dam.validator import CastorDam
+from castor.gate.decorator import castor_tool
+from castor.gate.registry import ToolMetadata
+from castor.gate.validator import SyscallGate
 from castor.hitl_policies import auto_approve, auto_reject, interactive
 from castor.llm.wrapper import LLMSyscall, StreamingLLMSyscall
 from castor.mmu.core import MMU
@@ -43,7 +43,7 @@ stable(SyscallRecord)
 stable(Capability)
 stable(SyscallRequest)
 stable(SyscallResponse)
-stable(CastorDam)
+stable(SyscallGate)
 stable(CapabilityManager)
 stable(HITLHandler)
 stable(AgentRunner)
@@ -76,7 +76,7 @@ __all__ = [
     "Capability",
     "CapabilityManager",
     "Castor",
-    "CastorDam",
+    "SyscallGate",
     "MMU",
     "CastorMessage",
     "CastorTask",

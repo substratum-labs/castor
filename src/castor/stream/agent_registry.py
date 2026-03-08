@@ -21,7 +21,7 @@ AgentFn = Callable[..., Awaitable[Any]]
 class AgentRegistry:
     """Registry mapping agent names to async agent functions.
 
-    Mirrors the ToolRegistry pattern from castor.dam.registry.
+    Mirrors the ToolRegistry pattern from castor.gate.registry.
     """
 
     def __init__(self) -> None:

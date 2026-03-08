@@ -37,9 +37,9 @@ class TestAPIStatusExports:
             AgentCheckpoint,
             AgentRunner,
             CapabilityManager,
-            CastorDam,
             CheckpointStore,
             HITLHandler,
+            SyscallGate,
             SyscallProxy,
             castor_tool,
         )
@@ -47,7 +47,7 @@ class TestAPIStatusExports:
         assert getattr(SyscallProxy, "__api_status__", None) == "stable"
         assert getattr(AgentCheckpoint, "__api_status__", None) == "stable"
         assert getattr(CapabilityManager, "__api_status__", None) == "stable"
-        assert getattr(CastorDam, "__api_status__", None) == "stable"
+        assert getattr(SyscallGate, "__api_status__", None) == "stable"
         assert getattr(HITLHandler, "__api_status__", None) == "stable"
         assert getattr(AgentRunner, "__api_status__", None) == "stable"
         assert getattr(CheckpointStore, "__api_status__", None) == "stable"

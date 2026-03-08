@@ -8,8 +8,8 @@ from collections.abc import Callable
 from typing import Any
 
 from castor.capability.manager import CapabilityManager
-from castor.dam.registry import ToolRegistry, default_registry
-from castor.dam.validator import CastorDam
+from castor.gate.registry import ToolRegistry, default_registry
+from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import AgentCheckpoint
 from castor.stream.hitl import HITLHandler
 from castor.stream.proxy import SyscallProxy
@@ -17,7 +17,7 @@ from castor.stream.runner import AgentRunner
 
 
 class Castor:
-    """Unified kernel facade — assembles all subsystems behind a single object.
+    """Unified kernel facade -- assembles all subsystems behind a single object.
 
     Usage::
 
@@ -32,14 +32,14 @@ class Castor:
         lodge: Any | None = None,
         agent_registry: Any | None = None,
         store: str | Any | None = None,
-        dam: CastorDam | None = None,
+        gate: SyscallGate | None = None,
         capability_manager: CapabilityManager | None = None,
         default_budgets: dict[str, float] | None = None,
         structured_results: bool = False,
     ) -> None:
-        # ── Dam (tool validation + execution) ──
-        if dam is not None:
-            self._dam = dam
+        # -- Gate (tool validation + execution) --
+        if gate is not None:
+            self._gate = gate
         elif tools is not None:
             from castor.llm.wrapper import LLMSyscall, StreamingLLMSyscall
 
@@ -54,14 +54,14 @@ class Castor:
                             f"{item!r} is not a @castor_tool or LLMSyscall instance"
                         )
                     registry.register(meta)
-            self._dam = CastorDam(registry)
+            self._gate = SyscallGate(registry)
         else:
-            self._dam = CastorDam(default_registry)
+            self._gate = SyscallGate(default_registry)
 
-        # ── Capability Manager ──
+        # -- Capability Manager --
         self._cap_mgr = capability_manager or CapabilityManager()
 
-        # ── Optional subsystems ──
+        # -- Optional subsystems --
         self._lodge = lodge
         if agent_registry is not None:
             self._agent_registry = agent_registry
@@ -76,7 +76,7 @@ class Castor:
         self._structured_results = structured_results
         self._hitl = HITLHandler()
 
-        # ── Persistence ──
+        # -- Persistence --
         self._store = None
         if store is not None:
             from castor.stream.persistence import CheckpointStore
@@ -86,12 +86,12 @@ class Castor:
             else:
                 self._store = store
 
-    # ── Public properties ──
+    # -- Public properties --
 
     @property
-    def dam(self) -> CastorDam:
-        """The CastorDam (tool validation + execution engine)."""
-        return self._dam
+    def gate(self) -> SyscallGate:
+        """The SyscallGate (tool validation + execution engine)."""
+        return self._gate
 
     @property
     def capability_manager(self) -> CapabilityManager:
@@ -103,7 +103,7 @@ class Castor:
         """The configured checkpoint store, or None."""
         return self._store
 
-    # ── Internal helpers ──
+    # -- Internal helpers --
 
     def _resolve_budgets(
         self, budgets: dict[str, float] | None
@@ -130,7 +130,7 @@ class Castor:
             capabilities=caps,
         )
 
-    # ── Execution ──
+    # -- Execution --
 
     async def run(
         self,
@@ -154,7 +154,7 @@ class Castor:
             checkpoint = self._make_checkpoint(agent_fn, budgets, pid)
 
         runner = AgentRunner(
-            self._dam,
+            self._gate,
             self._cap_mgr,
             lodge=self._lodge,
             agent_registry=self._agent_registry,
@@ -171,27 +171,27 @@ class Castor:
                 )
             await self._hitl.approve_child_hitl(
                 checkpoint,
-                self._dam,
+                self._gate,
                 self._cap_mgr,
                 self._agent_registry,
                 lodge=self._lodge,
             )
         else:
-            await self._hitl.approve(checkpoint, self._dam, self._cap_mgr)
+            await self._hitl.approve(checkpoint, self._gate, self._cap_mgr)
 
     def reject(self, checkpoint: AgentCheckpoint, reason: str) -> None:
         """Reject a pending HITL syscall with feedback."""
         if self._hitl.is_child_hitl(checkpoint):
             raise NotImplementedError(
-                "Child HITL rejection requires runtime — use HITLHandler directly"
+                "Child HITL rejection requires runtime -- use HITLHandler directly"
             )
         self._hitl.reject(checkpoint, reason)
 
     def modify(self, checkpoint: AgentCheckpoint, feedback: str) -> None:
-        """Approve with modification — log feedback for LLM re-planning."""
+        """Approve with modification -- log feedback for LLM re-planning."""
         if self._hitl.is_child_hitl(checkpoint):
             raise NotImplementedError(
-                "Child HITL modification requires runtime — use HITLHandler directly"
+                "Child HITL modification requires runtime -- use HITLHandler directly"
             )
         self._hitl.modify(checkpoint, feedback)
 
@@ -241,13 +241,13 @@ class Castor:
     async def save(self, checkpoint: AgentCheckpoint) -> None:
         """Persist checkpoint to the configured store."""
         if self._store is None:
-            raise RuntimeError("No store configured — pass store= to Castor()")
+            raise RuntimeError("No store configured -- pass store= to Castor()")
         self._store.save(checkpoint)
 
     def load(self, pid: str) -> AgentCheckpoint:
         """Load a checkpoint from the configured store."""
         if self._store is None:
-            raise RuntimeError("No store configured — pass store= to Castor()")
+            raise RuntimeError("No store configured -- pass store= to Castor()")
         return self._store.load(pid)
 
     async def run_async(
@@ -267,7 +267,7 @@ class Castor:
             checkpoint = self._make_checkpoint(agent_fn, budgets, pid)
 
         runner = AgentRunner(
-            self._dam,
+            self._gate,
             self._cap_mgr,
             lodge=self._lodge,
             agent_registry=self._agent_registry,
@@ -305,7 +305,7 @@ class CastorTask:
 
     @property
     def checkpoint(self) -> AgentCheckpoint:
-        """Current checkpoint (live — status updates in real time)."""
+        """Current checkpoint (live -- status updates in real time)."""
         return self._checkpoint
 
     @property
@@ -320,5 +320,5 @@ class CastorTask:
         try:
             await self._task
         except asyncio.CancelledError:
-            pass  # Preemption — checkpoint already set to PREEMPTED
+            pass  # Preemption -- checkpoint already set to PREEMPTED
         return self._checkpoint

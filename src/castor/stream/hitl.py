@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from castor.capability.manager import CapabilityManager
-from castor.dam.validator import CastorDam
+from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
 
 if TYPE_CHECKING:
@@ -23,7 +23,7 @@ class HITLHandler:
     async def approve(
         self,
         checkpoint: AgentCheckpoint,
-        dam: CastorDam,
+        gate: SyscallGate,
         capability_manager: CapabilityManager,
     ) -> None:
         """Approve the pending HITL syscall and execute it.
@@ -40,8 +40,8 @@ class HITLHandler:
         arguments = request["arguments"]
 
         # Validate and execute
-        validated = dam.validate(tool_name, arguments)
-        tool_meta = dam.get_tool_meta(tool_name)
+        validated = gate.validate(tool_name, arguments)
+        tool_meta = gate.get_tool_meta(tool_name)
 
         if tool_meta.cost_per_use > 0:
             capability_manager.deduct(
@@ -50,7 +50,7 @@ class HITLHandler:
                 tool_meta.cost_per_use,
             )
 
-        result = await dam.execute(tool_name, validated)
+        result = await gate.execute(tool_name, validated)
 
         checkpoint.syscall_log.append(
             SyscallRecord(request=request, response=result, was_hitl=True)
@@ -117,7 +117,7 @@ class HITLHandler:
     async def approve_child_hitl(
         self,
         checkpoint: AgentCheckpoint,
-        dam: CastorDam,
+        gate: SyscallGate,
         capability_manager: CapabilityManager,
         agent_registry: AgentRegistry,
         lodge: MMU | None = None,
@@ -127,11 +127,11 @@ class HITLHandler:
             raise ValueError("No child spawn HITL pending — use approve()")
 
         child_cp = self._get_child_checkpoint(checkpoint)
-        await self.approve(child_cp, dam, capability_manager)
+        await self.approve(child_cp, gate, capability_manager)
         await self._resume_child(
             checkpoint,
             child_cp,
-            dam,
+            gate,
             capability_manager,
             agent_registry,
             lodge=lodge,
@@ -141,7 +141,7 @@ class HITLHandler:
         self,
         checkpoint: AgentCheckpoint,
         feedback: str,
-        dam: CastorDam,
+        gate: SyscallGate,
         capability_manager: CapabilityManager,
         agent_registry: AgentRegistry,
         lodge: MMU | None = None,
@@ -155,7 +155,7 @@ class HITLHandler:
         await self._resume_child(
             checkpoint,
             child_cp,
-            dam,
+            gate,
             capability_manager,
             agent_registry,
             lodge=lodge,
@@ -165,7 +165,7 @@ class HITLHandler:
         self,
         checkpoint: AgentCheckpoint,
         feedback: str,
-        dam: CastorDam,
+        gate: SyscallGate,
         capability_manager: CapabilityManager,
         agent_registry: AgentRegistry,
         lodge: MMU | None = None,
@@ -179,7 +179,7 @@ class HITLHandler:
         await self._resume_child(
             checkpoint,
             child_cp,
-            dam,
+            gate,
             capability_manager,
             agent_registry,
             lodge=lodge,
@@ -196,7 +196,7 @@ class HITLHandler:
         self,
         parent_cp: AgentCheckpoint,
         child_cp: AgentCheckpoint,
-        dam: CastorDam,
+        gate: SyscallGate,
         capability_manager: CapabilityManager,
         agent_registry: AgentRegistry,
         lodge: MMU | None = None,
@@ -208,7 +208,7 @@ class HITLHandler:
 
         agent_fn = agent_registry.get(child_cp.agent_function_name)
         runner = AgentRunner(
-            dam, capability_manager, lodge=lodge, agent_registry=agent_registry
+            gate, capability_manager, lodge=lodge, agent_registry=agent_registry
         )
 
         try:

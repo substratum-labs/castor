@@ -19,8 +19,8 @@ from pathlib import Path
 from agent import openclaw_agent
 from tools import register_tools
 
-from castor import Castor, CastorDam, interactive
-from castor.dam.registry import ToolRegistry
+from castor import Castor, SyscallGate, interactive
+from castor.gate.registry import ToolRegistry
 from castor.llm.wrapper import LLMSyscall
 from castor.stream.proxy import SyscallProxy
 
@@ -59,7 +59,7 @@ def setup_kernel(kb_path: Path, db_path: Path) -> tuple[Castor, LLMSyscall]:
         cost_per_use=1.0,
     )
 
-    kernel = Castor(dam=CastorDam(registry), store=f"sqlite:///{db_path}")
+    kernel = Castor(gate=SyscallGate(registry), store=f"sqlite:///{db_path}")
 
     return kernel, llm
 

@@ -3,9 +3,9 @@
 import pytest
 
 from castor.capability.manager import CapabilityManager
-from castor.dam.decorator import castor_tool
-from castor.dam.registry import ToolRegistry
-from castor.dam.validator import CastorDam
+from castor.gate.decorator import castor_tool
+from castor.gate.registry import ToolRegistry
+from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import AgentCheckpoint
 from castor.stream.hitl import HITLHandler
 
@@ -28,8 +28,8 @@ def registry():
 
 
 @pytest.fixture
-def dam(registry):
-    return CastorDam(registry)
+def gate(registry):
+    return SyscallGate(registry)
 
 
 @pytest.fixture
@@ -57,9 +57,9 @@ def make_suspended_checkpoint(cap_mgr):
 
 
 class TestApprove:
-    async def test_approve_executes_and_logs(self, handler, dam, cap_mgr):
+    async def test_approve_executes_and_logs(self, handler, gate, cap_mgr):
         checkpoint = make_suspended_checkpoint(cap_mgr)
-        await handler.approve(checkpoint, dam, cap_mgr)
+        await handler.approve(checkpoint, gate, cap_mgr)
 
         assert checkpoint.status == "RUNNING"
         assert checkpoint.pending_hitl is None
@@ -70,12 +70,12 @@ class TestApprove:
         assert record.request["tool_name"] == "delete_files"
         assert record.response == 2  # len(["/tmp/a", "/tmp/b"])
 
-    async def test_approve_deducts_capability(self, handler, dam, cap_mgr):
+    async def test_approve_deducts_capability(self, handler, gate, cap_mgr):
         checkpoint = make_suspended_checkpoint(cap_mgr)
-        await handler.approve(checkpoint, dam, cap_mgr)
+        await handler.approve(checkpoint, gate, cap_mgr)
         assert checkpoint.capabilities["disk"].current_usage == 1.0
 
-    async def test_approve_no_pending_raises(self, handler, dam, cap_mgr):
+    async def test_approve_no_pending_raises(self, handler, gate, cap_mgr):
         caps = cap_mgr.create_capabilities({"disk": 50.0})
         checkpoint = AgentCheckpoint(
             pid="test-001",
@@ -84,7 +84,7 @@ class TestApprove:
             capabilities=caps,
         )
         with pytest.raises(ValueError, match="No pending"):
-            await handler.approve(checkpoint, dam, cap_mgr)
+            await handler.approve(checkpoint, gate, cap_mgr)
 
 
 class TestReject:

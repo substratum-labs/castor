@@ -7,7 +7,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from castor.capability.manager import CapabilityManager
-from castor.dam.validator import CastorDam
+from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import AgentCheckpoint, SuspendInterrupt
 from castor.observability import get_logger
 from castor.stream.proxy import SyscallProxy
@@ -35,13 +35,13 @@ class AgentRunner:
 
     def __init__(
         self,
-        dam: CastorDam,
+        gate: SyscallGate,
         capability_manager: CapabilityManager,
         lodge: MMU | None = None,
         agent_registry: AgentRegistry | None = None,
         structured_results: bool = False,
     ) -> None:
-        self._dam = dam
+        self._gate = gate
         self._cap_mgr = capability_manager
         self._lodge = lodge
         self._agent_registry = agent_registry
@@ -70,7 +70,7 @@ class AgentRunner:
         kernel_tools = self._lodge.kernel_tool_names if self._lodge else set()
         proxy = SyscallProxy(
             checkpoint,
-            self._dam,
+            self._gate,
             self._cap_mgr,
             lodge=self._lodge,
             kernel_tool_names=kernel_tools,

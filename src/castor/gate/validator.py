@@ -1,4 +1,4 @@
-"""CastorDam: validation and execution engine for registered tools."""
+"""SyscallGate: validation and execution engine for registered tools."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ from typing import Any
 
 from pydantic import ValidationError, create_model
 
-from castor.dam.registry import ToolMetadata, ToolRegistry
+from castor.gate.registry import ToolMetadata, ToolRegistry
 from castor.models.capability import SyscallResponse
 
 
-class CastorDam:
+class SyscallGate:
     """Validates tool arguments and executes registered tools.
 
     Combines the ToolRegistry with Pydantic validation and tool execution.
@@ -34,7 +34,7 @@ class CastorDam:
         """
         meta = self.registry.get(tool_name)
         if not meta.input_schema:
-            return arguments  # No schema → pass through (e.g. LLM wrappers)
+            return arguments  # No schema -> pass through (e.g. LLM wrappers)
         model_cls = self._get_or_build_model(tool_name)
         instance = model_cls(**arguments)
         return instance.model_dump()

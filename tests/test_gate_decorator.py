@@ -2,8 +2,8 @@
 
 import pytest
 
-from castor.dam.decorator import castor_tool
-from castor.dam.registry import ToolRegistry
+from castor.gate.decorator import castor_tool
+from castor.gate.registry import ToolRegistry
 
 
 @pytest.fixture

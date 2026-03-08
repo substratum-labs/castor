@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from castor.dam.decorator import castor_tool
-from castor.dam.registry import ToolRegistry
+from castor.gate.decorator import castor_tool
+from castor.gate.registry import ToolRegistry
 
 
 def register_tools(registry: ToolRegistry, knowledge_base: Path) -> None:

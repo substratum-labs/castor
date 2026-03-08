@@ -1,16 +1,16 @@
-"""Castor Dam: tool registry, validation, and execution."""
+"""Castor Gate: tool registry, validation, and execution."""
 
-from castor.dam.decorator import castor_tool
-from castor.dam.registry import (
+from castor.gate.decorator import castor_tool
+from castor.gate.registry import (
     ToolMetadata,
     ToolNotFoundError,
     ToolRegistry,
     default_registry,
 )
-from castor.dam.validator import CastorDam
+from castor.gate.validator import SyscallGate
 
 __all__ = [
-    "CastorDam",
+    "SyscallGate",
     "ToolMetadata",
     "ToolNotFoundError",
     "ToolRegistry",

@@ -30,7 +30,7 @@ Four kernel subsystems, all in `src/castor/`:
 
 | Module | Purpose |
 |---|---|
-| `dam/` | Tool registry & Pydantic validation (Castor Dam) |
+| `gate/` | Tool registry & Pydantic validation (SyscallGate) |
 | `stream/` | Checkpoint/replay scheduler (Castor Stream) |
 | `lodge/` | Context window memory management (Castor Lodge) |
 | `capability/` | Budget tracking & delegation (Capability Manager) |
@@ -53,8 +53,8 @@ Four kernel subsystems, all in `src/castor/`:
 - Never throw raw Python exceptions to user space — wrap in `SyscallResponse` with feedback
 - Prefer `dict[str, Any]` over `Dict[str, Any]` (Python 3.11+ builtins)
 - Missing resource type in capabilities = not tracked = unlimited (`deduct()` no-ops, `check()` returns True)
-- Dam skips Pydantic validation for tools with `input_schema={}` (LLM wrappers pass through)
-- Access kernel internals via public properties: `kernel.dam`, `kernel.capability_manager`, `kernel.store`
+- Gate skips Pydantic validation for tools with `input_schema={}` (LLM wrappers pass through)
+- Access kernel internals via public properties: `kernel.gate`, `kernel.capability_manager`, `kernel.store`
 
 ## Documentation
 

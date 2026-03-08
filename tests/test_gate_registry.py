@@ -2,7 +2,7 @@
 
 import pytest
 
-from castor.dam.registry import ToolMetadata, ToolNotFoundError, ToolRegistry
+from castor.gate.registry import ToolMetadata, ToolNotFoundError, ToolRegistry
 
 
 def make_metadata(name: str = "test_tool", **kwargs) -> ToolMetadata:

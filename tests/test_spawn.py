@@ -3,9 +3,9 @@
 import pytest
 
 from castor.capability.manager import CapabilityManager, InsufficientBudgetError
-from castor.dam.decorator import castor_tool
-from castor.dam.registry import ToolRegistry
-from castor.dam.validator import CastorDam
+from castor.gate.decorator import castor_tool
+from castor.gate.registry import ToolRegistry
+from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import (
     AgentCheckpoint,
     SuspendInterrupt,
@@ -25,8 +25,8 @@ def tool_registry():
 
 
 @pytest.fixture
-def dam(tool_registry):
-    return CastorDam(tool_registry)
+def gate(tool_registry):
+    return SyscallGate(tool_registry)
 
 
 @pytest.fixture
@@ -78,10 +78,10 @@ def make_checkpoint(cap_mgr, caps=None, syscall_log=None):
     )
 
 
-def make_proxy(checkpoint, dam, cap_mgr, agent_registry=None, lodge=None):
+def make_proxy(checkpoint, gate, cap_mgr, agent_registry=None, lodge=None):
     return SyscallProxy(
         checkpoint=checkpoint,
-        dam=dam,
+        gate=gate,
         capability_manager=cap_mgr,
         lodge=lodge,
         agent_registry=agent_registry,
@@ -160,7 +160,7 @@ class TestCastorAgentDecorator:
 
 class TestSpawnHappyPath:
     async def test_spawn_child_completes(
-        self, tool_registry, dam, cap_mgr, agent_registry
+        self, tool_registry, gate, cap_mgr, agent_registry
     ):
         """Child agent runs, returns result, budget reclaimed."""
         register_search(tool_registry)
@@ -171,7 +171,7 @@ class TestSpawnHappyPath:
 
         agent_registry.register("child_agent", child_agent)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         result = await proxy.syscall(
             "spawn_agent",
@@ -187,7 +187,7 @@ class TestSpawnHappyPath:
         assert record.child_checkpoint.result == {"answer": ["result for child"]}
 
     async def test_spawn_budget_delegation(
-        self, tool_registry, dam, cap_mgr, agent_registry
+        self, tool_registry, gate, cap_mgr, agent_registry
     ):
         """Parent budget is deducted by delegation, child uses some, rest reclaimed."""
         register_search(tool_registry)
@@ -198,7 +198,7 @@ class TestSpawnHappyPath:
 
         agent_registry.register("child_agent", child_agent)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         # Parent starts with 100 test budget
         await proxy.syscall(
@@ -211,7 +211,7 @@ class TestSpawnHappyPath:
         assert checkpoint.capabilities["test"].current_usage == 1.0
 
     async def test_spawn_child_pid_deterministic(
-        self, tool_registry, dam, cap_mgr, agent_registry
+        self, tool_registry, gate, cap_mgr, agent_registry
     ):
         """Child PID follows parent_pid::agent_name-N pattern."""
 
@@ -220,7 +220,7 @@ class TestSpawnHappyPath:
 
         agent_registry.register("worker", noop_agent)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         await proxy.syscall(
             "spawn_agent",
@@ -232,7 +232,7 @@ class TestSpawnHappyPath:
         assert child_cp.parent_pid == "parent-001"
 
     async def test_spawn_multiple_children(
-        self, tool_registry, dam, cap_mgr, agent_registry
+        self, tool_registry, gate, cap_mgr, agent_registry
     ):
         """Spawning two children yields incrementing PIDs."""
 
@@ -241,7 +241,7 @@ class TestSpawnHappyPath:
 
         agent_registry.register("worker", noop_agent)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         await proxy.syscall(
             "spawn_agent",
@@ -257,10 +257,10 @@ class TestSpawnHappyPath:
 
 
 class TestSpawnErrors:
-    async def test_spawn_no_registry_raises(self, dam, cap_mgr):
+    async def test_spawn_no_registry_raises(self, gate, cap_mgr):
         """spawn_agent without AgentRegistry raises RuntimeError."""
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry=None)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry=None)
 
         with pytest.raises(RuntimeError, match="AgentRegistry"):
             await proxy.syscall(
@@ -268,10 +268,10 @@ class TestSpawnErrors:
                 {"agent_name": "x", "capabilities": {}},
             )
 
-    async def test_spawn_unknown_agent_raises(self, dam, cap_mgr, agent_registry):
+    async def test_spawn_unknown_agent_raises(self, gate, cap_mgr, agent_registry):
         """spawn_agent with unregistered name raises AgentNotFoundError."""
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         with pytest.raises(AgentNotFoundError, match="ghost"):
             await proxy.syscall(
@@ -279,7 +279,9 @@ class TestSpawnErrors:
                 {"agent_name": "ghost", "capabilities": {"test": 1.0}},
             )
 
-    async def test_spawn_insufficient_budget_raises(self, dam, cap_mgr, agent_registry):
+    async def test_spawn_insufficient_budget_raises(
+        self, gate, cap_mgr, agent_registry
+    ):
         """Requesting more budget than parent has raises InsufficientBudgetError."""
 
         async def noop(proxy):
@@ -288,7 +290,7 @@ class TestSpawnErrors:
         agent_registry.register("noop", noop)
         caps = cap_mgr.create_capabilities({"test": 5.0})
         checkpoint = make_checkpoint(cap_mgr, caps=caps)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         with pytest.raises(InsufficientBudgetError):
             await proxy.syscall(
@@ -297,7 +299,7 @@ class TestSpawnErrors:
             )
 
     async def test_spawn_child_exception_reclaims_budget(
-        self, dam, cap_mgr, agent_registry
+        self, gate, cap_mgr, agent_registry
     ):
         """If child raises unexpected exception, delegated budget is reclaimed."""
 
@@ -306,7 +308,7 @@ class TestSpawnErrors:
 
         agent_registry.register("crashing_child", crashing_child)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         with pytest.raises(RuntimeError, match="child exploded"):
             await proxy.syscall(
@@ -323,7 +325,7 @@ class TestSpawnErrors:
 
 class TestChildHITLSuspension:
     async def test_child_hitl_suspends_parent(
-        self, tool_registry, dam, cap_mgr, agent_registry
+        self, tool_registry, gate, cap_mgr, agent_registry
     ):
         """When child hits HITL, parent also suspends."""
         register_delete(tool_registry)
@@ -334,7 +336,7 @@ class TestChildHITLSuspension:
 
         agent_registry.register("dangerous_child", dangerous_child)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         with pytest.raises(SuspendInterrupt):
             await proxy.syscall(
@@ -370,7 +372,7 @@ class TestChildHITLHandler:
         assert handler.is_child_hitl(checkpoint) is True
 
     async def test_approve_child_hitl(
-        self, tool_registry, dam, cap_mgr, agent_registry, handler
+        self, tool_registry, gate, cap_mgr, agent_registry, handler
     ):
         """Approving child HITL executes the child's blocked tool and resumes."""
         register_delete(tool_registry)
@@ -383,7 +385,7 @@ class TestChildHITLHandler:
 
         # First: spawn and get suspended
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         with pytest.raises(SuspendInterrupt):
             await proxy.syscall(
@@ -395,7 +397,7 @@ class TestChildHITLHandler:
             )
 
         # Now approve the child HITL
-        await handler.approve_child_hitl(checkpoint, dam, cap_mgr, agent_registry)
+        await handler.approve_child_hitl(checkpoint, gate, cap_mgr, agent_registry)
 
         assert checkpoint.status == "RUNNING"
         assert checkpoint.pending_hitl is None
@@ -406,7 +408,7 @@ class TestChildHITLHandler:
         assert last.response == {"deleted": 1}
 
     async def test_reject_child_hitl(
-        self, tool_registry, dam, cap_mgr, agent_registry, handler
+        self, tool_registry, gate, cap_mgr, agent_registry, handler
     ):
         """Rejecting child HITL logs feedback and resumes child (which completes)."""
         register_delete(tool_registry)
@@ -419,7 +421,7 @@ class TestChildHITLHandler:
         agent_registry.register("child_with_fallback", child_with_fallback)
 
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         with pytest.raises(SuspendInterrupt):
             await proxy.syscall(
@@ -431,7 +433,7 @@ class TestChildHITLHandler:
             )
 
         await handler.reject_child_hitl(
-            checkpoint, "Too dangerous", dam, cap_mgr, agent_registry
+            checkpoint, "Too dangerous", gate, cap_mgr, agent_registry
         )
 
         assert checkpoint.status == "RUNNING"
@@ -441,7 +443,7 @@ class TestChildHITLHandler:
         assert rejection_record.response["status"] == "HITL_REJECTED"
 
     async def test_modify_child_hitl(
-        self, tool_registry, dam, cap_mgr, agent_registry, handler
+        self, tool_registry, gate, cap_mgr, agent_registry, handler
     ):
         """Modifying child HITL logs modification feedback and resumes."""
         register_delete(tool_registry)
@@ -453,7 +455,7 @@ class TestChildHITLHandler:
         agent_registry.register("child_agent", child_agent)
 
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         with pytest.raises(SuspendInterrupt):
             await proxy.syscall(
@@ -465,7 +467,7 @@ class TestChildHITLHandler:
             )
 
         await handler.modify_child_hitl(
-            checkpoint, "Only delete temp files", dam, cap_mgr, agent_registry
+            checkpoint, "Only delete temp files", gate, cap_mgr, agent_registry
         )
 
         assert checkpoint.status == "RUNNING"
@@ -475,7 +477,7 @@ class TestChildHITLHandler:
         assert "temp files" in mod_record.response["human_feedback"]
 
     async def test_approve_child_hitl_child_crashes(
-        self, tool_registry, dam, cap_mgr, agent_registry, handler
+        self, tool_registry, gate, cap_mgr, agent_registry, handler
     ):
         """Child crash after HITL approval unblocks parent with FAILED child."""
         register_delete(tool_registry)
@@ -488,7 +490,7 @@ class TestChildHITLHandler:
 
         # Spawn child → child hits HITL → parent suspends
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         with pytest.raises(SuspendInterrupt):
             await proxy.syscall(
@@ -502,7 +504,7 @@ class TestChildHITLHandler:
         initial_usage = checkpoint.capabilities["test"].current_usage
 
         # Approve child HITL — child resumes, then crashes
-        await handler.approve_child_hitl(checkpoint, dam, cap_mgr, agent_registry)
+        await handler.approve_child_hitl(checkpoint, gate, cap_mgr, agent_registry)
 
         # Parent unblocked
         assert checkpoint.status == "RUNNING"
@@ -517,7 +519,7 @@ class TestChildHITLHandler:
         assert checkpoint.capabilities["test"].current_usage < initial_usage
 
     async def test_async_approve_child_hitl_child_crashes(
-        self, tool_registry, dam, cap_mgr, agent_registry, handler
+        self, tool_registry, gate, cap_mgr, agent_registry, handler
     ):
         """If async child crashes after HITL approval at join, parent is unblocked."""
         register_delete(tool_registry)
@@ -530,7 +532,7 @@ class TestChildHITLHandler:
 
         # Async spawn → join → child hits HITL → parent suspends
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         handle = await proxy.syscall(
             "spawn_agent_async",
@@ -546,7 +548,7 @@ class TestChildHITLHandler:
         initial_usage = checkpoint.capabilities["test"].current_usage
 
         # Approve child HITL — child resumes, then crashes
-        await handler.approve_child_hitl(checkpoint, dam, cap_mgr, agent_registry)
+        await handler.approve_child_hitl(checkpoint, gate, cap_mgr, agent_registry)
 
         # Parent unblocked
         assert checkpoint.status == "RUNNING"
@@ -561,7 +563,7 @@ class TestChildHITLHandler:
         assert checkpoint.capabilities["test"].current_usage < initial_usage
 
     async def test_approve_child_no_spawn_raises(
-        self, dam, cap_mgr, agent_registry, handler
+        self, gate, cap_mgr, agent_registry, handler
     ):
         """approve_child_hitl raises if pending_hitl is not a spawn."""
         checkpoint = make_checkpoint(cap_mgr)
@@ -570,7 +572,7 @@ class TestChildHITLHandler:
             "arguments": {"paths": ["/a"]},
         }
         with pytest.raises(ValueError, match="use approve"):
-            await handler.approve_child_hitl(checkpoint, dam, cap_mgr, agent_registry)
+            await handler.approve_child_hitl(checkpoint, gate, cap_mgr, agent_registry)
 
 
 # ── AgentRunner with AgentRegistry ──
@@ -578,7 +580,7 @@ class TestChildHITLHandler:
 
 class TestAgentRunnerWithRegistry:
     async def test_runner_passes_registry_to_proxy(
-        self, tool_registry, dam, cap_mgr, agent_registry
+        self, tool_registry, gate, cap_mgr, agent_registry
     ):
         """AgentRunner wires agent_registry into SyscallProxy for spawn support."""
         register_search(tool_registry)
@@ -598,7 +600,7 @@ class TestAgentRunnerWithRegistry:
             spawned.append(result)
             return "parent done"
 
-        runner = AgentRunner(dam, cap_mgr, agent_registry=agent_registry)
+        runner = AgentRunner(gate, cap_mgr, agent_registry=agent_registry)
         checkpoint = make_checkpoint(cap_mgr)
         checkpoint.agent_function_name = "parent_agent"
 
@@ -614,7 +616,7 @@ class TestAgentRunnerWithRegistry:
 
 class TestSpawnReplay:
     async def test_spawn_result_replayed_from_cache(
-        self, tool_registry, dam, cap_mgr, agent_registry
+        self, tool_registry, gate, cap_mgr, agent_registry
     ):
         """On resume, a completed spawn replays from syscall_log cache."""
 
@@ -648,7 +650,7 @@ class TestSpawnReplay:
                 )
             ],
         )
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         result = await proxy.syscall(
             "spawn_agent",
@@ -665,7 +667,7 @@ class TestSpawnReplay:
 
 class TestSpawnAsyncHappyPath:
     async def test_spawn_async_returns_handle(
-        self, tool_registry, dam, cap_mgr, agent_registry
+        self, tool_registry, gate, cap_mgr, agent_registry
     ):
         """spawn_agent_async returns a child PID handle immediately."""
 
@@ -674,7 +676,7 @@ class TestSpawnAsyncHappyPath:
 
         agent_registry.register("child_agent", child_agent)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         handle = await proxy.syscall(
             "spawn_agent_async",
@@ -688,7 +690,7 @@ class TestSpawnAsyncHappyPath:
         assert checkpoint.syscall_log[0].response == handle
 
     async def test_join_returns_child_result(
-        self, tool_registry, dam, cap_mgr, agent_registry
+        self, tool_registry, gate, cap_mgr, agent_registry
     ):
         """join_agent awaits child and returns its result."""
         register_search(tool_registry)
@@ -699,7 +701,7 @@ class TestSpawnAsyncHappyPath:
 
         agent_registry.register("child_agent", child_agent)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         handle = await proxy.syscall(
             "spawn_agent_async",
@@ -714,7 +716,7 @@ class TestSpawnAsyncHappyPath:
         assert join_record.child_checkpoint is not None
         assert join_record.child_checkpoint.status == "COMPLETED"
 
-    async def test_fan_out_fan_in(self, tool_registry, dam, cap_mgr, agent_registry):
+    async def test_fan_out_fan_in(self, tool_registry, gate, cap_mgr, agent_registry):
         """Spawn 3 children async, join all 3, verify all results."""
         register_search(tool_registry)
 
@@ -723,7 +725,7 @@ class TestSpawnAsyncHappyPath:
 
         agent_registry.register("researcher", researcher)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         handles = []
         for i in range(3):
@@ -744,7 +746,7 @@ class TestSpawnAsyncHappyPath:
         assert results[2] == "result-parent-001::researcher-2"
 
     async def test_async_budget_delegation(
-        self, tool_registry, dam, cap_mgr, agent_registry
+        self, tool_registry, gate, cap_mgr, agent_registry
     ):
         """Budget delegated at spawn, reclaimed at join."""
         register_search(tool_registry)
@@ -755,7 +757,7 @@ class TestSpawnAsyncHappyPath:
 
         agent_registry.register("child_agent", child_agent)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         # After spawn: 20.0 delegated from parent's 100.0
         handle = await proxy.syscall(
@@ -768,7 +770,7 @@ class TestSpawnAsyncHappyPath:
         await proxy.syscall("join_agent", {"handle": handle})
         assert checkpoint.capabilities["test"].current_usage == 1.0
 
-    async def test_async_deterministic_pids(self, dam, cap_mgr, agent_registry):
+    async def test_async_deterministic_pids(self, gate, cap_mgr, agent_registry):
         """PIDs follow parent::agent-N counting spawn_agent_async records."""
 
         async def noop(proxy):
@@ -776,7 +778,7 @@ class TestSpawnAsyncHappyPath:
 
         agent_registry.register("worker", noop)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         h0 = await proxy.syscall(
             "spawn_agent_async",
@@ -795,7 +797,7 @@ class TestSpawnAsyncHappyPath:
         await proxy.syscall("join_agent", {"handle": h1})
 
     async def test_parent_continues_between_spawn_and_join(
-        self, tool_registry, dam, cap_mgr, agent_registry
+        self, tool_registry, gate, cap_mgr, agent_registry
     ):
         """Parent can do other syscalls between spawn_async and join."""
         register_search(tool_registry)
@@ -805,7 +807,7 @@ class TestSpawnAsyncHappyPath:
 
         agent_registry.register("child_agent", child_agent)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         handle = await proxy.syscall(
             "spawn_agent_async",
@@ -828,7 +830,7 @@ class TestSpawnAsyncHappyPath:
 
 class TestSpawnAsyncMixed:
     async def test_mixed_sync_async_no_pid_collision(
-        self, tool_registry, dam, cap_mgr, agent_registry
+        self, tool_registry, gate, cap_mgr, agent_registry
     ):
         """Sync and async spawns of the same agent get unique PIDs."""
         register_search(tool_registry)
@@ -838,7 +840,7 @@ class TestSpawnAsyncMixed:
 
         agent_registry.register("worker", worker)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         # Sync spawn first
         sync_result = await proxy.syscall(
@@ -858,7 +860,7 @@ class TestSpawnAsyncMixed:
         assert async_result == "done-parent-001::worker-1"
 
     async def test_async_then_sync_no_pid_collision(
-        self, tool_registry, dam, cap_mgr, agent_registry
+        self, tool_registry, gate, cap_mgr, agent_registry
     ):
         """Async spawn first, then sync spawn — PIDs stay unique."""
         register_search(tool_registry)
@@ -868,7 +870,7 @@ class TestSpawnAsyncMixed:
 
         agent_registry.register("worker", worker)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         # Async spawn first
         handle = await proxy.syscall(
@@ -887,16 +889,16 @@ class TestSpawnAsyncMixed:
 
 
 class TestSpawnAsyncErrors:
-    async def test_join_unknown_handle_raises(self, dam, cap_mgr, agent_registry):
+    async def test_join_unknown_handle_raises(self, gate, cap_mgr, agent_registry):
         """join_agent with invalid handle raises RuntimeError."""
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         with pytest.raises(RuntimeError, match="Unknown async agent handle"):
             await proxy.syscall("join_agent", {"handle": "ghost-handle"})
 
     async def test_async_child_exception_reclaims_budget(
-        self, dam, cap_mgr, agent_registry
+        self, gate, cap_mgr, agent_registry
     ):
         """If async child crashes, budget is reclaimed at join."""
 
@@ -905,7 +907,7 @@ class TestSpawnAsyncErrors:
 
         agent_registry.register("crashing_child", crashing_child)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         handle = await proxy.syscall(
             "spawn_agent_async",
@@ -918,10 +920,10 @@ class TestSpawnAsyncErrors:
         # Budget fully reclaimed
         assert checkpoint.capabilities["test"].current_usage == 0.0
 
-    async def test_async_no_registry_raises(self, dam, cap_mgr):
+    async def test_async_no_registry_raises(self, gate, cap_mgr):
         """spawn_agent_async without AgentRegistry raises RuntimeError."""
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry=None)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry=None)
 
         with pytest.raises(RuntimeError, match="AgentRegistry"):
             await proxy.syscall(
@@ -932,7 +934,7 @@ class TestSpawnAsyncErrors:
 
 class TestSpawnAsyncHITL:
     async def test_async_child_hitl_suspends_at_join(
-        self, tool_registry, dam, cap_mgr, agent_registry
+        self, tool_registry, gate, cap_mgr, agent_registry
     ):
         """When async child suspends for HITL, parent suspends at join_agent."""
         register_delete(tool_registry)
@@ -943,7 +945,7 @@ class TestSpawnAsyncHITL:
 
         agent_registry.register("dangerous_child", dangerous_child)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         handle = await proxy.syscall(
             "spawn_agent_async",
@@ -966,7 +968,7 @@ class TestSpawnAsyncHITL:
         assert join_record.child_checkpoint.status == "SUSPENDED_FOR_HITL"
 
     async def test_async_approve_child_hitl(
-        self, tool_registry, dam, cap_mgr, agent_registry, handler
+        self, tool_registry, gate, cap_mgr, agent_registry, handler
     ):
         """Approve async child HITL, resume, parent gets result."""
         register_delete(tool_registry)
@@ -977,7 +979,7 @@ class TestSpawnAsyncHITL:
 
         agent_registry.register("dangerous_child", dangerous_child)
         checkpoint = make_checkpoint(cap_mgr)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         handle = await proxy.syscall(
             "spawn_agent_async",
@@ -993,7 +995,7 @@ class TestSpawnAsyncHITL:
         # is_child_hitl should recognize join_agent as child HITL
         assert handler.is_child_hitl(checkpoint) is True
 
-        await handler.approve_child_hitl(checkpoint, dam, cap_mgr, agent_registry)
+        await handler.approve_child_hitl(checkpoint, gate, cap_mgr, agent_registry)
 
         assert checkpoint.status == "RUNNING"
         assert checkpoint.pending_hitl is None
@@ -1004,7 +1006,7 @@ class TestSpawnAsyncHITL:
 
 class TestAsyncSpawnPersistence:
     async def test_child_persisted_at_spawn(
-        self, tool_registry, dam, cap_mgr, agent_registry, tmp_path
+        self, tool_registry, gate, cap_mgr, agent_registry, tmp_path
     ):
         """Child checkpoint is persisted to store immediately at async spawn."""
         from castor.stream.persistence import CheckpointStore
@@ -1017,7 +1019,7 @@ class TestAsyncSpawnPersistence:
         agent_registry.register("child_agent", child_agent)
         checkpoint = make_checkpoint(cap_mgr)
         store.save(checkpoint)
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
         proxy._store = store  # inject store
 
         handle = await proxy.syscall(
@@ -1037,7 +1039,7 @@ class TestAsyncSpawnPersistence:
 
 class TestSpawnAsyncReplay:
     async def test_spawn_async_replay_returns_cached_handle(
-        self, dam, cap_mgr, agent_registry
+        self, gate, cap_mgr, agent_registry
     ):
         """On replay, spawn_agent_async returns cached handle without launching task."""
         checkpoint = make_checkpoint(
@@ -1055,7 +1057,7 @@ class TestSpawnAsyncReplay:
                 )
             ],
         )
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         handle = await proxy.syscall(
             "spawn_agent_async",
@@ -1067,7 +1069,7 @@ class TestSpawnAsyncReplay:
         assert len(proxy._async_tasks) == 0
 
     async def test_join_replay_returns_cached_result(
-        self, dam, cap_mgr, agent_registry
+        self, gate, cap_mgr, agent_registry
     ):
         """On replay, join_agent returns cached result without awaiting task."""
         child_cp = AgentCheckpoint(
@@ -1101,7 +1103,7 @@ class TestSpawnAsyncReplay:
                 ),
             ],
         )
-        proxy = make_proxy(checkpoint, dam, cap_mgr, agent_registry)
+        proxy = make_proxy(checkpoint, gate, cap_mgr, agent_registry)
 
         handle = await proxy.syscall(
             "spawn_agent_async",

@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from castor.dam.decorator import castor_tool
-from castor.dam.registry import ToolRegistry
+from castor.gate.decorator import castor_tool
+from castor.gate.registry import ToolRegistry
 
 # Stubbed search results keyed by broad topic.
 _SEARCH_DB: dict[str, list[str]] = {

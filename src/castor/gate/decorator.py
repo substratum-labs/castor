@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import create_model
 
-from castor.dam.registry import ToolMetadata, ToolRegistry, default_registry
+from castor.gate.registry import ToolMetadata, ToolRegistry, default_registry
 
 
 def castor_tool(

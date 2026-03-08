@@ -4,9 +4,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from castor.capability.manager import CapabilityManager
-from castor.dam.decorator import castor_tool
-from castor.dam.registry import ToolRegistry
-from castor.dam.validator import CastorDam
+from castor.gate.decorator import castor_tool
+from castor.gate.registry import ToolRegistry
+from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
 from castor.stream.proxy import SyscallProxy
 
@@ -104,7 +104,7 @@ class TestReplayIdentity:
         def echo(value: str) -> str:
             return f"echo:{value}"
 
-        dam = CastorDam(registry)
+        gate = SyscallGate(registry)
         cap_mgr = CapabilityManager()
 
         # Build a syscall log
@@ -126,7 +126,7 @@ class TestReplayIdentity:
             capabilities=caps,
             syscall_log=log,
         )
-        proxy = SyscallProxy(cp, dam, cap_mgr)
+        proxy = SyscallProxy(cp, gate, cap_mgr)
 
         for i in range(num_syscalls):
             result = await proxy.syscall("echo", {"value": f"msg-{i}"})

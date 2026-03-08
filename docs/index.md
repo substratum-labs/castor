@@ -26,21 +26,21 @@ cp = await kernel.run(agent, budgets={"api": 10.0})
 
 ## Key Features
 
-- **Checkpoint/Replay** — Crash recovery with zero tool re-execution. Agent state is a deterministic syscall log.
-- **Capability Budgets** — Per-resource spending limits with graceful degradation when exhausted.
-- **Human-in-the-Loop** — Suspend, approve/reject/modify, and resume with full replay safety.
-- **Token-Level Preemption** — Cancel streaming LLM calls mid-token with proportional billing.
-- **Multi-Agent** — Spawn child agents with delegated budgets and HITL propagation.
+- **Checkpoint/Replay** -- Crash recovery with zero tool re-execution. Agent state is a deterministic syscall log.
+- **Capability Budgets** -- Per-resource spending limits with graceful degradation when exhausted.
+- **Human-in-the-Loop** -- Suspend, approve/reject/modify, and resume with full replay safety.
+- **Token-Level Preemption** -- Cancel streaming LLM calls mid-token with proportional billing.
+- **Multi-Agent** -- Spawn child agents with delegated budgets and HITL propagation.
 
 ## Architecture
 
 | Subsystem | Module | Purpose |
 |-----------|--------|---------|
-| **Dam** | `castor.dam` | Tool registry & Pydantic validation |
+| **Gate** | `castor.gate` | Tool registry & Pydantic validation |
 | **Stream** | `castor.stream` | Checkpoint/replay scheduler |
 | **Capability** | `castor.capability` | Budget tracking & delegation |
-| **Lodge** | `castor.lodge` | Context window memory management |
+| **MMU** | `castor.mmu` | Context window memory management |
 
 ## Documentation
 
-- [API Reference](api/index.md) — Complete class and method reference
+- [API Reference](api/index.md) -- Complete class and method reference

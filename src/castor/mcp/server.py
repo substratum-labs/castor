@@ -15,15 +15,15 @@ from mcp.types import TextContent, ToolAnnotations
 from pydantic import ValidationError
 
 from castor.capability.manager import CapabilityManager
-from castor.dam.registry import ToolMetadata, ToolRegistry, default_registry
-from castor.dam.validator import CastorDam
+from castor.gate.registry import ToolMetadata, ToolRegistry, default_registry
+from castor.gate.validator import SyscallGate
 from castor.mcp.session import HITLRequest, load_state, save_state
 
 
 class CastorMCPTool(Tool):
     """Wraps a Castor ToolMetadata as an MCP tool.
 
-    Routes calls through CastorDam for validation and execution,
+    Routes calls through SyscallGate for validation and execution,
     with budget enforcement and HITL gating.
     """
 
@@ -60,7 +60,7 @@ class CastorMCPTool(Tool):
         if ctx is None:
             return _text_result("Error: No MCP context available.")
 
-        dam: CastorDam = ctx.lifespan_context["dam"]
+        gate: SyscallGate = ctx.lifespan_context["gate"]
         cap_mgr: CapabilityManager = ctx.lifespan_context["cap_mgr"]
         state = await load_state(ctx)
 
@@ -71,11 +71,11 @@ class CastorMCPTool(Tool):
                 "Call castor_init(budgets={...}) first to set resource budgets."
             )
 
-        # 2. Validate arguments via CastorDam
+        # 2. Validate arguments via SyscallGate
         try:
-            validated = dam.validate(self.name, arguments)
+            validated = gate.validate(self.name, arguments)
         except ValidationError as e:
-            resp = dam.format_validation_error(self.name, e)
+            resp = gate.format_validation_error(self.name, e)
             return _text_result(resp.feedback_message)
 
         # 3. Budget enforcement
@@ -120,7 +120,7 @@ class CastorMCPTool(Tool):
 
         # 5. Execute tool
         try:
-            result = await dam.execute(self.name, validated)
+            result = await gate.execute(self.name, validated)
         except Exception as e:
             cap_mgr.refund(state.capabilities, self.consumes, self.cost_per_use)
             await save_state(ctx, state)
@@ -232,11 +232,11 @@ def _register_meta_tools(server: FastMCP) -> None:
             return f"No pending request with ID '{request_id}'."
 
         req = state.pending_hitl.pop(request_id)
-        dam: CastorDam = ctx.lifespan_context["dam"]
+        gate: SyscallGate = ctx.lifespan_context["gate"]
         cap_mgr: CapabilityManager = ctx.lifespan_context["cap_mgr"]
 
         try:
-            result = await dam.execute(req.tool_name, req.arguments)
+            result = await gate.execute(req.tool_name, req.arguments)
         except Exception as e:
             cap_mgr.refund(state.capabilities, req.resource, req.cost)
             await save_state(ctx, state)
@@ -317,7 +317,7 @@ def create_mcp_server(
     *,
     tools: list[Callable] | None = None,
     registry: ToolRegistry | None = None,
-    dam: CastorDam | None = None,
+    gate: SyscallGate | None = None,
     name: str = "Castor MCP Server",
     instructions: str | None = None,
 ) -> FastMCP:
@@ -326,17 +326,17 @@ def create_mcp_server(
     Args:
         tools: List of @castor_tool decorated functions.
         registry: Existing ToolRegistry. Mutually exclusive with tools.
-        dam: Existing CastorDam. If provided, registry/tools are ignored.
+        gate: Existing SyscallGate. If provided, registry/tools are ignored.
         name: MCP server name.
         instructions: System instructions for MCP clients.
 
     Returns:
         Configured FastMCP server instance.
     """
-    if dam is not None:
-        _dam = dam
+    if gate is not None:
+        _gate = gate
     elif registry is not None:
-        _dam = CastorDam(registry)
+        _gate = SyscallGate(registry)
     elif tools is not None:
         _registry = ToolRegistry()
         for fn in tools:
@@ -345,14 +345,14 @@ def create_mcp_server(
                 msg = f"{fn!r} is not a @castor_tool"
                 raise TypeError(msg)
             _registry.register(meta)
-        _dam = CastorDam(_registry)
+        _gate = SyscallGate(_registry)
     else:
-        _dam = CastorDam(default_registry)
+        _gate = SyscallGate(default_registry)
 
     _cap_mgr = CapabilityManager()
 
     if instructions is None:
-        tool_names = _dam.registry.list_tools()
+        tool_names = _gate.registry.list_tools()
         instructions = (
             "This server provides tools guarded by Castor security.\n"
             "1. Call castor_init(budgets={...}) first to set resource budgets.\n"
@@ -365,13 +365,13 @@ def create_mcp_server(
 
     @asynccontextmanager
     async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
-        yield {"dam": _dam, "cap_mgr": _cap_mgr}
+        yield {"gate": _gate, "cap_mgr": _cap_mgr}
 
     server = FastMCP(name=name, instructions=instructions, lifespan=lifespan)
 
     # Register Castor tools as MCP tools
-    for tool_name in _dam.registry.list_tools():
-        meta = _dam.registry.get(tool_name)
+    for tool_name in _gate.registry.list_tools():
+        meta = _gate.registry.get(tool_name)
         mcp_tool = CastorMCPTool.from_castor_meta(meta)
         server.add_tool(mcp_tool)
 

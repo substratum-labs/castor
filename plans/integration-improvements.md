@@ -49,7 +49,7 @@ class ToolMetadata(BaseModel):
         destructive: bool = False,
         timeout_seconds: float | None = None,
     ) -> ToolMetadata:
-        from castor.dam.decorator import _generate_schema
+        from castor.gate.decorator import _generate_schema
         return cls(
             tool_name=func.__name__,
             consumes=consumes,
@@ -109,8 +109,8 @@ class MemoryCheckpointStore:
 
 ```python
 @property
-def dam(self) -> CastorDam:
-    return self._dam
+def gate(self) -> SyscallGate:
+    return self._gate
 
 @property
 def capability_manager(self) -> CapabilityManager:

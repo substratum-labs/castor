@@ -59,7 +59,7 @@ import functools
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-from castor.dam.registry import ToolMetadata, ToolRegistry
+from castor.gate.registry import ToolMetadata, ToolRegistry
 from castor.observability import get_logger, get_meter
 from castor.stream.proxy import SyscallProxy
 
@@ -117,7 +117,7 @@ class LLMSyscall:
         # Build the Pydantic input schema by introspection — reuse the same
         # helper the @castor_tool decorator uses internally.  Fall back to an
         # empty schema for callables that lack annotations (e.g. mocks).
-        from castor.dam.decorator import _generate_schema
+        from castor.gate.decorator import _generate_schema
 
         try:
             schema = _generate_schema(call_fn)
@@ -237,7 +237,7 @@ class StreamingLLMSyscall:
             return accumulated
 
         # Introspect stream_fn for Pydantic input schema (same as LLMSyscall).
-        from castor.dam.decorator import _generate_schema
+        from castor.gate.decorator import _generate_schema
 
         try:
             schema = _generate_schema(stream_fn)

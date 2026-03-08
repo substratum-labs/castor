@@ -10,9 +10,9 @@ import asyncio
 import pytest
 
 from castor.capability.manager import CapabilityManager
-from castor.dam.decorator import castor_tool
-from castor.dam.registry import ToolRegistry
-from castor.dam.validator import CastorDam
+from castor.gate.decorator import castor_tool
+from castor.gate.registry import ToolRegistry
+from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import AgentCheckpoint
 from castor.stream.hitl import HITLHandler
 from castor.stream.persistence import CheckpointStore
@@ -53,8 +53,8 @@ def registry():
 
 
 @pytest.fixture
-def dam(registry):
-    return CastorDam(registry)
+def gate(registry):
+    return SyscallGate(registry)
 
 
 @pytest.fixture
@@ -63,8 +63,8 @@ def cap_mgr():
 
 
 @pytest.fixture
-def runner(dam, cap_mgr):
-    return AgentRunner(dam, cap_mgr)
+def runner(gate, cap_mgr):
+    return AgentRunner(gate, cap_mgr)
 
 
 @pytest.fixture
@@ -118,7 +118,7 @@ class TestHappyPath:
 
 
 class TestHITLApproveResume:
-    async def test_suspend_approve_replay(self, dam, cap_mgr, hitl, store):
+    async def test_suspend_approve_replay(self, gate, cap_mgr, hitl, store):
         """Agent hits destructive tool, suspends, human approves, replay completes."""
 
         async def cleanup_agent(proxy: SyscallProxy) -> str:
@@ -131,7 +131,7 @@ class TestHITLApproveResume:
 
         # First run: suspends at delete_files
         checkpoint = make_checkpoint(cap_mgr)
-        runner1 = AgentRunner(dam, cap_mgr)
+        runner1 = AgentRunner(gate, cap_mgr)
         await runner1.run(cleanup_agent, checkpoint)
 
         assert checkpoint.status == "SUSPENDED_FOR_HITL"
@@ -143,13 +143,13 @@ class TestHITLApproveResume:
 
         # Human approves
         loaded = store.load("agent-001")
-        await hitl.approve(loaded, dam, cap_mgr)
+        await hitl.approve(loaded, gate, cap_mgr)
         assert loaded.status == "RUNNING"
         assert loaded.pending_hitl is None
         assert len(loaded.syscall_log) == 2  # web_search + delete_files(approved)
 
         # Resume via replay
-        runner2 = AgentRunner(dam, cap_mgr)
+        runner2 = AgentRunner(gate, cap_mgr)
         result = await runner2.run(cleanup_agent, loaded)
 
         assert result.status == "COMPLETED"
@@ -161,7 +161,7 @@ class TestHITLApproveResume:
 
 
 class TestHITLReject:
-    async def test_reject_triggers_replan(self, dam, cap_mgr, hitl):
+    async def test_reject_triggers_replan(self, gate, cap_mgr, hitl):
         """Agent sees rejection, issues a different syscall."""
 
         async def adaptive_agent(proxy: SyscallProxy) -> str:
@@ -179,7 +179,7 @@ class TestHITLReject:
 
         # First run: suspends at delete_files
         checkpoint = make_checkpoint(cap_mgr)
-        runner1 = AgentRunner(dam, cap_mgr)
+        runner1 = AgentRunner(gate, cap_mgr)
         await runner1.run(adaptive_agent, checkpoint)
 
         assert checkpoint.status == "SUSPENDED_FOR_HITL"
@@ -188,7 +188,7 @@ class TestHITLReject:
         hitl.reject(checkpoint, "Too risky, find another way.")
 
         # Resume via replay
-        runner2 = AgentRunner(dam, cap_mgr)
+        runner2 = AgentRunner(gate, cap_mgr)
         result = await runner2.run(adaptive_agent, checkpoint)
 
         assert result.status == "COMPLETED"
@@ -201,7 +201,7 @@ class TestHITLReject:
 
 
 class TestHITLModify:
-    async def test_modify_triggers_revised_syscall(self, dam, cap_mgr, hitl):
+    async def test_modify_triggers_revised_syscall(self, gate, cap_mgr, hitl):
         """Agent sees modification feedback, re-plans with revised args."""
 
         async def smart_agent(proxy: SyscallProxy) -> str:
@@ -222,7 +222,7 @@ class TestHITLModify:
 
         # First run: suspends at delete_files
         checkpoint = make_checkpoint(cap_mgr)
-        runner1 = AgentRunner(dam, cap_mgr)
+        runner1 = AgentRunner(gate, cap_mgr)
         await runner1.run(smart_agent, checkpoint)
         assert checkpoint.status == "SUSPENDED_FOR_HITL"
 
@@ -231,16 +231,16 @@ class TestHITLModify:
 
         # Resume — replays the HITL_MODIFIED response, agent re-plans
         # But the revised delete_files is also destructive, so it suspends again
-        runner2 = AgentRunner(dam, cap_mgr)
+        runner2 = AgentRunner(gate, cap_mgr)
         await runner2.run(smart_agent, checkpoint)
         assert checkpoint.status == "SUSPENDED_FOR_HITL"
         assert checkpoint.pending_hitl["arguments"]["paths"] == ["/c"]
 
         # Human approves the revised delete
-        await hitl.approve(checkpoint, dam, cap_mgr)
+        await hitl.approve(checkpoint, gate, cap_mgr)
 
         # Final resume
-        runner3 = AgentRunner(dam, cap_mgr)
+        runner3 = AgentRunner(gate, cap_mgr)
         result = await runner3.run(smart_agent, checkpoint)
         assert result.status == "COMPLETED"
         assert len(result.syscall_log) == 2  # original(modified) + revised(approved)
@@ -250,7 +250,7 @@ class TestHITLModify:
 
 
 class TestPreemptionResume:
-    async def test_preempt_and_resume(self, dam, cap_mgr, store):
+    async def test_preempt_and_resume(self, gate, cap_mgr, store):
         """Agent preempted mid-execution, checkpoint persisted, resume via replay."""
         started = asyncio.Event()
 
@@ -262,7 +262,7 @@ class TestPreemptionResume:
             return "done"
 
         checkpoint = make_checkpoint(cap_mgr)
-        runner1 = AgentRunner(dam, cap_mgr)
+        runner1 = AgentRunner(gate, cap_mgr)
         task = await runner1.run_as_task(long_agent, checkpoint)
         await started.wait()
 
@@ -282,7 +282,7 @@ class TestPreemptionResume:
         loaded.preemption_reason = None
         loaded.preemption_payload = None
 
-        runner2 = AgentRunner(dam, cap_mgr)
+        runner2 = AgentRunner(gate, cap_mgr)
         result = await runner2.run(long_agent, loaded)
         assert result.status == "COMPLETED"
         assert len(result.syscall_log) == 2
@@ -292,7 +292,7 @@ class TestPreemptionResume:
 
 
 class TestReplayDeterminism:
-    async def test_replay_produces_same_log(self, dam, cap_mgr, store):
+    async def test_replay_produces_same_log(self, gate, cap_mgr, store):
         """Save checkpoint, replay, verify identical syscall sequence."""
 
         async def deterministic_agent(proxy: SyscallProxy) -> str:
@@ -302,14 +302,14 @@ class TestReplayDeterminism:
 
         # First run
         checkpoint = make_checkpoint(cap_mgr)
-        runner1 = AgentRunner(dam, cap_mgr)
+        runner1 = AgentRunner(gate, cap_mgr)
         await runner1.run(deterministic_agent, checkpoint)
         assert checkpoint.status == "COMPLETED"
 
         original_log = [(r.request, r.response) for r in checkpoint.syscall_log]
 
         # Replay: agent replays with cached results — no live execution
-        runner2 = AgentRunner(dam, cap_mgr)
+        runner2 = AgentRunner(gate, cap_mgr)
         replayed = await runner2.run(deterministic_agent, checkpoint)
         assert replayed.status == "COMPLETED"
 
@@ -322,7 +322,7 @@ class TestReplayDeterminism:
 
 
 class TestCapabilityExhaustion:
-    async def test_budget_depletes_mid_run(self, dam, cap_mgr):
+    async def test_budget_depletes_mid_run(self, gate, cap_mgr):
         """Budget runs out during agent execution."""
 
         async def greedy_agent(proxy: SyscallProxy) -> str:
@@ -333,7 +333,7 @@ class TestCapabilityExhaustion:
             return f"{r1} {r2} {r3}"
 
         checkpoint = make_checkpoint(cap_mgr, network=2.5, disk=50.0)
-        runner = AgentRunner(dam, cap_mgr)
+        runner = AgentRunner(gate, cap_mgr)
         result = await runner.run(greedy_agent, checkpoint)
 
         assert result.status == "COMPLETED"
@@ -346,7 +346,7 @@ class TestCapabilityExhaustion:
 
 
 class TestValidationErrorFeedback:
-    async def test_bad_args_get_feedback(self, dam, cap_mgr):
+    async def test_bad_args_get_feedback(self, gate, cap_mgr):
         """LLM sends bad arguments, gets natural language error."""
 
         async def bad_agent(proxy: SyscallProxy) -> str:
@@ -355,7 +355,7 @@ class TestValidationErrorFeedback:
             return f"got: {result}"
 
         checkpoint = make_checkpoint(cap_mgr)
-        runner = AgentRunner(dam, cap_mgr)
+        runner = AgentRunner(gate, cap_mgr)
         result = await runner.run(bad_agent, checkpoint)
 
         assert result.status == "COMPLETED"
