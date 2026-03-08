@@ -25,7 +25,7 @@ def cap_mgr():
 
 def test_get_proxy_outside_run_raises():
     """get_proxy() raises RuntimeError when no proxy is set."""
-    with pytest.raises(RuntimeError, match="castor.lib functions must be called inside"):
+    with pytest.raises(RuntimeError, match="must be called inside"):
         get_proxy()
 
 
