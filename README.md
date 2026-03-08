@@ -108,7 +108,7 @@ Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 git clone https://github.com/substrate-lab/castor.git
 cd castor
 uv sync
-uv run pytest          # 245+ tests
+uv run pytest          # 329+ tests
 uv run ruff check src/ # lint
 uv run ruff format src/ # format
 ```

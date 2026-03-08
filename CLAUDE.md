@@ -35,6 +35,7 @@ Four kernel subsystems, all in `src/castor/`:
 | `lodge/` | Context window memory management (Castor Lodge) |
 | `capability/` | Budget tracking & delegation (Capability Manager) |
 | `models/` | Shared Pydantic data models |
+| `mcp/` | MCP server — expose @castor_tool as MCP tools via FastMCP |
 
 ## Key Design Decisions
 
@@ -48,9 +49,12 @@ Four kernel subsystems, all in `src/castor/`:
 - All data models must be Pydantic `BaseModel` subclasses
 - Use `Literal` types for status enums in models
 - Agent functions signature: `async def agent_name(proxy: SyscallProxy) -> Any`
-- Tools are registered with `@castor_tool(consumes=..., cost_per_use=..., destructive=...)`
+- Tools are registered with `@castor_tool(consumes=..., cost_per_use=..., destructive=...)` or `ToolMetadata.from_function(fn, ...)`
 - Never throw raw Python exceptions to user space — wrap in `SyscallResponse` with feedback
 - Prefer `dict[str, Any]` over `Dict[str, Any]` (Python 3.11+ builtins)
+- Missing resource type in capabilities = not tracked = unlimited (`deduct()` no-ops, `check()` returns True)
+- Dam skips Pydantic validation for tools with `input_schema={}` (LLM wrappers pass through)
+- Access kernel internals via public properties: `kernel.dam`, `kernel.capability_manager`, `kernel.store`
 
 ## Documentation
 
