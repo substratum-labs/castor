@@ -11,6 +11,7 @@ def search_tool():
     @castor_tool(consumes="api", cost_per_use=1.0)
     def search(query: str) -> str:
         return f"found: {query}"
+
     return search
 
 
@@ -19,6 +20,7 @@ def llm_tool():
     @castor_tool(consumes="api", cost_per_use=2.0)
     def llm_inference(prompt: str, system: str = "") -> str:
         return f"LLM: {prompt}"
+
     return llm_inference
 
 

@@ -47,9 +47,7 @@ def proxy(gate, cap_mgr, agent_reg):
         agent_function_name="parent",
         capabilities=cap_mgr.create_capabilities({"api": 10.0}),
     )
-    p = SyscallProxy(
-        cp, gate, cap_mgr, agent_registry=agent_reg
-    )
+    p = SyscallProxy(cp, gate, cap_mgr, agent_registry=agent_reg)
     set_proxy(p)
     return p
 

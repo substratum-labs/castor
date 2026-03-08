@@ -40,6 +40,7 @@ def runner(gate, cap_mgr):
 @pytest.mark.asyncio()
 async def test_legacy_agent_with_proxy_param(runner, cap_mgr):
     """Legacy agent (1 param) still works."""
+
     async def my_agent(proxy):
         result = await proxy.syscall("search", query="test")
         return result
