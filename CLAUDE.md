@@ -31,8 +31,8 @@ Four kernel subsystems, all in `src/castor/`:
 | Module | Purpose |
 |---|---|
 | `gate/` | Tool registry & Pydantic validation (SyscallGate) |
-| `stream/` | Checkpoint/replay scheduler (Castor Stream) |
-| `lodge/` | Context window memory management (Castor Lodge) |
+| `scheduler/` | Checkpoint/replay scheduler |
+| `mmu/` | Context window memory management (MMU) |
 | `capability/` | Budget tracking & delegation (Capability Manager) |
 | `models/` | Shared Pydantic data models |
 | `mcp/` | MCP server — expose @castor_tool as MCP tools via FastMCP |

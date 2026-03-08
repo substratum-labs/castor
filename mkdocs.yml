@@ -36,11 +36,11 @@ nav:
       - Castor Kernel: api/kernel.md
       - SyscallProxy: api/proxy.md
       - Data Models: api/models.md
-      - Dam (Tools): api/dam.md
+      - Gate (Tools): api/gate.md
       - Capabilities: api/capability.md
       - HITL: api/hitl.md
       - LLM Wrappers: api/llm.md
-      - Lodge (Memory): api/lodge.md
+      - MMU (Memory): api/mmu.md
       - Runner & Persistence: api/runner.md
       - Agent Registry: api/agents.md
 

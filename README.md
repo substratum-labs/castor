@@ -96,7 +96,7 @@ Castor has four kernel subsystems:
 | **Gate** (`castor.gate`) | Tool registry & Pydantic validation | Complete |
 | **Scheduler** (`castor.scheduler`) | Checkpoint/replay scheduler, HITL, preemption | Complete |
 | **Capability** (`castor.capability`) | Budget tracking & delegation | Complete |
-| **Lodge** (`castor.lodge`) | Context window memory management | Complete |
+| **MMU** (`castor.mmu`) | Context window memory management | Complete |
 
 All side effects go through `await proxy.syscall(tool_name, args)`. The kernel decides: replay from cache, execute (fast path), or suspend for human approval (slow path).
 

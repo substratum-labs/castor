@@ -23,8 +23,8 @@ Castor marks each export with a stability level:
 | [`SyscallRequest`](models.md#castor.models.capability.SyscallRequest) | `castor.models.capability` | Validated tool request |
 | [`SyscallResponse`](models.md#castor.models.capability.SyscallResponse) | `castor.models.capability` | Tool execution response |
 | [`SyscallResult`](models.md#castor.models.result.SyscallResult) | `castor.models.result` | Structured HITL-aware result |
-| [`SyscallGate`](dam.md#castor.gate.validator.SyscallGate) | `castor.gate.validator` | Tool validation & execution |
-| [`castor_tool`](dam.md#castor.gate.decorator.castor_tool) | `castor.gate.decorator` | Tool registration decorator |
+| [`SyscallGate`](gate.md#castor.gate.validator.SyscallGate) | `castor.gate.validator` | Tool validation & execution |
+| [`castor_tool`](gate.md#castor.gate.decorator.castor_tool) | `castor.gate.decorator` | Tool registration decorator |
 | [`CapabilityManager`](capability.md) | `castor.capability.manager` | Budget creation & tracking |
 | [`HITLHandler`](hitl.md#castor.scheduler.hitl.HITLHandler) | `castor.scheduler.hitl` | Approve / reject / modify |
 | [`AgentRunner`](runner.md#castor.scheduler.runner.AgentRunner) | `castor.scheduler.runner` | Agent execution loop |
@@ -40,6 +40,6 @@ Castor marks each export with a stability level:
 | [`CastorTask`](kernel.md#castor.core.CastorTask) | `castor.core` | Background task with preemption |
 | [`LLMSyscall`](llm.md#castor.llm.wrapper.LLMSyscall) | `castor.llm.wrapper` | Non-streaming LLM wrapper |
 | [`StreamingLLMSyscall`](llm.md#castor.llm.wrapper.StreamingLLMSyscall) | `castor.llm.wrapper` | Streaming LLM with preemption |
-| [`MMU`](lodge.md) | `castor.mmu.core` | Context window management |
+| [`MMU`](mmu.md) | `castor.mmu.core` | Context window management |
 | [`AgentRegistry`](agents.md) | `castor.scheduler.agent_registry` | Sub-agent registry |
 | [`castor_agent`](agents.md#castor.scheduler.agent_registry.castor_agent) | `castor.scheduler.agent_registry` | Agent registration decorator |
