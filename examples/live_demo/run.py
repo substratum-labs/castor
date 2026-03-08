@@ -54,7 +54,7 @@ from ui import (
 from castor import Castor, SyscallGate
 from castor.gate.registry import ToolRegistry
 from castor.llm.wrapper import LLMSyscall
-from castor.stream.proxy import SyscallProxy
+from castor.scheduler.proxy import SyscallProxy
 
 # Suppress litellm's verbose logging by default.
 litellm.suppress_debug_info = True

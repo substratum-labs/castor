@@ -22,7 +22,7 @@ from castor import (
 from castor.capability.manager import CapabilityManager
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
-from castor.stream.proxy import SyscallProxy as ProxyClass
+from castor.scheduler.proxy import SyscallProxy as ProxyClass
 
 # ── Fixtures ──
 

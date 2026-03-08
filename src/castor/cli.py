@@ -18,8 +18,8 @@ import argparse
 import json
 import sys
 
-from castor.stream.hitl import HITLHandler
-from castor.stream.persistence import CheckpointNotFoundError, CheckpointStore
+from castor.scheduler.hitl import HITLHandler
+from castor.scheduler.persistence import CheckpointNotFoundError, CheckpointStore
 
 _STATUS_MARKERS = {
     "SUSPENDED_FOR_HITL": "HITL",

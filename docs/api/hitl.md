@@ -30,7 +30,7 @@ cp = await kernel.run_until_complete(
 
 ## HITLHandler
 
-::: castor.stream.hitl.HITLHandler
+::: castor.scheduler.hitl.HITLHandler
 
 ## SuspendInterrupt
 

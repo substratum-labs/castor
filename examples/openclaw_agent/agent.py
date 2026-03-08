@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from castor.llm.wrapper import LLMSyscall
-from castor.stream.proxy import SyscallProxy
+from castor.scheduler.proxy import SyscallProxy
 
 
 async def openclaw_agent(proxy: SyscallProxy, llm: LLMSyscall) -> str:

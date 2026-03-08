@@ -37,7 +37,7 @@ cp = await kernel.run(agent, budgets={"api": 10.0})
 | Subsystem | Module | Purpose |
 |-----------|--------|---------|
 | **Gate** | `castor.gate` | Tool registry & Pydantic validation |
-| **Stream** | `castor.stream` | Checkpoint/replay scheduler |
+| **Scheduler** | `castor.scheduler` | Checkpoint/replay scheduler |
 | **Capability** | `castor.capability` | Budget tracking & delegation |
 | **MMU** | `castor.mmu` | Context window memory management |
 

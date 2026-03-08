@@ -11,7 +11,7 @@ import pytest
 from castor import Castor, SyscallGate
 from castor.gate.registry import ToolRegistry
 from castor.llm.wrapper import LLMSyscall
-from castor.stream.proxy import SyscallProxy
+from castor.scheduler.proxy import SyscallProxy
 from examples.openclaw_agent.agent import openclaw_agent
 from examples.openclaw_agent.tools import register_tools
 

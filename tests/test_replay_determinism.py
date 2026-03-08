@@ -16,9 +16,9 @@ from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
 from castor.llm.wrapper import LLMSyscall
 from castor.models.checkpoint import AgentCheckpoint
-from castor.stream.hitl import HITLHandler
-from castor.stream.proxy import SyscallProxy
-from castor.stream.runner import AgentRunner
+from castor.scheduler.hitl import HITLHandler
+from castor.scheduler.proxy import SyscallProxy
+from castor.scheduler.runner import AgentRunner
 
 
 @pytest.fixture

@@ -25,9 +25,9 @@ from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
 from castor.llm.wrapper import LLMSyscall, StreamingLLMSyscall
 from castor.models.checkpoint import AgentCheckpoint
-from castor.stream.agent_registry import AgentRegistry, castor_agent
-from castor.stream.proxy import SyscallProxy
-from castor.stream.runner import AgentRunner
+from castor.scheduler.agent_registry import AgentRegistry, castor_agent
+from castor.scheduler.proxy import SyscallProxy
+from castor.scheduler.runner import AgentRunner
 
 # ── Fixtures ──
 

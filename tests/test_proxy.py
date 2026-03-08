@@ -13,7 +13,7 @@ from castor.models.checkpoint import (
     SuspendInterrupt,
     SyscallRecord,
 )
-from castor.stream.proxy import ReplayDivergenceError, SyscallProxy
+from castor.scheduler.proxy import ReplayDivergenceError, SyscallProxy
 
 
 @pytest.fixture
@@ -261,7 +261,7 @@ class TestBudgetRefundOnFailure:
 class TestWALIntegration:
     @pytest.fixture
     def store(self, tmp_path):
-        from castor.stream.persistence import CheckpointStore
+        from castor.scheduler.persistence import CheckpointStore
 
         return CheckpointStore(f"sqlite:///{tmp_path / 'test.db'}")
 

@@ -11,10 +11,14 @@ from castor.models.checkpoint import (
     SuspendInterrupt,
     SyscallRecord,
 )
-from castor.stream.agent_registry import AgentNotFoundError, AgentRegistry, castor_agent
-from castor.stream.hitl import HITLHandler
-from castor.stream.proxy import SyscallProxy
-from castor.stream.runner import AgentRunner
+from castor.scheduler.agent_registry import (
+    AgentNotFoundError,
+    AgentRegistry,
+    castor_agent,
+)
+from castor.scheduler.hitl import HITLHandler
+from castor.scheduler.proxy import SyscallProxy
+from castor.scheduler.runner import AgentRunner
 
 # ── Fixtures ──
 
@@ -144,7 +148,7 @@ class TestCastorAgentDecorator:
         assert reg.has_agent("summarizer")
 
     def test_decorator_uses_default_registry(self):
-        from castor.stream.agent_registry import default_agent_registry
+        from castor.scheduler.agent_registry import default_agent_registry
 
         @castor_agent(name="auto_registered")
         async def auto_agent(proxy):
@@ -1009,7 +1013,7 @@ class TestAsyncSpawnPersistence:
         self, tool_registry, gate, cap_mgr, agent_registry, tmp_path
     ):
         """Child checkpoint is persisted to store immediately at async spawn."""
-        from castor.stream.persistence import CheckpointStore
+        from castor.scheduler.persistence import CheckpointStore
 
         store = CheckpointStore(f"sqlite:///{tmp_path / 'test.db'}")
 

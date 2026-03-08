@@ -9,7 +9,7 @@ from castor.mmu.core import MMU, PAGE_OUT_TOOL, SEARCH_MEMORY_TOOL
 from castor.mmu.drivers.mock_driver import InMemoryDriver
 from castor.mmu.token_counter import CharCountEstimator, TokenCounter
 from castor.models.checkpoint import AgentCheckpoint, CastorMessage
-from castor.stream.proxy import SyscallProxy
+from castor.scheduler.proxy import SyscallProxy
 
 # ── TokenCounter ──
 

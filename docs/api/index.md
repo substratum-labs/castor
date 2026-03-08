@@ -14,7 +14,7 @@ Castor marks each export with a stability level:
 | Class / Function | Module | Purpose |
 |------------------|--------|---------|
 | [`Castor`](kernel.md) | `castor.core` | Unified kernel facade |
-| [`SyscallProxy`](proxy.md) | `castor.stream.proxy` | Agent-side syscall gateway |
+| [`SyscallProxy`](proxy.md) | `castor.scheduler.proxy` | Agent-side syscall gateway |
 | [`AgentCheckpoint`](models.md#castor.models.checkpoint.AgentCheckpoint) | `castor.models.checkpoint` | Serializable agent state |
 | [`SyscallRecord`](models.md#castor.models.checkpoint.SyscallRecord) | `castor.models.checkpoint` | Single syscall request/response |
 | [`CastorMessage`](models.md#castor.models.checkpoint.CastorMessage) | `castor.models.checkpoint` | Context window message |
@@ -26,9 +26,9 @@ Castor marks each export with a stability level:
 | [`SyscallGate`](dam.md#castor.gate.validator.SyscallGate) | `castor.gate.validator` | Tool validation & execution |
 | [`castor_tool`](dam.md#castor.gate.decorator.castor_tool) | `castor.gate.decorator` | Tool registration decorator |
 | [`CapabilityManager`](capability.md) | `castor.capability.manager` | Budget creation & tracking |
-| [`HITLHandler`](hitl.md#castor.stream.hitl.HITLHandler) | `castor.stream.hitl` | Approve / reject / modify |
-| [`AgentRunner`](runner.md#castor.stream.runner.AgentRunner) | `castor.stream.runner` | Agent execution loop |
-| [`CheckpointStore`](runner.md#castor.stream.persistence.CheckpointStore) | `castor.stream.persistence` | SQLite persistence |
+| [`HITLHandler`](hitl.md#castor.scheduler.hitl.HITLHandler) | `castor.scheduler.hitl` | Approve / reject / modify |
+| [`AgentRunner`](runner.md#castor.scheduler.runner.AgentRunner) | `castor.scheduler.runner` | Agent execution loop |
+| [`CheckpointStore`](runner.md#castor.scheduler.persistence.CheckpointStore) | `castor.scheduler.persistence` | SQLite persistence |
 | `auto_approve` | `castor.hitl_policies` | Auto-approve HITL policy |
 | `auto_reject` | `castor.hitl_policies` | Auto-reject HITL policy |
 | `interactive` | `castor.hitl_policies` | Terminal interactive policy |
@@ -41,5 +41,5 @@ Castor marks each export with a stability level:
 | [`LLMSyscall`](llm.md#castor.llm.wrapper.LLMSyscall) | `castor.llm.wrapper` | Non-streaming LLM wrapper |
 | [`StreamingLLMSyscall`](llm.md#castor.llm.wrapper.StreamingLLMSyscall) | `castor.llm.wrapper` | Streaming LLM with preemption |
 | [`MMU`](lodge.md) | `castor.mmu.core` | Context window management |
-| [`AgentRegistry`](agents.md) | `castor.stream.agent_registry` | Sub-agent registry |
-| [`castor_agent`](agents.md#castor.stream.agent_registry.castor_agent) | `castor.stream.agent_registry` | Agent registration decorator |
+| [`AgentRegistry`](agents.md) | `castor.scheduler.agent_registry` | Sub-agent registry |
+| [`castor_agent`](agents.md#castor.scheduler.agent_registry.castor_agent) | `castor.scheduler.agent_registry` | Agent registration decorator |

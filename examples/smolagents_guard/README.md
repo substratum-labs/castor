@@ -145,7 +145,7 @@ Note: smolagents catches tool execution errors internally and feeds them back to
 
 ```python
 from examples.smolagents_guard.deep_guard import CastorResilientAgent
-from castor.stream.persistence import CheckpointStore
+from castor.scheduler.persistence import CheckpointStore
 
 agent = CastorResilientAgent(
     tools=my_tools,
@@ -180,7 +180,7 @@ LLM calls and tool calls are interleaved in the same `syscall_log`. On resume, t
 
 ```python
 from examples.smolagents_guard.deep_guard import CastorResilientAgent
-from castor.stream.persistence import CheckpointStore
+from castor.scheduler.persistence import CheckpointStore
 
 store = CheckpointStore("sqlite:///agent.db")
 
@@ -214,7 +214,7 @@ Destructive tools raise `HITLSuspendError` instead of blocking:
 
 ```python
 from examples.smolagents_guard.deep_guard import CastorResilientAgent, HITLSuspendError
-from castor.stream.persistence import CheckpointStore
+from castor.scheduler.persistence import CheckpointStore
 
 store = CheckpointStore("sqlite:///agent.db")
 

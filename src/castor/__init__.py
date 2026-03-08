@@ -21,20 +21,20 @@ from castor.models.checkpoint import (
     SyscallRecord,
 )
 from castor.models.result import SyscallResult
-from castor.stream.agent_registry import (
+from castor.scheduler.agent_registry import (
     AgentNotFoundError,
     AgentRegistry,
     castor_agent,
     default_agent_registry,
 )
-from castor.stream.hitl import HITLHandler
-from castor.stream.persistence import (
+from castor.scheduler.hitl import HITLHandler
+from castor.scheduler.persistence import (
     CheckpointStore,
     CheckpointStoreProtocol,
     MemoryCheckpointStore,
 )
-from castor.stream.proxy import SyscallProxy
-from castor.stream.runner import AgentRunner
+from castor.scheduler.proxy import SyscallProxy
+from castor.scheduler.runner import AgentRunner
 
 stable(Castor)
 stable(SyscallProxy)

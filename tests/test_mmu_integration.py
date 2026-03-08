@@ -17,9 +17,9 @@ from castor.llm.wrapper import LLMSyscall
 from castor.mmu.core import MMU, PAGE_OUT_TOOL, SEARCH_MEMORY_TOOL
 from castor.mmu.drivers.mock_driver import InMemoryDriver
 from castor.models.checkpoint import AgentCheckpoint, CastorMessage
-from castor.stream.hitl import HITLHandler
-from castor.stream.proxy import SyscallProxy
-from castor.stream.runner import AgentRunner
+from castor.scheduler.hitl import HITLHandler
+from castor.scheduler.proxy import SyscallProxy
+from castor.scheduler.runner import AgentRunner
 
 # ── Fixtures ──
 

@@ -19,8 +19,8 @@ from castor.models.checkpoint import (
     CastorMessage,
     SyscallRecord,
 )
-from castor.stream.persistence import CheckpointStore
-from castor.stream.proxy import SyscallProxy
+from castor.scheduler.persistence import CheckpointStore
+from castor.scheduler.proxy import SyscallProxy
 
 # ── Setup ──
 

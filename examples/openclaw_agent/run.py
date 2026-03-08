@@ -22,7 +22,7 @@ from tools import register_tools
 from castor import Castor, SyscallGate, interactive
 from castor.gate.registry import ToolRegistry
 from castor.llm.wrapper import LLMSyscall
-from castor.stream.proxy import SyscallProxy
+from castor.scheduler.proxy import SyscallProxy
 
 # ── Fake LLM client (replace with a real provider in production) ──
 

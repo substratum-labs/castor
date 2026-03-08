@@ -17,7 +17,7 @@ from castor import (
 )
 from castor.capability.manager import CapabilityExhaustedError, CapabilityManager
 from castor.gate.registry import ToolRegistry
-from castor.stream.persistence import CheckpointNotFoundError
+from castor.scheduler.persistence import CheckpointNotFoundError
 
 # ── A1: Budget skip on missing resource ────────────────────────────────────
 
@@ -221,7 +221,7 @@ class TestMemoryCheckpointStore:
 
 def test_sqlite_store_satisfies_protocol():
     """Verify the existing SQLite CheckpointStore satisfies the protocol."""
-    from castor.stream.persistence import CheckpointStore
+    from castor.scheduler.persistence import CheckpointStore
 
     store = CheckpointStore("sqlite:///:memory:")
     assert isinstance(store, CheckpointStoreProtocol)

@@ -33,8 +33,8 @@ async def coordinator(proxy: SyscallProxy) -> str:
 
 ## AgentRegistry
 
-::: castor.stream.agent_registry.AgentRegistry
+::: castor.scheduler.agent_registry.AgentRegistry
 
 ## castor_agent
 
-::: castor.stream.agent_registry.castor_agent
+::: castor.scheduler.agent_registry.castor_agent

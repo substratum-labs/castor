@@ -14,8 +14,8 @@ from castor.observability import get_logger, get_meter
 
 if TYPE_CHECKING:
     from castor.mmu.core import MMU
-    from castor.stream.agent_registry import AgentRegistry
-    from castor.stream.persistence import CheckpointStore
+    from castor.scheduler.agent_registry import AgentRegistry
+    from castor.scheduler.persistence import CheckpointStore
 from castor.models.capability import SyscallResponse
 from castor.models.checkpoint import (
     AgentCheckpoint,
@@ -24,8 +24,8 @@ from castor.models.checkpoint import (
 )
 from castor.models.result import SyscallResult
 
-_logger = get_logger("castor.stream")
-_meter = get_meter("castor.stream")
+_logger = get_logger("castor.scheduler")
+_meter = get_meter("castor.scheduler")
 _syscall_counter = _meter.create_counter("castor_syscalls_total")
 _syscall_duration = _meter.create_histogram("castor_syscall_duration_seconds")
 _hitl_counter = _meter.create_counter("castor_hitl_total")

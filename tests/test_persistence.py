@@ -4,7 +4,7 @@ import pytest
 
 from castor.capability.manager import CapabilityManager
 from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
-from castor.stream.persistence import CheckpointNotFoundError, CheckpointStore
+from castor.scheduler.persistence import CheckpointNotFoundError, CheckpointStore
 
 
 @pytest.fixture

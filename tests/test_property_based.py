@@ -8,7 +8,7 @@ from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
-from castor.stream.proxy import SyscallProxy
+from castor.scheduler.proxy import SyscallProxy
 
 # ── Strategies ──
 
@@ -145,7 +145,7 @@ class TestHITLModifyInvariant:
     )
     def test_modify_never_mutates_original_request(self, paths, feedback):
         """HITL modify logs original request unmodified."""
-        from castor.stream.hitl import HITLHandler
+        from castor.scheduler.hitl import HITLHandler
 
         cap_mgr = CapabilityManager()
         caps = cap_mgr.create_capabilities({"test": 100.0})

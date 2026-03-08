@@ -94,7 +94,7 @@ Castor has four kernel subsystems:
 | Module | Purpose | Status |
 |--------|---------|--------|
 | **Gate** (`castor.gate`) | Tool registry & Pydantic validation | Complete |
-| **Stream** (`castor.stream`) | Checkpoint/replay scheduler, HITL, preemption | Complete |
+| **Scheduler** (`castor.scheduler`) | Checkpoint/replay scheduler, HITL, preemption | Complete |
 | **Capability** (`castor.capability`) | Budget tracking & delegation | Complete |
 | **Lodge** (`castor.lodge`) | Context window memory management | Complete |
 

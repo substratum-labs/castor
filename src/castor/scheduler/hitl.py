@@ -10,7 +10,7 @@ from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
 
 if TYPE_CHECKING:
     from castor.mmu.core import MMU
-    from castor.stream.agent_registry import AgentRegistry
+    from castor.scheduler.agent_registry import AgentRegistry
 
 
 class HITLHandler:
@@ -204,7 +204,7 @@ class HITLHandler:
         """Replay a child agent after its HITL was resolved."""
         import asyncio
 
-        from castor.stream.runner import AgentRunner
+        from castor.scheduler.runner import AgentRunner
 
         agent_fn = agent_registry.get(child_cp.agent_function_name)
         runner = AgentRunner(

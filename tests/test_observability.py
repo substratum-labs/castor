@@ -34,7 +34,7 @@ class TestLoggingIntegration:
         from castor.gate.registry import ToolRegistry
         from castor.gate.validator import SyscallGate
         from castor.models.checkpoint import AgentCheckpoint
-        from castor.stream.proxy import SyscallProxy
+        from castor.scheduler.proxy import SyscallProxy
 
         registry = ToolRegistry()
 
@@ -53,7 +53,7 @@ class TestLoggingIntegration:
         )
         proxy = SyscallProxy(cp, gate, cap_mgr)
 
-        with caplog.at_level(logging.DEBUG, logger="castor.stream"):
+        with caplog.at_level(logging.DEBUG, logger="castor.scheduler"):
             await proxy.syscall("search", {"query": "hello"})
 
         assert any("syscall_complete" in r.message for r in caplog.records)

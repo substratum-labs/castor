@@ -61,7 +61,7 @@ from typing import Any
 
 from castor.gate.registry import ToolMetadata, ToolRegistry
 from castor.observability import get_logger, get_meter
-from castor.stream.proxy import SyscallProxy
+from castor.scheduler.proxy import SyscallProxy
 
 _logger = get_logger("castor.llm")
 

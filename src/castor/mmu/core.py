@@ -11,7 +11,7 @@ from castor.mmu.token_counter import CharCountEstimator, TokenCounter
 from castor.models.checkpoint import AgentCheckpoint, CastorMessage
 
 if TYPE_CHECKING:
-    from castor.stream.proxy import SyscallProxy
+    from castor.scheduler.proxy import SyscallProxy
 
 PAGE_OUT_TOOL = "sys_kernel_page_out"
 SEARCH_MEMORY_TOOL = "search_memory"

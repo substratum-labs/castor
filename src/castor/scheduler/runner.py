@@ -10,13 +10,13 @@ from castor.capability.manager import CapabilityManager
 from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import AgentCheckpoint, SuspendInterrupt
 from castor.observability import get_logger
-from castor.stream.proxy import SyscallProxy
+from castor.scheduler.proxy import SyscallProxy
 
-_logger = get_logger("castor.stream")
+_logger = get_logger("castor.scheduler")
 
 if TYPE_CHECKING:
     from castor.mmu.core import MMU
-    from castor.stream.agent_registry import AgentRegistry
+    from castor.scheduler.agent_registry import AgentRegistry
 
 
 class AgentRunner:

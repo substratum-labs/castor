@@ -11,9 +11,9 @@ from castor.capability.manager import CapabilityManager
 from castor.gate.registry import ToolRegistry, default_registry
 from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import AgentCheckpoint
-from castor.stream.hitl import HITLHandler
-from castor.stream.proxy import SyscallProxy
-from castor.stream.runner import AgentRunner
+from castor.scheduler.hitl import HITLHandler
+from castor.scheduler.proxy import SyscallProxy
+from castor.scheduler.runner import AgentRunner
 
 
 class Castor:
@@ -66,7 +66,7 @@ class Castor:
         if agent_registry is not None:
             self._agent_registry = agent_registry
         else:
-            from castor.stream.agent_registry import default_agent_registry
+            from castor.scheduler.agent_registry import default_agent_registry
 
             if default_agent_registry.list_agents():
                 self._agent_registry = default_agent_registry
@@ -79,7 +79,7 @@ class Castor:
         # -- Persistence --
         self._store = None
         if store is not None:
-            from castor.stream.persistence import CheckpointStore
+            from castor.scheduler.persistence import CheckpointStore
 
             if isinstance(store, str):
                 self._store = CheckpointStore(store)

@@ -14,7 +14,7 @@ from smolagents.models import ChatMessage, Model
 
 from castor.capability.manager import CapabilityManager
 from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
-from castor.stream.persistence import CheckpointStore
+from castor.scheduler.persistence import CheckpointStore
 
 # ── ChatMessage serialization ──
 

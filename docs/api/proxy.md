@@ -23,7 +23,7 @@ async def my_agent(proxy: SyscallProxy) -> str:
 
 ## SyscallProxy
 
-::: castor.stream.proxy.SyscallProxy
+::: castor.scheduler.proxy.SyscallProxy
     options:
       members:
         - syscall

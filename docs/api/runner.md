@@ -6,7 +6,7 @@ The execution runtime and checkpoint storage.
 
 The low-level agent execution loop. Most users should use `Castor.run()` instead of interacting with the runner directly.
 
-::: castor.stream.runner.AgentRunner
+::: castor.scheduler.runner.AgentRunner
 
 ## CheckpointStore
 
@@ -27,4 +27,4 @@ cp = kernel.load("agent-001")
 cp = await kernel.run(agent, checkpoint=cp)
 ```
 
-::: castor.stream.persistence.CheckpointStore
+::: castor.scheduler.persistence.CheckpointStore
