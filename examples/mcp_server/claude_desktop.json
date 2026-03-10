@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "castor": {
+      "command": "uv",
+      "args": [
+        "--directory", "/path/to/castor",
+        "run", "python", "examples/mcp_server/run_server.py"
+      ]
+    }
+  }
+}
