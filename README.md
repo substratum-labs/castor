@@ -9,9 +9,9 @@
   <img src="assets/demo.gif" alt="Castor Demo: HITL modify flow" width="800">
 </p>
 
-**The secure execution layer for AI agents.** Budgets that cap spending. Human approval before dangerous actions. Pause anywhere, resume later, replay deterministically.
+**The secure execution layer for AI agents.** Budgets that cap spending. Human approval when limits are reached. Pause anywhere, resume later, replay deterministically.
 
-Castor intercepts every tool call your agent makes, enforces resource limits, and gates destructive operations for human review. Your agent's business logic stays untouched. It's not a framework; it's the layer underneath.
+Castor intercepts every tool call your agent makes, enforces resource limits, and suspends for human review when budgets run out. Your agent's business logic stays untouched. It's not a framework; it's the layer underneath.
 
 ---
 
@@ -31,14 +31,14 @@ from castor.lib import tool, budget
 async def search(query: str) -> list[str]:
     return [f"Result for: {query}"]
 
-@castor_tool(consumes="disk", cost_per_use=1, destructive=True)  # deducts 1, requires approval
+@castor_tool(consumes="disk", cost_per_use=1, destructive=True)  # deducts 1, suspends when budget exhausted
 async def delete_file(path: str) -> str:
     return f"Deleted {path}"
 
 # 2. Write your agent (plain async function, no special base class)
 async def my_agent() -> str:
     results = await tool("search", query="old logs")
-    await tool("delete_file", path="/tmp/old1")  # suspends here for human approval
+    await tool("delete_file", path="/tmp/old1")  # auto-executes if budget allows
     await tool("delete_file", path="/tmp/old2")
     return f"Cleaned up old logs"
 
@@ -57,7 +57,7 @@ async def main():
 asyncio.run(main())
 ```
 
-The agent hits `delete_file`, a destructive tool. Castor suspends execution, saves state, and waits. After human approval, the kernel replays from the top: cached responses for `search`, live execution for `delete_file`. The agent doesn't know it was paused.
+The agent calls `delete_file`, a destructive tool. Within budget, it auto-executes. When the budget runs out, Castor suspends execution, saves state, and waits for human approval. The kernel then replays from the top: cached responses for everything already executed, live execution from the suspension point. The agent doesn't know it was paused.
 
 ## 💡 Philosophy
 

@@ -181,8 +181,13 @@ class SyscallProxy:
 
         tool_meta = self._gate.get_tool_meta(tool_name)
 
-        # ── Slow Path: suspend for HITL ──
-        if tool_meta.requires_hitl or tool_meta.destructive:
+        # ── Always-HITL: explicit requires_hitl, or destructive with no budget ──
+        # Destructive tools without budget tracking (cost=0) always need
+        # human approval since there's no cap to limit them.
+        _always_hitl = tool_meta.requires_hitl or (
+            tool_meta.destructive and tool_meta.cost_per_use <= 0
+        )
+        if _always_hitl:
             _hitl_counter.add(1, {"action": "suspend"})
             _logger.info(
                 "hitl_suspend",
@@ -195,7 +200,7 @@ class SyscallProxy:
             self.checkpoint.status = "SUSPENDED_FOR_HITL"
             raise SuspendInterrupt(self.checkpoint)
 
-        # ── Fast Path: deduct capability, execute, log ──
+        # ── Budget deduction ──
         # Zero-cost tools skip budget checks entirely — they may use a
         # default resource type ("_default") that has no matching capability.
         if tool_meta.cost_per_use > 0:
@@ -206,6 +211,19 @@ class SyscallProxy:
                     tool_meta.cost_per_use,
                 )
             except CapabilityExhaustedError as e:
+                # Destructive tools suspend for HITL when budget exhausted
+                if tool_meta.destructive:
+                    _hitl_counter.add(1, {"action": "suspend"})
+                    _logger.info(
+                        "hitl_suspend_budget_exhausted",
+                        extra={
+                            "pid": self.checkpoint.pid,
+                            "tool": tool_name,
+                        },
+                    )
+                    self.checkpoint.pending_hitl = request
+                    self.checkpoint.status = "SUSPENDED_FOR_HITL"
+                    raise SuspendInterrupt(self.checkpoint)
                 response = SyscallResponse(
                     status="INSUFFICIENT_CAPABILITY",
                     feedback_message=str(e),
