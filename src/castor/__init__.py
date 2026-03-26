@@ -21,6 +21,13 @@ from castor.models.checkpoint import (
     SyscallRecord,
 )
 from castor.models.result import SyscallResult
+from castor.protocols import (
+    AgentRegistryProtocol,
+    BudgetProtocol,
+    CheckpointStoreProtocol,
+    GateProtocol,
+    MMUProtocol,
+)
 from castor.scheduler.agent_registry import (
     AgentNotFoundError,
     AgentRegistry,
@@ -30,7 +37,6 @@ from castor.scheduler.agent_registry import (
 from castor.scheduler.hitl import HITLHandler
 from castor.scheduler.persistence import (
     CheckpointStore,
-    CheckpointStoreProtocol,
     MemoryCheckpointStore,
 )
 from castor.scheduler.proxy import SyscallProxy
@@ -49,6 +55,8 @@ stable(HITLHandler)
 stable(AgentRunner)
 stable(CheckpointStore)
 stable(CheckpointStoreProtocol)
+stable(GateProtocol)
+stable(BudgetProtocol)
 stable(MemoryCheckpointStore)
 stable(ToolMetadata)
 stable(castor_tool)
@@ -59,6 +67,8 @@ stable(auto_approve)
 stable(auto_reject)
 stable(interactive)
 
+experimental(MMUProtocol)
+experimental(AgentRegistryProtocol)
 experimental(MMU)
 experimental(CastorTask)
 experimental(LLMSyscall)
@@ -72,16 +82,20 @@ __all__ = [
     "AgentCheckpoint",
     "AgentNotFoundError",
     "AgentRegistry",
+    "AgentRegistryProtocol",
     "AgentRunner",
+    "BudgetProtocol",
     "Capability",
     "CapabilityManager",
     "Castor",
     "SyscallGate",
     "MMU",
+    "MMUProtocol",
     "CastorMessage",
     "CastorTask",
     "CheckpointStore",
     "CheckpointStoreProtocol",
+    "GateProtocol",
     "HITLHandler",
     "LLMSyscall",
     "StreamingLLMSyscall",

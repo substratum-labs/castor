@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from castor.capability.manager import CapabilityManager
-from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
-
-if TYPE_CHECKING:
-    from castor.mmu.core import MMU
-    from castor.scheduler.agent_registry import AgentRegistry
+from castor.protocols import (
+    AgentRegistryProtocol,
+    BudgetProtocol,
+    GateProtocol,
+    MMUProtocol,
+)
 
 
 class HITLHandler:
@@ -23,8 +21,8 @@ class HITLHandler:
     async def approve(
         self,
         checkpoint: AgentCheckpoint,
-        gate: SyscallGate,
-        capability_manager: CapabilityManager,
+        gate: GateProtocol,
+        capability_manager: BudgetProtocol,
     ) -> None:
         """Approve the pending HITL syscall and execute it.
 
@@ -117,10 +115,10 @@ class HITLHandler:
     async def approve_child_hitl(
         self,
         checkpoint: AgentCheckpoint,
-        gate: SyscallGate,
-        capability_manager: CapabilityManager,
-        agent_registry: AgentRegistry,
-        lodge: MMU | None = None,
+        gate: GateProtocol,
+        capability_manager: BudgetProtocol,
+        agent_registry: AgentRegistryProtocol,
+        lodge: MMUProtocol | None = None,
     ) -> None:
         """Approve HITL on a child's suspended syscall, then resume child."""
         if not self.is_child_hitl(checkpoint):
@@ -141,10 +139,10 @@ class HITLHandler:
         self,
         checkpoint: AgentCheckpoint,
         feedback: str,
-        gate: SyscallGate,
-        capability_manager: CapabilityManager,
-        agent_registry: AgentRegistry,
-        lodge: MMU | None = None,
+        gate: GateProtocol,
+        capability_manager: BudgetProtocol,
+        agent_registry: AgentRegistryProtocol,
+        lodge: MMUProtocol | None = None,
     ) -> None:
         """Reject a child's pending HITL and resume child."""
         if not self.is_child_hitl(checkpoint):
@@ -165,10 +163,10 @@ class HITLHandler:
         self,
         checkpoint: AgentCheckpoint,
         feedback: str,
-        gate: SyscallGate,
-        capability_manager: CapabilityManager,
-        agent_registry: AgentRegistry,
-        lodge: MMU | None = None,
+        gate: GateProtocol,
+        capability_manager: BudgetProtocol,
+        agent_registry: AgentRegistryProtocol,
+        lodge: MMUProtocol | None = None,
     ) -> None:
         """Modify a child's pending HITL and resume child."""
         if not self.is_child_hitl(checkpoint):
@@ -196,10 +194,10 @@ class HITLHandler:
         self,
         parent_cp: AgentCheckpoint,
         child_cp: AgentCheckpoint,
-        gate: SyscallGate,
-        capability_manager: CapabilityManager,
-        agent_registry: AgentRegistry,
-        lodge: MMU | None = None,
+        gate: GateProtocol,
+        capability_manager: BudgetProtocol,
+        agent_registry: AgentRegistryProtocol,
+        lodge: MMUProtocol | None = None,
     ) -> None:
         """Replay a child agent after its HITL was resolved."""
         import asyncio

@@ -71,6 +71,14 @@ class SyscallGate:
             feedback_message=feedback,
         )
 
+    def has_tool(self, tool_name: str) -> bool:
+        """Check if a tool is registered."""
+        return self.registry.has_tool(tool_name)
+
+    def list_tools(self) -> list[str]:
+        """Return sorted list of registered tool names."""
+        return self.registry.list_tools()
+
     def _get_or_build_model(self, tool_name: str) -> type:
         """Get or lazily build a Pydantic model for a tool's input schema."""
         if tool_name not in self._input_models:

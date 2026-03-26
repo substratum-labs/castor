@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json as _json
 from datetime import UTC, datetime
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from castor.models.checkpoint import AgentCheckpoint
 from castor.observability import get_logger
+from castor.protocols import CheckpointStoreProtocol
+
+__all__ = ["CheckpointStoreProtocol"]  # re-export for backward compat
 
 _logger = get_logger("castor.persistence")
 
@@ -21,19 +24,6 @@ class CheckpointNotFoundError(Exception):
     def __init__(self, pid: str):
         self.pid = pid
         super().__init__(f"Checkpoint not found: {pid!r}")
-
-
-# ── Protocol ──────────────────────────────────────────────────────────────────
-
-
-@runtime_checkable
-class CheckpointStoreProtocol(Protocol):
-    """Minimal interface that any checkpoint store must implement."""
-
-    def save(self, checkpoint: AgentCheckpoint) -> None: ...
-    def load(self, pid: str) -> AgentCheckpoint: ...
-    def delete(self, pid: str) -> None: ...
-    def list_pids(self) -> list[str]: ...
 
 
 # ── In-memory store (for testing) ────────────────────────────────────────────
@@ -59,6 +49,22 @@ class MemoryCheckpointStore:
 
     def list_pids(self) -> list[str]:
         return list(self._store.keys())
+
+    def write_wal(
+        self,
+        pid: str,
+        syscall_index: int,
+        tool_name: str,
+        arguments: dict[str, Any],
+        budget_snapshot: dict[str, float],
+    ) -> None:
+        pass  # In-memory store: no WAL needed
+
+    def complete_wal(self, pid: str, syscall_index: int, result: Any) -> None:
+        pass
+
+    def abandon_wal(self, pid: str, syscall_index: int) -> None:
+        pass
 
 
 class Base(DeclarativeBase):

@@ -28,7 +28,7 @@ async def run_task(
     """
     if tools is None:
         proxy = get_proxy()
-        all_tools = proxy._gate.registry.list_tools()
+        all_tools = proxy._gate.list_tools()
         tools = [t for t in all_tools if t != tool_name]
 
     if not tools:

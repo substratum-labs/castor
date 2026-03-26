@@ -597,8 +597,8 @@ class TestLLMFacade:
             return "ok"
 
         kernel = Castor(tools=[search, llm])
-        assert kernel._gate.registry.has_tool("llm_inference")
-        assert kernel._gate.registry.has_tool("search")
+        assert kernel._gate.has_tool("llm_inference")
+        assert kernel._gate.has_tool("search")
 
     def test_llm_with_explicit_registry_still_works(self):
         """Passing registry= still registers immediately (backward compat)."""

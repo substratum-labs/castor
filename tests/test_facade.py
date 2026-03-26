@@ -164,7 +164,7 @@ class TestCastorFacade:
 
         try:
             kernel = Castor()
-            assert kernel._gate.registry.has_tool("default_tool")
+            assert kernel._gate.has_tool("default_tool")
         finally:
             default_registry._tools.pop("default_tool", None)
 
@@ -177,7 +177,7 @@ class TestCastorFacade:
             return x + 1
 
         kernel = Castor(tools=[explicit_tool])
-        assert kernel._gate.registry.has_tool("explicit_tool")
+        assert kernel._gate.has_tool("explicit_tool")
 
     def test_create_with_custom_gate(self):
         """Castor(gate=...) uses the provided gate."""

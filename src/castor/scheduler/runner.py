@@ -5,19 +5,19 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from castor.capability.manager import CapabilityManager
-from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import AgentCheckpoint, SuspendInterrupt
 from castor.observability import get_logger
+from castor.protocols import (
+    AgentRegistryProtocol,
+    BudgetProtocol,
+    GateProtocol,
+    MMUProtocol,
+)
 from castor.scheduler.proxy import SyscallProxy
 
 _logger = get_logger("castor.scheduler")
-
-if TYPE_CHECKING:
-    from castor.mmu.core import MMU
-    from castor.scheduler.agent_registry import AgentRegistry
 
 
 class AgentRunner:
@@ -36,10 +36,10 @@ class AgentRunner:
 
     def __init__(
         self,
-        gate: SyscallGate,
-        capability_manager: CapabilityManager,
-        lodge: MMU | None = None,
-        agent_registry: AgentRegistry | None = None,
+        gate: GateProtocol,
+        capability_manager: BudgetProtocol,
+        lodge: MMUProtocol | None = None,
+        agent_registry: AgentRegistryProtocol | None = None,
         structured_results: bool = False,
     ) -> None:
         self._gate = gate

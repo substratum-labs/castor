@@ -11,6 +11,7 @@ from castor.capability.manager import CapabilityManager
 from castor.gate.registry import ToolRegistry, default_registry
 from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import AgentCheckpoint
+from castor.protocols import BudgetProtocol, GateProtocol
 from castor.scheduler.hitl import HITLHandler
 from castor.scheduler.proxy import SyscallProxy
 from castor.scheduler.runner import AgentRunner
@@ -32,8 +33,8 @@ class Castor:
         lodge: Any | None = None,
         agent_registry: Any | None = None,
         store: str | Any | None = None,
-        gate: SyscallGate | None = None,
-        capability_manager: CapabilityManager | None = None,
+        gate: GateProtocol | None = None,
+        capability_manager: BudgetProtocol | None = None,
         default_budgets: dict[str, float] | None = None,
         auto_budget: float | None = None,
         structured_results: bool = False,
@@ -91,12 +92,12 @@ class Castor:
     # -- Public properties --
 
     @property
-    def gate(self) -> SyscallGate:
+    def gate(self) -> GateProtocol:
         """The SyscallGate (tool validation + execution engine)."""
         return self._gate
 
     @property
-    def capability_manager(self) -> CapabilityManager:
+    def capability_manager(self) -> BudgetProtocol:
         """The CapabilityManager (budget tracking)."""
         return self._cap_mgr
 
@@ -126,8 +127,8 @@ class Castor:
         a budget of ``auto_budget`` for each unique resource type.
         """
         resource_types: set[str] = set()
-        for name in self._gate.registry.list_tools():
-            meta = self._gate.registry.get(name)
+        for name in self._gate.list_tools():
+            meta = self._gate.get_tool_meta(name)
             if meta.cost_per_use > 0:
                 resource_types.add(meta.consumes)
         if not resource_types:

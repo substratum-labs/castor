@@ -352,7 +352,7 @@ def create_mcp_server(
     _cap_mgr = CapabilityManager()
 
     if instructions is None:
-        tool_names = _gate.registry.list_tools()
+        tool_names = _gate.list_tools()
         instructions = (
             "This server provides tools guarded by Castor security.\n"
             "1. Call castor_init(budgets={...}) first to set resource budgets.\n"
@@ -370,8 +370,8 @@ def create_mcp_server(
     server = FastMCP(name=name, instructions=instructions, lifespan=lifespan)
 
     # Register Castor tools as MCP tools
-    for tool_name in _gate.registry.list_tools():
-        meta = _gate.registry.get(tool_name)
+    for tool_name in _gate.list_tools():
+        meta = _gate.get_tool_meta(tool_name)
         mcp_tool = CastorMCPTool.from_castor_meta(meta)
         server.add_tool(mcp_tool)
 

@@ -5,18 +5,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import ValidationError
 
-from castor.capability.manager import CapabilityExhaustedError, CapabilityManager
-from castor.gate.validator import SyscallGate
-from castor.observability import get_logger, get_meter
-
-if TYPE_CHECKING:
-    from castor.mmu.core import MMU
-    from castor.scheduler.agent_registry import AgentRegistry
-    from castor.scheduler.persistence import CheckpointStore
+from castor.capability.manager import CapabilityExhaustedError
 from castor.models.capability import SyscallResponse
 from castor.models.checkpoint import (
     AgentCheckpoint,
@@ -24,6 +17,14 @@ from castor.models.checkpoint import (
     SyscallRecord,
 )
 from castor.models.result import SyscallResult
+from castor.observability import get_logger, get_meter
+from castor.protocols import (
+    AgentRegistryProtocol,
+    BudgetProtocol,
+    CheckpointStoreProtocol,
+    GateProtocol,
+    MMUProtocol,
+)
 
 _logger = get_logger("castor.scheduler")
 _meter = get_meter("castor.scheduler")
@@ -64,13 +65,13 @@ class SyscallProxy:
     def __init__(
         self,
         checkpoint: AgentCheckpoint,
-        gate: SyscallGate,
-        capability_manager: CapabilityManager,
-        lodge: MMU | None = None,
+        gate: GateProtocol,
+        capability_manager: BudgetProtocol,
+        lodge: MMUProtocol | None = None,
         llm_tool_names: set[str] | None = None,
         kernel_tool_names: set[str] | None = None,
-        agent_registry: AgentRegistry | None = None,
-        checkpoint_store: CheckpointStore | None = None,
+        agent_registry: AgentRegistryProtocol | None = None,
+        checkpoint_store: CheckpointStoreProtocol | None = None,
         structured_results: bool = False,
     ) -> None:
         self.checkpoint = checkpoint
@@ -608,7 +609,7 @@ class SyscallProxy:
         """Wrap response in SyscallResult for destructive/HITL tools."""
         if not self._structured_results:
             return response
-        if not self._gate.registry.has_tool(tool_name):
+        if not self._gate.has_tool(tool_name):
             return response
         meta = self._gate.get_tool_meta(tool_name)
         if not (meta.requires_hitl or meta.destructive):
@@ -697,7 +698,7 @@ class SyscallProxy:
         Only triggers for names not found via normal attribute lookup.
         """
         # Check if it's a registered tool
-        if self._gate.registry.has_tool(name):
+        if self._gate.has_tool(name):
 
             async def _tool_call(**kwargs: Any) -> Any:
                 return await self.syscall(name, **kwargs)
