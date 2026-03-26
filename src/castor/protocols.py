@@ -8,7 +8,7 @@ by IPC proxy classes — callers never change.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
     from castor.gate.registry import ToolMetadata
     from castor.models.capability import Capability, SyscallResponse
-    from castor.models.checkpoint import AgentCheckpoint
+    from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
 
 
 # ---------------------------------------------------------------------------
@@ -152,3 +152,34 @@ class AgentRegistryProtocol(Protocol):
     def has_agent(self, name: str) -> bool: ...
 
     def list_agents(self) -> list[str]: ...
+
+
+# ---------------------------------------------------------------------------
+# Journal — syscall event log
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class JournalProtocol(Protocol):
+    """Interface for the syscall event journal (append-only log).
+
+    Level 0: wraps ``checkpoint.syscall_log`` (in-memory list).
+    Level 1: SQLite WAL.
+    Level 2: distributed journal service with ``subscribe()``.
+    """
+
+    def append(self, record: SyscallRecord) -> int:
+        """Append a record and return its index."""
+        ...
+
+    def get(self, index: int) -> SyscallRecord:
+        """Get a record by index."""
+        ...
+
+    def __len__(self) -> int:
+        """Return the number of records."""
+        ...
+
+    def scan_from(self, index: int) -> Iterator[tuple[int, SyscallRecord]]:
+        """Iterate (index, record) pairs starting from *index*."""
+        ...

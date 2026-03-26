@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from castor.kernel.journal import InMemoryJournal
 from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
 from castor.protocols import (
     AgentRegistryProtocol,
@@ -50,9 +51,8 @@ class HITLHandler:
 
         result = await gate.execute(tool_name, validated)
 
-        checkpoint.syscall_log.append(
-            SyscallRecord(request=request, response=result, was_hitl=True)
-        )
+        journal = InMemoryJournal(checkpoint.syscall_log)
+        journal.append(SyscallRecord(request=request, response=result, was_hitl=True))
         checkpoint.pending_hitl = None
         checkpoint.status = "RUNNING"
 
@@ -65,7 +65,8 @@ class HITLHandler:
         if checkpoint.pending_hitl is None:
             raise ValueError("No pending HITL request to reject")
 
-        checkpoint.syscall_log.append(
+        journal = InMemoryJournal(checkpoint.syscall_log)
+        journal.append(
             SyscallRecord(
                 request=checkpoint.pending_hitl,
                 response={
@@ -88,7 +89,8 @@ class HITLHandler:
         if checkpoint.pending_hitl is None:
             raise ValueError("No pending HITL request to modify")
 
-        checkpoint.syscall_log.append(
+        journal = InMemoryJournal(checkpoint.syscall_log)
+        journal.append(
             SyscallRecord(
                 request=checkpoint.pending_hitl,
                 response={

@@ -10,11 +10,13 @@ In castord (Rust daemon), this module becomes the Ring 0 state machine.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from castor.gate.registry import ToolMetadata
 from castor.models.capability import Capability
-from castor.models.checkpoint import SyscallRecord
+
+if TYPE_CHECKING:
+    from castor.protocols import JournalProtocol
 
 
 class ReplayDivergenceError(Exception):
@@ -75,7 +77,7 @@ SyscallDecision = ReplayHit | Suspend | Deny | Allow
 
 def decide_syscall(
     *,
-    syscall_log: list[SyscallRecord],
+    journal: JournalProtocol,
     replay_index: int,
     kernel_tool_names: set[str],
     capabilities: dict[str, Capability],
@@ -91,7 +93,7 @@ def decide_syscall(
     executing the returned decision.
 
     Args:
-        syscall_log: The checkpoint's syscall journal.
+        journal: The syscall event journal.
         replay_index: Current position in the replay journal.
         kernel_tool_names: Tool names that are kernel-internal (skipped in replay).
         capabilities: The agent's current capability budgets.
@@ -110,14 +112,14 @@ def decide_syscall(
     idx = replay_index
 
     # Skip kernel-internal records (side-effects baked into checkpoint)
-    while idx < len(syscall_log):
-        record = syscall_log[idx]
+    while idx < len(journal):
+        record = journal.get(idx)
         if record.request.get("tool_name") not in kernel_tool_names:
             break
         idx += 1
 
-    if idx < len(syscall_log):
-        record = syscall_log[idx]
+    if idx < len(journal):
+        record = journal.get(idx)
         if record.request != request:
             raise ReplayDivergenceError(idx, record.request, request)
         return ReplayHit(response=record.response, new_replay_index=idx + 1)

@@ -11,6 +11,7 @@ from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolMetadata
 from castor.gate.validator import SyscallGate
 from castor.hitl_policies import auto_approve, auto_reject, interactive
+from castor.kernel.journal import InMemoryJournal
 from castor.llm.wrapper import LLMSyscall, StreamingLLMSyscall
 from castor.mmu.core import MMU
 from castor.models.capability import Capability, SyscallRequest, SyscallResponse
@@ -26,6 +27,7 @@ from castor.protocols import (
     BudgetProtocol,
     CheckpointStoreProtocol,
     GateProtocol,
+    JournalProtocol,
     MMUProtocol,
 )
 from castor.scheduler.agent_registry import (
@@ -57,6 +59,8 @@ stable(CheckpointStore)
 stable(CheckpointStoreProtocol)
 stable(GateProtocol)
 stable(BudgetProtocol)
+stable(JournalProtocol)
+stable(InMemoryJournal)
 stable(MemoryCheckpointStore)
 stable(ToolMetadata)
 stable(castor_tool)
@@ -97,6 +101,8 @@ __all__ = [
     "CheckpointStoreProtocol",
     "GateProtocol",
     "HITLHandler",
+    "InMemoryJournal",
+    "JournalProtocol",
     "LLMSyscall",
     "StreamingLLMSyscall",
     "SuspendInterrupt",

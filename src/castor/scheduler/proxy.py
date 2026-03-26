@@ -18,6 +18,7 @@ from castor.kernel.decisions import (
     Suspend,
     decide_syscall,
 )
+from castor.kernel.journal import InMemoryJournal
 from castor.models.checkpoint import (
     AgentCheckpoint,
     SuspendInterrupt,
@@ -78,12 +79,13 @@ class SyscallProxy:
         self._agent_registry = agent_registry
         self._store = checkpoint_store
         self._structured_results = structured_results
+        self._journal = InMemoryJournal(checkpoint.syscall_log)
         self._replay_index = 0
-        # Cached spawn count — computed once from syscall_log at init, then
+        # Cached spawn count — computed once from journal at init, then
         # incremented per spawn.  Avoids O(N) log scan on every spawn call.
         self._spawn_count = sum(
             1
-            for r in checkpoint.syscall_log
+            for _, r in self._journal.scan_from(0)
             if r.request.get("tool_name") in {"spawn_agent", "spawn_agent_async"}
         )
         # Async spawn tracking (live execution only, not persisted)
@@ -93,7 +95,7 @@ class SyscallProxy:
     @property
     def is_replaying(self) -> bool:
         """True if the proxy is still serving cached responses."""
-        return self._replay_index < len(self.checkpoint.syscall_log)
+        return self._replay_index < len(self._journal)
 
     async def syscall(
         self, tool_name: str, arguments: dict[str, Any] | None = None, /, **kwargs: Any
@@ -151,13 +153,13 @@ class SyscallProxy:
         if is_spawn_join:
             # Replay check for spawn/join: serve cached response if available
             idx = self._replay_index
-            while idx < len(self.checkpoint.syscall_log):
-                record = self.checkpoint.syscall_log[idx]
-                if record.request.get("tool_name") not in self._kernel_tool_names:
+            while idx < len(self._journal):
+                rec = self._journal.get(idx)
+                if rec.request.get("tool_name") not in self._kernel_tool_names:
                     break
                 idx += 1
-            if idx < len(self.checkpoint.syscall_log):
-                record = self.checkpoint.syscall_log[idx]
+            if idx < len(self._journal):
+                record = self._journal.get(idx)
                 if record.request == request:
                     self._replay_index = idx + 1
                     _logger.debug(
@@ -177,7 +179,7 @@ class SyscallProxy:
             return await self._handle_join(request, arguments)
 
         decision = decide_syscall(
-            syscall_log=self.checkpoint.syscall_log,
+            journal=self._journal,
             replay_index=self._replay_index,
             kernel_tool_names=self._kernel_tool_names,
             capabilities=self.checkpoint.capabilities,
@@ -233,7 +235,7 @@ class SyscallProxy:
 
         # ── WAL: log intent before execution ──
         # Snapshot captures usage BEFORE deduction so recover() restores correctly.
-        wal_syscall_index = len(self.checkpoint.syscall_log)
+        wal_syscall_index = len(self._journal)
         if self._store is not None:
             budget_snapshot = {
                 tool_meta.consumes: self.checkpoint.capabilities[
@@ -599,9 +601,9 @@ class SyscallProxy:
                 cap.current_usage = cap.max_budget
 
     def _append_record(self, record: SyscallRecord) -> None:
-        """Append a record to the log and advance replay index to stay in sync."""
-        self.checkpoint.syscall_log.append(record)
-        self._replay_index = len(self.checkpoint.syscall_log)
+        """Append a record to the journal and advance replay index to stay in sync."""
+        self._journal.append(record)
+        self._replay_index = len(self._journal)
 
     def _wrap_if_needed(self, tool_name: str, response: Any) -> Any:
         """Wrap response in SyscallResult for destructive/HITL tools."""

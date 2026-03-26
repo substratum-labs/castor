@@ -13,6 +13,7 @@ from castor.kernel.decisions import (
     Suspend,
     decide_syscall,
 )
+from castor.kernel.journal import InMemoryJournal
 from castor.models.capability import Capability
 from castor.models.checkpoint import SyscallRecord
 
@@ -56,7 +57,7 @@ class TestReplay:
     def test_replay_hit(self):
         log = [_record("test_tool", response="cached")]
         decision = decide_syscall(
-            syscall_log=log,
+            journal=InMemoryJournal(log),
             replay_index=0,
             kernel_tool_names=set(),
             capabilities=_caps(),
@@ -73,7 +74,7 @@ class TestReplay:
         log = [_record("other_tool", response="cached")]
         with pytest.raises(ReplayDivergenceError) as exc_info:
             decide_syscall(
-                syscall_log=log,
+                journal=InMemoryJournal(log),
                 replay_index=0,
                 kernel_tool_names=set(),
                 capabilities=_caps(),
@@ -90,7 +91,7 @@ class TestReplay:
             _record("test_tool", response="cached"),
         ]
         decision = decide_syscall(
-            syscall_log=log,
+            journal=InMemoryJournal(log),
             replay_index=0,
             kernel_tool_names={"sys_kernel_page_out"},
             capabilities=_caps(),
@@ -106,7 +107,7 @@ class TestReplay:
     def test_no_replay_when_past_log(self):
         """Past end of log → not a replay, proceed to security checks."""
         decision = decide_syscall(
-            syscall_log=[],
+            journal=InMemoryJournal([]),
             replay_index=0,
             kernel_tool_names=set(),
             capabilities=_caps(),
@@ -122,7 +123,7 @@ class TestValidation:
     def test_validation_error_returns_deny(self):
         error_resp = {"status": "VALIDATION_ERROR", "feedback_message": "bad args"}
         decision = decide_syscall(
-            syscall_log=[],
+            journal=InMemoryJournal([]),
             replay_index=0,
             kernel_tool_names=set(),
             capabilities=_caps(),
@@ -138,7 +139,7 @@ class TestValidation:
 class TestHITL:
     def test_requires_hitl_suspends(self):
         decision = decide_syscall(
-            syscall_log=[],
+            journal=InMemoryJournal([]),
             replay_index=0,
             kernel_tool_names=set(),
             capabilities=_caps(),
@@ -152,7 +153,7 @@ class TestHITL:
     def test_destructive_zero_cost_suspends(self):
         """Destructive tools with no budget tracking always need HITL."""
         decision = decide_syscall(
-            syscall_log=[],
+            journal=InMemoryJournal([]),
             replay_index=0,
             kernel_tool_names=set(),
             capabilities=_caps(),
@@ -167,7 +168,7 @@ class TestHITL:
 class TestBudget:
     def test_budget_sufficient_allows(self):
         decision = decide_syscall(
-            syscall_log=[],
+            journal=InMemoryJournal([]),
             replay_index=0,
             kernel_tool_names=set(),
             capabilities=_caps(budget=100.0, usage=0.0),
@@ -182,7 +183,7 @@ class TestBudget:
 
     def test_budget_exhausted_non_destructive_denies(self):
         decision = decide_syscall(
-            syscall_log=[],
+            journal=InMemoryJournal([]),
             replay_index=0,
             kernel_tool_names=set(),
             capabilities=_caps(budget=10.0, usage=10.0),
@@ -196,7 +197,7 @@ class TestBudget:
 
     def test_budget_exhausted_destructive_suspends(self):
         decision = decide_syscall(
-            syscall_log=[],
+            journal=InMemoryJournal([]),
             replay_index=0,
             kernel_tool_names=set(),
             capabilities=_caps(budget=10.0, usage=10.0),
@@ -210,7 +211,7 @@ class TestBudget:
     def test_zero_cost_skips_budget_check(self):
         """Zero-cost tools are always allowed regardless of budget."""
         decision = decide_syscall(
-            syscall_log=[],
+            journal=InMemoryJournal([]),
             replay_index=0,
             kernel_tool_names=set(),
             capabilities=_caps(budget=0.0, usage=0.0),
@@ -225,7 +226,7 @@ class TestBudget:
     def test_untracked_resource_allows(self):
         """Missing resource type in capabilities = not tracked = unlimited."""
         decision = decide_syscall(
-            syscall_log=[],
+            journal=InMemoryJournal([]),
             replay_index=0,
             kernel_tool_names=set(),
             capabilities={},  # no "api" capability
