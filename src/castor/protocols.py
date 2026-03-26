@@ -52,9 +52,7 @@ class GateProtocol(Protocol):
 class BudgetProtocol(Protocol):
     """Interface for capability budget tracking and delegation."""
 
-    def create_capabilities(
-        self, specs: dict[str, float]
-    ) -> dict[str, Capability]: ...
+    def create_capabilities(self, specs: dict[str, float]) -> dict[str, Capability]: ...
 
     def check(
         self,
@@ -116,9 +114,7 @@ class CheckpointStoreProtocol(Protocol):
         budget_snapshot: dict[str, float],
     ) -> None: ...
 
-    def complete_wal(
-        self, pid: str, syscall_index: int, result: Any
-    ) -> None: ...
+    def complete_wal(self, pid: str, syscall_index: int, result: Any) -> None: ...
 
     def abandon_wal(self, pid: str, syscall_index: int) -> None: ...
 
