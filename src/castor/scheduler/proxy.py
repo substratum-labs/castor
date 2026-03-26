@@ -10,7 +10,14 @@ from typing import Any
 from pydantic import ValidationError
 
 from castor.capability.manager import CapabilityExhaustedError
-from castor.models.capability import SyscallResponse
+from castor.kernel.decisions import (
+    Allow,
+    Deny,
+    ReplayDivergenceError,  # noqa: F401 — re-exported via scheduler.__init__
+    ReplayHit,
+    Suspend,
+    decide_syscall,
+)
 from castor.models.checkpoint import (
     AgentCheckpoint,
     SuspendInterrupt,
@@ -32,18 +39,6 @@ _syscall_counter = _meter.create_counter("castor_syscalls_total")
 _syscall_duration = _meter.create_histogram("castor_syscall_duration_seconds")
 _hitl_counter = _meter.create_counter("castor_hitl_total")
 _spawn_counter = _meter.create_counter("castor_spawns_total")
-
-
-class ReplayDivergenceError(Exception):
-    """Raised when a replay request doesn't match the recorded syscall."""
-
-    def __init__(self, index: int, expected: dict[str, Any], actual: dict[str, Any]):
-        self.index = index
-        self.expected = expected
-        self.actual = actual
-        super().__init__(
-            f"Replay divergence at index {index}: expected {expected}, got {actual}"
-        )
 
 
 class SyscallProxy:
@@ -136,59 +131,82 @@ class SyscallProxy:
         ):
             await self._lodge.check_and_evict(self, self.checkpoint)
 
-        # ── Replay: return cached response instantly ──
-        # Skip kernel-internal records (e.g. sys_kernel_page_out) whose
-        # side-effects are already applied to the checkpoint state.
-        while self._replay_index < len(self.checkpoint.syscall_log):
-            record = self.checkpoint.syscall_log[self._replay_index]
-            if record.request.get("tool_name") not in self._kernel_tool_names:
-                break
-            self._replay_index += 1
+        # ── Gate validation (schema check — Gate concern, not Kernel) ──
+        # Spawn/join bypass Gate validation (kernel-internal tools).
+        validation_error_response = None
+        validated = arguments
+        is_spawn_join = tool_name in {"spawn_agent", "spawn_agent_async", "join_agent"}
+        if not is_spawn_join:
+            try:
+                validated = self._gate.validate(tool_name, arguments)
+            except ValidationError as e:
+                response = self._gate.format_validation_error(tool_name, e)
+                validation_error_response = response.model_dump()
 
-        if self._replay_index < len(self.checkpoint.syscall_log):
-            record = self.checkpoint.syscall_log[self._replay_index]
-            if record.request != request:
-                raise ReplayDivergenceError(self._replay_index, record.request, request)
-            self._replay_index += 1
+        tool_meta = self._gate.get_tool_meta(tool_name) if not is_spawn_join else None
+
+        # ── Kernel security decision (pure function, zero I/O) ──
+        # Spawn/join skip Kernel decision — they are Scheduler lifecycle ops
+        # with their own replay logic inside _handle_spawn/_handle_join.
+        if is_spawn_join:
+            # Replay check for spawn/join: serve cached response if available
+            idx = self._replay_index
+            while idx < len(self.checkpoint.syscall_log):
+                record = self.checkpoint.syscall_log[idx]
+                if record.request.get("tool_name") not in self._kernel_tool_names:
+                    break
+                idx += 1
+            if idx < len(self.checkpoint.syscall_log):
+                record = self.checkpoint.syscall_log[idx]
+                if record.request == request:
+                    self._replay_index = idx + 1
+                    _logger.debug(
+                        "replay_hit",
+                        extra={
+                            "pid": self.checkpoint.pid,
+                            "tool": tool_name,
+                            "index": idx,
+                        },
+                    )
+                    return self._wrap_if_needed(tool_name, record.response)
+            # Not a replay hit — execute the spawn/join
+            if tool_name == "spawn_agent":
+                return await self._handle_spawn(request, arguments)
+            if tool_name == "spawn_agent_async":
+                return await self._handle_spawn_async(request, arguments)
+            return await self._handle_join(request, arguments)
+
+        decision = decide_syscall(
+            syscall_log=self.checkpoint.syscall_log,
+            replay_index=self._replay_index,
+            kernel_tool_names=self._kernel_tool_names,
+            capabilities=self.checkpoint.capabilities,
+            request=request,
+            tool_meta=tool_meta,
+            validated_args=validated,
+            validation_error_response=validation_error_response,
+        )
+
+        # ── Scheduler executes the Kernel's decision ──
+        if isinstance(decision, ReplayHit):
+            self._replay_index = decision.new_replay_index
             _logger.debug(
                 "replay_hit",
                 extra={
                     "pid": self.checkpoint.pid,
                     "tool": tool_name,
-                    "index": self._replay_index - 1,
+                    "index": decision.new_replay_index - 1,
                 },
             )
-            return self._wrap_if_needed(tool_name, record.response)
+            return self._wrap_if_needed(tool_name, decision.response)
 
-        # ── Spawn/join intercepts: kernel-internal, bypass Dam ──
-        if tool_name == "spawn_agent":
-            return await self._handle_spawn(request, arguments)
-        if tool_name == "spawn_agent_async":
-            return await self._handle_spawn_async(request, arguments)
-        if tool_name == "join_agent":
-            return await self._handle_join(request, arguments)
-
-        # ── New syscall: validate via Gate ──
-        try:
-            validated = self._gate.validate(tool_name, arguments)
-        except ValidationError as e:
-            # Return validation error as a response (not an exception)
-            # so the LLM can self-correct
-            response = self._gate.format_validation_error(tool_name, e)
+        if isinstance(decision, Deny):
             self._append_record(
-                SyscallRecord(request=request, response=response.model_dump())
+                SyscallRecord(request=request, response=decision.response)
             )
-            return response.model_dump()
+            return self._wrap_if_needed(tool_name, decision.response)
 
-        tool_meta = self._gate.get_tool_meta(tool_name)
-
-        # ── Always-HITL: explicit requires_hitl, or destructive with no budget ──
-        # Destructive tools without budget tracking (cost=0) always need
-        # human approval since there's no cap to limit them.
-        _always_hitl = tool_meta.requires_hitl or (
-            tool_meta.destructive and tool_meta.cost_per_use <= 0
-        )
-        if _always_hitl:
+        if isinstance(decision, Suspend):
             _hitl_counter.add(1, {"action": "suspend"})
             _logger.info(
                 "hitl_suspend",
@@ -197,41 +215,21 @@ class SyscallProxy:
                     "tool": tool_name,
                 },
             )
-            self.checkpoint.pending_hitl = request
+            self.checkpoint.pending_hitl = decision.request
             self.checkpoint.status = "SUSPENDED_FOR_HITL"
             raise SuspendInterrupt(self.checkpoint)
 
-        # ── Budget deduction ──
-        # Zero-cost tools skip budget checks entirely — they may use a
-        # default resource type ("_default") that has no matching capability.
-        if tool_meta.cost_per_use > 0:
-            try:
-                self._cap_mgr.deduct(
-                    self.checkpoint.capabilities,
-                    tool_meta.consumes,
-                    tool_meta.cost_per_use,
-                )
-            except CapabilityExhaustedError as e:
-                # Destructive tools suspend for HITL when budget exhausted
-                if tool_meta.destructive:
-                    _hitl_counter.add(1, {"action": "suspend"})
-                    _logger.info(
-                        "hitl_suspend_budget_exhausted",
-                        extra={
-                            "pid": self.checkpoint.pid,
-                            "tool": tool_name,
-                        },
-                    )
-                    self.checkpoint.pending_hitl = request
-                    self.checkpoint.status = "SUSPENDED_FOR_HITL"
-                    raise SuspendInterrupt(self.checkpoint)
-                response = SyscallResponse(
-                    status="INSUFFICIENT_CAPABILITY",
-                    feedback_message=str(e),
-                )
-                resp_dict = response.model_dump()
-                self._append_record(SyscallRecord(request=request, response=resp_dict))
-                return self._wrap_if_needed(tool_name, resp_dict)
+        # ── Allow: deduct budget and execute ──
+        assert isinstance(decision, Allow)
+        tool_meta = decision.tool_meta
+        validated = decision.validated_args
+
+        if decision.cost > 0:
+            self._cap_mgr.deduct(
+                self.checkpoint.capabilities,
+                tool_meta.consumes,
+                tool_meta.cost_per_use,
+            )
 
         # ── WAL: log intent before execution ──
         # Snapshot captures usage BEFORE deduction so recover() restores correctly.
