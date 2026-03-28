@@ -12,6 +12,7 @@ from castor.gate.registry import ToolMetadata
 from castor.gate.validator import SyscallGate
 from castor.hitl_policies import auto_approve, auto_reject, interactive
 from castor.kernel.journal import InMemoryJournal
+from castor.kernel.summary import ExecutionSummary
 from castor.llm.wrapper import LLMSyscall, StreamingLLMSyscall
 from castor.mmu.core import MMU
 from castor.models.capability import Capability, SyscallRequest, SyscallResponse
@@ -92,6 +93,7 @@ __all__ = [
     "Capability",
     "CapabilityManager",
     "Castor",
+    "ExecutionSummary",
     "SyscallGate",
     "MMU",
     "MMUProtocol",

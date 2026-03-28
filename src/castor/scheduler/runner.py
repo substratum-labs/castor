@@ -41,12 +41,14 @@ class AgentRunner:
         lodge: MMUProtocol | None = None,
         agent_registry: AgentRegistryProtocol | None = None,
         structured_results: bool = False,
+        speculative: bool = False,
     ) -> None:
         self._gate = gate
         self._cap_mgr = capability_manager
         self._lodge = lodge
         self._agent_registry = agent_registry
         self._structured_results = structured_results
+        self._speculative = speculative
         self._task: asyncio.Task | None = None
         self._current_checkpoint: AgentCheckpoint | None = None
 
@@ -77,6 +79,7 @@ class AgentRunner:
             kernel_tool_names=kernel_tools,
             agent_registry=self._agent_registry,
             structured_results=self._structured_results,
+            speculative=self._speculative,
         )
 
         # Set ContextVar so castor.lib functions work (both new and legacy agents)

@@ -85,6 +85,7 @@ def decide_syscall(
     tool_meta: ToolMetadata,
     validated_args: dict[str, Any] | None,
     validation_error_response: dict[str, Any] | None,
+    speculative: bool = False,
 ) -> SyscallDecision:
     """Evaluate a syscall request and return a security decision.
 
@@ -131,17 +132,19 @@ def decide_syscall(
     # ── Phase 3: HITL determination ──
     # Destructive tools without budget tracking always need human approval
     # since there's no cap to limit them.
-    always_hitl = tool_meta.requires_hitl or (
-        tool_meta.destructive and tool_meta.cost_per_use <= 0
-    )
-    if always_hitl:
-        return Suspend(request=request)
+    # In speculative mode, HITL is skipped — agent runs freely, reviewed after.
+    if not speculative:
+        always_hitl = tool_meta.requires_hitl or (
+            tool_meta.destructive and tool_meta.cost_per_use <= 0
+        )
+        if always_hitl:
+            return Suspend(request=request)
 
     # ── Phase 4: Budget check ──
     cost = tool_meta.cost_per_use
     if cost > 0:
         if not _budget_sufficient(capabilities, tool_meta.consumes, cost):
-            if tool_meta.destructive:
+            if tool_meta.destructive and not speculative:
                 return Suspend(request=request)
             return Deny(
                 response={

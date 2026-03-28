@@ -10,6 +10,8 @@ from typing import Any
 from castor.capability.manager import CapabilityManager
 from castor.gate.registry import ToolRegistry, default_registry
 from castor.gate.validator import SyscallGate
+from castor.kernel.journal import InMemoryJournal
+from castor.kernel.summary import ExecutionSummary, scan_journal
 from castor.models.checkpoint import AgentCheckpoint
 from castor.protocols import BudgetProtocol, GateProtocol
 from castor.scheduler.hitl import HITLHandler
@@ -161,6 +163,7 @@ class Castor:
         budgets: dict[str, float] | None = None,
         checkpoint: AgentCheckpoint | None = None,
         pid: str | None = None,
+        speculative: bool = False,
     ) -> AgentCheckpoint:
         """Run an agent function.
 
@@ -171,6 +174,8 @@ class Castor:
                      Neither provided = unlimited (no budget enforcement).
             checkpoint: Pass an existing checkpoint to resume (e.g. after HITL).
             pid: Custom process ID. Auto-generated if not provided.
+            speculative: If True, skip HITL suspensions — agent runs freely
+                         in sandbox, reviewed after completion.
         """
         if checkpoint is None:
             checkpoint = self._make_checkpoint(agent_fn, budgets, pid)
@@ -181,6 +186,7 @@ class Castor:
             lodge=self._lodge,
             agent_registry=self._agent_registry,
             structured_results=self._structured_results,
+            speculative=speculative,
         )
         return await runner.run(agent_fn, checkpoint)
 
@@ -314,6 +320,15 @@ class Castor:
         if self._store is None:
             raise RuntimeError("No store configured -- pass store= to Castor()")
         return self._store.load(pid)
+
+    def scan(self, checkpoint: AgentCheckpoint) -> ExecutionSummary:
+        """Scan a checkpoint's journal and produce an execution summary.
+
+        Use after ``run(speculative=True)`` to review what the agent did.
+        Returns flagged steps (destructive/HITL tools) and statistics.
+        """
+        journal = InMemoryJournal(checkpoint.syscall_log)
+        return scan_journal(journal, self._gate)
 
     async def run_async(
         self,

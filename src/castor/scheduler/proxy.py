@@ -69,6 +69,7 @@ class SyscallProxy:
         agent_registry: AgentRegistryProtocol | None = None,
         checkpoint_store: CheckpointStoreProtocol | None = None,
         structured_results: bool = False,
+        speculative: bool = False,
     ) -> None:
         self.checkpoint = checkpoint
         self._gate = gate
@@ -79,6 +80,7 @@ class SyscallProxy:
         self._agent_registry = agent_registry
         self._store = checkpoint_store
         self._structured_results = structured_results
+        self._speculative = speculative
         self._journal = InMemoryJournal(checkpoint.syscall_log)
         self._replay_index = 0
         # Cached spawn count — computed once from journal at init, then
@@ -187,6 +189,7 @@ class SyscallProxy:
             tool_meta=tool_meta,
             validated_args=validated,
             validation_error_response=validation_error_response,
+            speculative=self._speculative,
         )
 
         # ── Scheduler executes the Kernel's decision ──
