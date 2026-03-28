@@ -56,6 +56,16 @@ Four kernel subsystems, all in `src/castor/`:
 - Gate skips Pydantic validation for tools with `input_schema={}` (LLM wrappers pass through)
 - Access kernel internals via public properties: `kernel.gate`, `kernel.capability_manager`, `kernel.store`
 
+## Sister Projects
+
+- **Tiphys** (`../tiphys/`) — Digital Life Form agent built on Castor. Drives Castor feature priorities.
+- **Roche** (`../roche/`) — Universal sandbox orchestrator (Rust). Castor does not depend on Roche; Tiphys bridges them.
+- **Pollux** — Embodied agent OS (future). Twin star to Castor — shared kernel, different scheduler.
+- **castor-internal** (`../castor-internal/`) — Private design docs, plans, cross-project status.
+  - Read `status/PROGRESS.md` for current cross-project state.
+  - Read `design/TIPHYS_VISION.md` for the Digital Life Form vision.
+  - Read `design/CASTORD_ARCHITECTURE.md` for the Ring model and structural prep status.
+
 ## Documentation
 
 - `castor` (this repo) — Source code + `docs/` for MkDocs API reference (mkdocstrings)
