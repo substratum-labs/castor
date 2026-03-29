@@ -62,6 +62,9 @@ Four kernel subsystems, all in `src/castor/`:
 - **Roche** (`../roche/`) — Universal sandbox orchestrator (Rust). Castor does not depend on Roche.
 - **castor-internal** (`../castor-internal/`) — Private design docs, plans, cross-project status.
   - Read `status/PROGRESS.md` for current cross-project state.
+  - Read `status/COORDINATION.md` for multi-agent workflow rules.
+  - Read `status/gemini.md` before starting work (see what the other agent did).
+  - Update `status/claude.md` after completing work.
 
 ## Documentation
 
