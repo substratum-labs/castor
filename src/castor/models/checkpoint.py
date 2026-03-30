@@ -69,6 +69,34 @@ class AgentCheckpoint(BaseModel):
         cap = self.capabilities.get(resource)
         return (cap.max_budget - cap.current_usage) if cap else 0.0
 
+    def fork(self, *, at_step: int) -> AgentCheckpoint:
+        """Fork a new checkpoint from this one, rewinding to a specific step.
+
+        Keeps syscall_log[:at_step] (cached for replay), discards the rest.
+        The forked checkpoint is RUNNING with no result, ready for re-execution.
+
+        Args:
+            at_step: Keep steps 0..at_step-1, discard at_step onwards.
+
+        Returns:
+            A new independent checkpoint forked from this one.
+        """
+        if at_step < 0 or at_step > len(self.syscall_log):
+            raise ValueError(
+                f"at_step={at_step} out of range "
+                f"(0..{len(self.syscall_log)})"
+            )
+        forked = self.model_copy(deep=True)
+        forked.syscall_log = forked.syscall_log[:at_step]
+        forked.status = "RUNNING"
+        forked.result = None
+        forked.pending_hitl = None
+        forked.preemption_reason = None
+        forked.preemption_payload = None
+        forked.partial_work = None
+        forked.pid = f"{self.pid}::fork-{at_step}"
+        return forked
+
     @property
     def is_suspended(self) -> bool:
         """True if agent is waiting for human-in-the-loop approval."""

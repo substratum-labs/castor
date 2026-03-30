@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from castor import Castor, ExecutionSummary
+from castor import AgentCheckpoint, Castor, ExecutionSummary
 from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 
@@ -148,3 +148,98 @@ class TestNeedsReviewFlag:
         assert cp.status == "COMPLETED"
         assert len(cp.syscall_log) == 1
         assert cp.syscall_log[0].needs_review is False
+
+
+class TestCheckpointFork:
+    def test_fork_keeps_steps_before(self):
+        from castor.models.checkpoint import SyscallRecord
+
+        cp = AgentCheckpoint(
+            pid="test-1",
+            status="COMPLETED",
+            agent_function_name="agent",
+            capabilities={},
+            syscall_log=[
+                SyscallRecord(request={"tool_name": f"step{i}"}, response=f"r{i}")
+                for i in range(5)
+            ],
+            result="done",
+        )
+
+        forked = cp.fork(at_step=3)
+
+        assert len(forked.syscall_log) == 3
+        assert forked.syscall_log[0].request["tool_name"] == "step0"
+        assert forked.syscall_log[2].request["tool_name"] == "step2"
+        assert forked.status == "RUNNING"
+        assert forked.result is None
+        assert forked.pid == "test-1::fork-3"
+
+    def test_fork_is_deep_copy(self):
+        from castor.models.checkpoint import SyscallRecord
+
+        cp = AgentCheckpoint(
+            pid="test-1",
+            status="COMPLETED",
+            agent_function_name="agent",
+            capabilities={},
+            syscall_log=[
+                SyscallRecord(request={"tool_name": "a"}, response="r")
+            ],
+            result="done",
+        )
+
+        forked = cp.fork(at_step=1)
+        forked.syscall_log[0].response = "modified"
+
+        # Original not affected
+        assert cp.syscall_log[0].response == "r"
+
+    def test_fork_at_zero(self):
+        cp = AgentCheckpoint(
+            pid="test-1",
+            status="COMPLETED",
+            agent_function_name="agent",
+            capabilities={},
+            syscall_log=[],
+            result="done",
+        )
+
+        forked = cp.fork(at_step=0)
+        assert len(forked.syscall_log) == 0
+        assert forked.status == "RUNNING"
+
+    def test_fork_invalid_step_raises(self):
+        import pytest
+
+        cp = AgentCheckpoint(
+            pid="test-1",
+            status="COMPLETED",
+            agent_function_name="agent",
+            capabilities={},
+            syscall_log=[],
+        )
+
+        with pytest.raises(ValueError, match="out of range"):
+            cp.fork(at_step=5)
+
+        with pytest.raises(ValueError, match="out of range"):
+            cp.fork(at_step=-1)
+
+    def test_fork_clears_preemption_fields(self):
+        cp = AgentCheckpoint(
+            pid="test-1",
+            status="PREEMPTED",
+            agent_function_name="agent",
+            capabilities={},
+            preemption_reason="timeout",
+            preemption_payload={"x": 1},
+            partial_work="partial",
+            pending_hitl={"tool_name": "t"},
+        )
+
+        forked = cp.fork(at_step=0)
+        assert forked.preemption_reason is None
+        assert forked.preemption_payload is None
+        assert forked.partial_work is None
+        assert forked.pending_hitl is None
