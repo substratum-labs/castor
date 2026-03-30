@@ -10,7 +10,6 @@ from typing import Any
 from castor.capability.manager import CapabilityManager
 from castor.gate.registry import ToolRegistry, default_registry
 from castor.gate.validator import SyscallGate
-from castor.kernel.experience import Lesson, extract_lessons
 from castor.kernel.journal import InMemoryJournal
 from castor.kernel.summary import ExecutionSummary, scan_journal
 from castor.models.checkpoint import AgentCheckpoint
@@ -321,17 +320,6 @@ class Castor:
         if self._store is None:
             raise RuntimeError("No store configured -- pass store= to Castor()")
         return self._store.load(pid)
-
-    def learn(self, checkpoint: AgentCheckpoint) -> list[Lesson]:
-        """Extract lessons from a completed checkpoint's execution.
-
-        Analyzes the Journal for patterns, failures, strategies, and
-        tool creation events. Returns structured Lessons that can be
-        stored and applied to future tasks.
-
-        Use after ``run()`` to build the agent's experience memory.
-        """
-        return extract_lessons(checkpoint, self._gate)
 
     def scan(self, checkpoint: AgentCheckpoint) -> ExecutionSummary:
         """Scan a checkpoint's journal and produce an execution summary.
