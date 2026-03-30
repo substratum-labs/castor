@@ -32,6 +32,9 @@ class Castor:
         self,
         *,
         tools: list[Callable] | None = None,
+        llm: Callable | None = None,
+        llm_cost: float = 1.0,
+        llm_resource: str = "api",
         lodge: Any | None = None,
         agent_registry: Any | None = None,
         store: str | Any | None = None,
@@ -58,9 +61,23 @@ class Castor:
                             f"{item!r} is not a @castor_tool or LLMSyscall instance"
                         )
                     registry.register(meta)
+
+            # Auto-wrap LLM callable as a tracked syscall
+            if llm is not None:
+                llm_syscall = LLMSyscall(
+                    registry=registry,
+                    call_fn=llm,
+                    consumes=llm_resource,
+                    cost_per_use=llm_cost,
+                )
+                self._llm_syscall = llm_syscall
+            else:
+                self._llm_syscall = None
+
             self._gate = SyscallGate(registry)
         else:
             self._gate = SyscallGate(default_registry)
+            self._llm_syscall = None
 
         # -- Capability Manager --
         self._cap_mgr = capability_manager or CapabilityManager()
@@ -107,6 +124,11 @@ class Castor:
     def store(self) -> Any | None:
         """The configured checkpoint store, or None."""
         return self._store
+
+    @property
+    def llm(self) -> Any | None:
+        """The LLM syscall wrapper, or None if no llm= was provided."""
+        return self._llm_syscall
 
     # -- Internal helpers --
 

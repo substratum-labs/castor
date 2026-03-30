@@ -243,3 +243,47 @@ class TestCheckpointFork:
         assert forked.preemption_payload is None
         assert forked.partial_work is None
         assert forked.pending_hitl is None
+
+
+class TestCastorLLMParam:
+    def test_llm_param_registers_tool(self):
+        """Castor(llm=fn) auto-registers llm_inference tool."""
+
+        async def my_llm(**kwargs):
+            return "mock response"
+
+        kernel = Castor(
+            tools=[safe_tool],
+            llm=my_llm,
+        )
+        assert kernel.gate.has_tool("llm_inference")
+        assert kernel.llm is not None
+
+    def test_no_llm_param(self):
+        """Without llm=, no llm_inference tool."""
+        kernel = Castor(tools=[safe_tool])
+        assert not kernel.gate.has_tool("llm_inference")
+        assert kernel.llm is None
+
+    @pytest.mark.asyncio
+    async def test_llm_tracked_in_journal(self):
+        """LLM calls via llm= are recorded in the Journal."""
+
+        async def my_llm(**kwargs):
+            return "the answer is 42"
+
+        kernel = Castor(
+            tools=[safe_tool],
+            llm=my_llm,
+            llm_cost=2.0,
+        )
+
+        async def agent(proxy):
+            answer = await kernel.llm.infer(proxy, prompt="question")
+            result = await proxy.syscall("safe_tool", {"x": 5})
+            return f"{answer} + {result}"
+
+        cp = await kernel.run(agent, budgets={"api": 100.0})
+        assert cp.status == "COMPLETED"
+        assert len(cp.syscall_log) == 2
+        assert cp.syscall_log[0].request["tool_name"] == "llm_inference"
