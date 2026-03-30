@@ -22,6 +22,8 @@ class SyscallRecord(BaseModel):
     request: dict[str, Any]
     response: Any
     was_hitl: bool = False
+    needs_review: bool = False
+    review_reason: str | None = None
     child_checkpoint: AgentCheckpoint | None = None
 
 

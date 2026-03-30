@@ -1,7 +1,15 @@
 """Execution summary — scan a Journal for review after speculative execution.
 
 Generates a human-readable summary of what the agent did, flagging
-destructive or HITL-requiring steps for review.
+steps that need human review.
+
+Flagging uses two sources (in priority order):
+1. ``SyscallRecord.needs_review`` — set at execution time by the proxy
+   when a destructive/HITL tool runs in speculative mode. This is the
+   authoritative signal: the kernel decided this step needs review at
+   the moment of execution.
+2. Gate metadata lookup — fallback for records that predate the
+   ``needs_review`` field (backward compatibility).
 """
 
 from __future__ import annotations
@@ -41,16 +49,17 @@ class ExecutionSummary:
 
 def scan_journal(
     journal: JournalProtocol,
-    gate: GateProtocol,
+    gate: GateProtocol | None = None,
 ) -> ExecutionSummary:
     """Scan a completed Journal and produce an execution summary.
 
-    Flags steps involving destructive or HITL-requiring tools.
-    Auto-verifies everything else.
+    Flags steps that need human review. Uses the ``needs_review`` flag
+    on each record (set at execution time), with fallback to Gate
+    metadata lookup for backward compatibility.
 
     Args:
         journal: The completed execution journal.
-        gate: Gate for looking up tool metadata (destructive, requires_hitl).
+        gate: Optional Gate for fallback metadata lookup.
 
     Returns:
         ExecutionSummary with flagged steps and statistics.
@@ -62,18 +71,30 @@ def scan_journal(
         tool_name = record.request.get("tool_name", "unknown")
         tools_used[tool_name] = tools_used.get(tool_name, 0) + 1
 
-        # Check if this tool should be flagged
-        reason = _check_flag_reason(tool_name, gate)
-        if reason:
+        # Priority 1: needs_review flag set at execution time
+        if record.needs_review:
             flagged.append(
                 FlaggedStep(
                     index=idx,
                     tool_name=tool_name,
                     arguments=record.request.get("arguments", {}),
                     response=record.response,
-                    reason=reason,
+                    reason=record.review_reason or "flagged at execution time",
                 )
             )
+        # Priority 2: fallback to Gate metadata (backward compat)
+        elif gate is not None:
+            reason = _check_flag_reason(tool_name, gate)
+            if reason:
+                flagged.append(
+                    FlaggedStep(
+                        index=idx,
+                        tool_name=tool_name,
+                        arguments=record.request.get("arguments", {}),
+                        response=record.response,
+                        reason=reason,
+                    )
+                )
 
     total = len(journal)
     return ExecutionSummary(
@@ -87,7 +108,7 @@ def scan_journal(
 def _check_flag_reason(tool_name: str, gate: GateProtocol) -> str | None:
     """Return a flag reason if the tool needs review, else None."""
     if not gate.has_tool(tool_name):
-        return None  # kernel-internal or unknown — skip
+        return None
 
     try:
         meta: ToolMetadata = gate.get_tool_meta(tool_name)

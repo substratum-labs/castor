@@ -85,7 +85,7 @@ class TestExecutionSummary:
         assert summary.flagged_count == 1
         assert summary.auto_verified == 2
         assert summary.flagged[0].tool_name == "dangerous_tool"
-        assert summary.flagged[0].reason == "destructive tool"
+        assert "destructive" in summary.flagged[0].reason
         assert summary.tools_used == {"safe_tool": 2, "dangerous_tool": 1}
 
     @pytest.mark.asyncio
@@ -106,3 +106,45 @@ class TestExecutionSummary:
         assert summary.total_steps == 2
         assert summary.flagged_count == 0
         assert summary.auto_verified == 2
+
+
+class TestNeedsReviewFlag:
+    @pytest.mark.asyncio
+    async def test_destructive_tool_flagged_at_execution_time(self):
+        """In speculative mode, destructive records carry needs_review=True."""
+        from castor.gate.validator import SyscallGate
+
+        kernel = Castor(gate=SyscallGate(_registry))
+
+        async def agent(proxy):
+            await proxy.syscall("safe_tool", {"x": 1})
+            await proxy.syscall("dangerous_tool", {"x": 2})
+            return "done"
+
+        cp = await kernel.run(agent, budgets={"api": 100.0}, speculative=True)
+
+        # safe_tool record: not flagged
+        assert cp.syscall_log[0].needs_review is False
+        assert cp.syscall_log[0].review_reason is None
+
+        # dangerous_tool record: flagged at execution time
+        assert cp.syscall_log[1].needs_review is True
+        assert "destructive" in cp.syscall_log[1].review_reason
+
+    @pytest.mark.asyncio
+    async def test_non_speculative_no_flags(self):
+        """Non-speculative: no needs_review flag (HITL suspends instead)."""
+        from castor.gate.validator import SyscallGate
+
+        kernel = Castor(gate=SyscallGate(_registry))
+
+        async def agent(proxy):
+            await proxy.syscall("safe_tool", {"x": 1})
+            # dangerous_tool would suspend, so agent never reaches it
+            return "done"
+
+        cp = await kernel.run(agent, budgets={"api": 100.0}, speculative=False)
+
+        assert cp.status == "COMPLETED"
+        assert len(cp.syscall_log) == 1
+        assert cp.syscall_log[0].needs_review is False
