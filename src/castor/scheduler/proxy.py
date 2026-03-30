@@ -312,22 +312,13 @@ class SyscallProxy:
             },
         )
 
-        # Flag destructive ops for post-hoc review in speculative mode
-        review = False
-        review_reason = None
-        if self._speculative and tool_meta.destructive:
-            review = True
-            review_reason = "destructive tool (speculative mode)"
-        elif self._speculative and tool_meta.requires_hitl:
-            review = True
-            review_reason = "requires HITL (speculative mode)"
-
+        # Kernel decided whether this step needs review (via Allow decision)
         self._append_record(
             SyscallRecord(
                 request=request,
                 response=result,
-                needs_review=review,
-                review_reason=review_reason,
+                needs_review=decision.needs_review,
+                review_reason=decision.review_reason,
             )
         )
         return self._wrap_if_needed(tool_name, result)

@@ -65,6 +65,8 @@ class Allow:
     validated_args: dict[str, Any]
     tool_meta: ToolMetadata
     cost: float  # 0.0 means no budget tracking for this tool
+    needs_review: bool = False
+    review_reason: str | None = None
 
 
 SyscallDecision = ReplayHit | Suspend | Deny | Allow
@@ -157,11 +159,23 @@ def decide_syscall(
                 }
             )
 
-    # ── Phase 5: All clear ──
+    # ── Phase 5: All clear — determine review requirement ──
+    review = False
+    review_reason = None
+    if speculative:
+        if tool_meta.destructive:
+            review = True
+            review_reason = "destructive tool (speculative mode)"
+        elif tool_meta.requires_hitl:
+            review = True
+            review_reason = "requires HITL (speculative mode)"
+
     return Allow(
         validated_args=validated_args or {},
         tool_meta=tool_meta,
         cost=cost,
+        needs_review=review,
+        review_reason=review_reason,
     )
 
 
