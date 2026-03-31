@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 from castor.capability.manager import CapabilityManager
-from castor.gate.registry import ToolRegistry, default_registry
+from castor.gate.registry import ToolMetadata, ToolRegistry, default_registry
 from castor.gate.validator import SyscallGate
 from castor.kernel.journal import InMemoryJournal
 from castor.kernel.summary import ExecutionSummary, scan_journal
@@ -32,6 +32,7 @@ class Castor:
         self,
         *,
         tools: list[Callable] | None = None,
+        destructive: list[str] | None = None,
         llm: Callable | None = None,
         llm_cost: float = 1.0,
         llm_resource: str = "api",
@@ -50,6 +51,7 @@ class Castor:
         elif tools is not None:
             from castor.llm.wrapper import LLMSyscall, StreamingLLMSyscall
 
+            destructive_set = set(destructive or [])
             registry = ToolRegistry()
             for item in tools:
                 if isinstance(item, (LLMSyscall, StreamingLLMSyscall)):
@@ -57,8 +59,15 @@ class Castor:
                 else:
                     meta = getattr(item, "_castor_metadata", None)
                     if meta is None:
-                        raise TypeError(
-                            f"{item!r} is not a @castor_tool or LLMSyscall instance"
+                        # Plain function — auto-wrap with ToolMetadata
+                        if not callable(item):
+                            raise TypeError(f"{item!r} is not callable")
+                        fn_name = getattr(item, "__name__", repr(item))
+                        is_destructive = fn_name in destructive_set
+                        meta = ToolMetadata.from_function(
+                            item,
+                            destructive=is_destructive,
+                            requires_hitl=is_destructive,
                         )
                     registry.register(meta)
 

@@ -287,3 +287,62 @@ class TestCastorLLMParam:
         assert cp.status == "COMPLETED"
         assert len(cp.syscall_log) == 2
         assert cp.syscall_log[0].request["tool_name"] == "llm_inference"
+
+
+class TestPlainFunctionRegistration:
+    def test_plain_function_auto_wrapped(self):
+        """Plain functions (no decorator) are auto-wrapped."""
+
+        async def my_tool(x: int) -> int:
+            return x * 2
+
+        kernel = Castor(tools=[my_tool])
+        assert kernel.gate.has_tool("my_tool")
+
+    def test_destructive_list(self):
+        """destructive= marks specified tools."""
+
+        async def read(path: str) -> str:
+            return "data"
+
+        async def delete(path: str) -> str:
+            return "deleted"
+
+        kernel = Castor(
+            tools=[read, delete],
+            destructive=["delete"],
+        )
+        assert kernel.gate.has_tool("read")
+        assert kernel.gate.has_tool("delete")
+
+        read_meta = kernel.gate.get_tool_meta("read")
+        delete_meta = kernel.gate.get_tool_meta("delete")
+
+        assert not read_meta.destructive
+        assert delete_meta.destructive
+
+    def test_mixed_decorated_and_plain(self):
+        """Decorated and plain functions can coexist."""
+
+        async def plain_tool(x: int) -> int:
+            return x
+
+        kernel = Castor(tools=[safe_tool, plain_tool])
+        assert kernel.gate.has_tool("safe_tool")
+        assert kernel.gate.has_tool("plain_tool")
+
+    @pytest.mark.asyncio
+    async def test_plain_function_executes(self):
+        """Plain function tools actually work in agent execution."""
+
+        async def double(x: int) -> int:
+            return x * 2
+
+        kernel = Castor(tools=[double])
+
+        async def agent(proxy):
+            return await proxy.syscall("double", {"x": 21})
+
+        cp = await kernel.run(agent)
+        assert cp.status == "COMPLETED"
+        assert cp.result == 42
