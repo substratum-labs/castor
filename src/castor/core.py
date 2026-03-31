@@ -56,6 +56,19 @@ class Castor:
             for item in tools:
                 if isinstance(item, (LLMSyscall, StreamingLLMSyscall)):
                     registry.register(item._metadata)
+                elif isinstance(item, tuple) and len(item) == 2:
+                    # (name, func) tuple — register with explicit name
+                    name, func = item
+                    if not callable(func):
+                        raise TypeError(f"{func!r} is not callable")
+                    is_destructive = name in destructive_set
+                    meta = ToolMetadata.from_function(
+                        func,
+                        destructive=is_destructive,
+                        requires_hitl=is_destructive,
+                    )
+                    meta.tool_name = name
+                    registry.register(meta)
                 else:
                     meta = getattr(item, "_castor_metadata", None)
                     if meta is None:
