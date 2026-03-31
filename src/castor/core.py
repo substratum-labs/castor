@@ -44,7 +44,13 @@ class Castor:
         default_budgets: dict[str, float] | None = None,
         auto_budget: float | None = None,
         structured_results: bool = False,
+        roche: bool | dict[str, Any] | None = None,
     ) -> None:
+        # -- Roche sandbox integration --
+        if roche is not None:
+            roche_tools = self._init_roche(roche)
+            tools = (tools or []) + roche_tools
+
         # -- Gate (tool validation + execution) --
         if gate is not None:
             self._gate = gate
@@ -129,6 +135,27 @@ class Castor:
                 self._store = CheckpointStore(store)
             else:
                 self._store = store
+
+    @staticmethod
+    def _init_roche(roche: bool | dict[str, Any]) -> list[Callable]:
+        """Initialize Roche sandbox tools.
+
+        Args:
+            roche: True for defaults, or a dict of kwargs for RocheCastorBridge.
+
+        Returns:
+            List of @castor_tool-decorated functions.
+        """
+        try:
+            from roche_sandbox.castor import roche_tools
+        except ImportError:
+            raise ImportError(
+                "Castor(roche=...) requires the 'roche-sandbox' package. "
+                "Install with: pip install roche-sandbox[castor]"
+            ) from None
+
+        kwargs = roche if isinstance(roche, dict) else {}
+        return roche_tools(**kwargs)
 
     # -- Public properties --
 
