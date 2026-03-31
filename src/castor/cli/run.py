@@ -4,50 +4,48 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import importlib.util
 import sys
 from collections.abc import Callable
 from pathlib import Path
 
 
-def load_agent_function(agent_spec: str) -> Callable:
-    """Load an agent function from a file path, optionally with :func_name.
+def load_function(spec: str) -> Callable:
+    """Load a function from a 'module:func' or 'file.py:func' spec.
 
-    Resolution order for convention mode (no :func_name):
-    1. Look for 'agent' function
-    2. Look for 'main' function
-    3. Fail with helpful error
-
-    Args:
-        agent_spec: Path like "agent.py" or "agent.py:my_func"
+    Supports:
+      - 'module.path:func_name' — importlib-based
+      - 'file.py:func_name' — file-based
+      - 'file.py' — convention lookup (agent, then main)
     """
-    if ":" in agent_spec:
-        file_path, func_name = agent_spec.rsplit(":", 1)
+    if ":" in spec:
+        module_path, func_name = spec.rsplit(":", 1)
     else:
-        file_path = agent_spec
+        module_path = spec
         func_name = None
 
-    path = Path(file_path).resolve()
-    if not path.exists():
-        print(f"Error: file {file_path!r} not found.", file=sys.stderr)
-        sys.exit(1)
-
-    # Load module from file path
-    spec = importlib.util.spec_from_file_location("_castor_agent_module", path)
-    if spec is None or spec.loader is None:
-        print(f"Error: cannot load {file_path!r} as Python module.", file=sys.stderr)
-        sys.exit(1)
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Try as file path first
+    path = Path(module_path)
+    if path.suffix == ".py" and path.exists():
+        module = _load_module_from_file(path)
+    else:
+        # Try as Python module path
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError:
+            # Maybe it's a file without .py suffix?
+            path_py = Path(f"{module_path}.py")
+            if path_py.exists():
+                module = _load_module_from_file(path_py)
+            else:
+                print(f"Error: cannot import {module_path!r}.", file=sys.stderr)
+                sys.exit(1)
 
     if func_name:
         fn = getattr(module, func_name, None)
         if fn is None:
-            print(
-                f"Error: function {func_name!r} not found in {file_path}.",
-                file=sys.stderr,
-            )
+            print(f"Error: {func_name!r} not found in {module_path}.", file=sys.stderr)
             sys.exit(1)
         return fn
 
@@ -58,11 +56,26 @@ def load_agent_function(agent_spec: str) -> Callable:
             return fn
 
     print(
-        f"Error: no 'agent' or 'main' function found in {file_path}. "
-        f"Use {file_path}:function_name to specify explicitly.",
+        f"Error: no 'agent' or 'main' function found in {module_path}. "
+        f"Use {module_path}:func_name to specify explicitly.",
         file=sys.stderr,
     )
     sys.exit(1)
+
+
+load_agent_function = load_function  # backward compat
+
+
+def _load_module_from_file(path: Path):
+    """Load a Python module from a file path."""
+    resolved = path.resolve()
+    spec = importlib.util.spec_from_file_location("_castor_agent_module", resolved)
+    if spec is None or spec.loader is None:
+        print(f"Error: cannot load {path!r} as Python module.", file=sys.stderr)
+        sys.exit(1)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def parse_budgets(budget_args: list[str] | None) -> dict[str, float] | None:
@@ -89,27 +102,55 @@ def parse_budgets(budget_args: list[str] | None) -> dict[str, float] | None:
 
 def cmd_run(args: argparse.Namespace) -> None:
     """Execute the 'castor run' command."""
-    agent_fn = load_agent_function(args.agent)
+    agent_fn = load_function(args.agent)
     budgets = parse_budgets(args.budget)
+
+    # Load tool functions
+    tools = None
+    if args.tools:
+        tools = [load_function(t) for t in args.tools]
+
+    # Load LLM function
+    llm = None
+    if args.llm:
+        llm = load_function(args.llm)
 
     from castor.core import Castor
 
     store_uri = getattr(args, "store", None)
     kernel = Castor(
+        tools=tools,
+        destructive=args.destructive if args.destructive else None,
+        llm=llm,
         store=store_uri,
         default_budgets=budgets,
     )
 
-    if args.hitl == "interactive":
+    speculative = getattr(args, "speculative", False)
+
+    if args.hitl == "interactive" and not speculative:
         from castor.hitl_policies import interactive
 
         cp = asyncio.run(
             kernel.run_until_complete(agent_fn, budgets=budgets, on_hitl=interactive)
         )
     else:
-        cp = asyncio.run(kernel.run(agent_fn, budgets=budgets))
+        cp = asyncio.run(kernel.run(agent_fn, budgets=budgets, speculative=speculative))
 
+    # Output
     print(f"\nPID:    {cp.pid}")
     print(f"Status: {cp.status}")
     if cp.result is not None:
-        print(f"Result: {cp.result}")
+        result_str = str(cp.result)[:200]
+        print(f"Result: {result_str}")
+
+    # Execution summary for speculative mode
+    if speculative and cp.status == "COMPLETED":
+        summary = kernel.scan(cp)
+        print("\nExecution Summary:")
+        print(f"  Total steps:    {summary.total_steps}")
+        print(f"  Auto-verified:  {summary.auto_verified}")
+        print(f"  Flagged:        {summary.flagged_count}")
+        if summary.flagged:
+            for f in summary.flagged:
+                print(f"    Step {f.index}: {f.tool_name} — {f.reason}")

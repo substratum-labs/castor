@@ -45,15 +45,36 @@ def main() -> None:
         help="Agent module path (e.g. agent.py or agent.py:func)",
     )
     run_p.add_argument(
+        "--tool",
+        action="append",
+        dest="tools",
+        help="Tool function path as module:func (repeatable)",
+    )
+    run_p.add_argument(
+        "--destructive",
+        action="append",
+        default=[],
+        help="Mark a tool name as destructive (repeatable)",
+    )
+    run_p.add_argument(
+        "--llm",
+        help="LLM function path as module:func",
+    )
+    run_p.add_argument(
         "--budget",
         action="append",
         help="Budget as key=value (repeatable)",
     )
     run_p.add_argument(
+        "--speculative",
+        action="store_true",
+        help="Run in speculative mode (skip HITL, review after)",
+    )
+    run_p.add_argument(
         "--hitl",
         choices=["auto", "interactive"],
         default="auto",
-        help="HITL policy",
+        help="HITL policy (ignored if --speculative)",
     )
     run_p.add_argument(
         "--store",
