@@ -9,9 +9,9 @@
   <img src="assets/security_levels.png" alt="Castor: Same agent, three security levels" width="900">
 </p>
 
-**The secure execution layer for AI agents.** Budgets that cap spending. Human approval when limits are reached. Pause anywhere, resume later, replay deterministically.
+**The secure execution layer for AI agents.** Three levels of protection — from human approval on every action, to full-speed speculative execution with post-hoc review, to time-travel rollback when things go wrong.
 
-Castor intercepts every tool call your agent makes, enforces resource limits, and suspends for human review when budgets run out. Your agent's business logic stays untouched. It's not a framework; it's the layer underneath.
+Your agent's code stays untouched. Castor wraps your existing tools, tracks every action, and enforces safety — without your agent knowing it's there.
 
 ---
 
@@ -23,63 +23,122 @@ pip install castor-kernel
 
 ```python
 import asyncio
-from castor import Castor, castor_tool
-from castor.lib import tool, budget
+from castor import Castor
+from castor.lib import tool
 
-# 1. Define tools: declare what costs money and what's dangerous
-@castor_tool(consumes="api", cost_per_use=1)    # each call deducts 1 from "api" budget
+# Your existing tools — plain functions, no decorators needed
 async def search(query: str) -> list[str]:
     return [f"Result for: {query}"]
 
-@castor_tool(consumes="disk", cost_per_use=1, destructive=True)  # deducts 1, suspends when budget exhausted
 async def delete_file(path: str) -> str:
     return f"Deleted {path}"
 
-# 2. Write your agent (plain async function, no special base class)
-async def my_agent() -> str:
+# Your agent — doesn't know about Castor
+async def my_agent():
     results = await tool("search", query="old logs")
-    await tool("delete_file", path="/tmp/old1")  # auto-executes if budget allows
+    await tool("delete_file", path="/tmp/old1")
     await tool("delete_file", path="/tmp/old2")
-    return f"Cleaned up old logs"
+    return "Cleaned up"
 
-# 3. Run with a budget (or use auto_budget=100 to infer limits from tool metadata)
+# Operator wraps tools with Castor — one place, no code changes
 async def main():
-    kernel = Castor(tools=[search, delete_file])
-    cp = await kernel.run(my_agent, budgets={"api": 10, "disk": 3})  # max 10 searches, 3 deletions
+    kernel = Castor(
+        tools=[search, delete_file],
+        destructive=["delete_file"],       # mark dangerous tools
+        budgets={"api": 10, "disk": 3},    # cap spending
+    )
 
-    print(cp.status)  # SUSPENDED_FOR_HITL, waiting for human
+    cp = await kernel.run(my_agent)
+    # delete_file is destructive → Castor suspends for approval
+    print(cp.status)  # "SUSPENDED_FOR_HITL"
 
-    # 4. Human approves, then resume from where it stopped
-    await kernel.approve(cp)
-    cp = await kernel.run(my_agent, checkpoint=cp)
+    await kernel.approve(cp)               # human approves
+    cp = await kernel.run(my_agent, checkpoint=cp)  # resume from where it paused
     print(cp.result)
 
 asyncio.run(main())
 ```
 
-The agent calls `delete_file`, a destructive tool. Within budget, it auto-executes. When the budget runs out, Castor suspends execution, saves state, and waits for human approval. The kernel then replays from the top: cached responses for everything already executed, live execution from the suspension point. The agent doesn't know it was paused.
+The agent calls `delete_file`. Castor sees it's destructive, suspends, waits for human approval. After approval, it replays from checkpoint — cached results for everything already done, live execution from the pause point. **The agent doesn't know it was paused.**
+
+## 🛡️ Three Levels of Protection
+
+### Level 1: HITL — Human approves every dangerous action
+
+```python
+cp = await kernel.run(my_agent, budgets={"api": 10})
+# → destructive tools pause for approval, safe tools run immediately
+```
+
+### Level 2: Speculative — Full speed, review after
+
+```python
+cp = await kernel.run(my_agent, speculative=True)
+summary = kernel.scan(cp)
+# → 23 steps, 21 auto-verified, 2 flagged for review
+```
+
+Agent runs without interruption. Every destructive operation is flagged with `needs_review` — the kernel decides at execution time, not after. You review the flagged steps, approve or reject.
+
+### Level 3: Time-Travel — Rewind and fix mistakes
+
+```python
+# Agent finished but Step 5 was wrong
+forked = cp.fork(at_step=5)
+cp2 = await kernel.run(my_agent, checkpoint=forked)
+# → Steps 1-4 replay from cache (free). Steps 5+ re-execute.
+```
+
+Don't re-run the whole thing. Rewind to the mistake, fix it, fork a new timeline. Cached steps cost nothing — no re-execution, no re-billing.
+
+Run `uv run python examples/security_levels.py` to see all three levels on the same task.
 
 ## 💡 Philosophy
 
-Agent frameworks give LLMs tools. They don't control how those tools are used. You can add guardrails (wrappers, hooks, approval flows), but the agent still owns execution. The guardrails are advisory.
+Agent frameworks give LLMs tools. They don't control how those tools are used. Guardrails are advisory — the agent still owns execution.
 
-Castor inverts this. **The agent doesn't call tools. It requests them.** Every side effect is a syscall that passes through a kernel. The kernel validates, budgets, gates, and logs before anything executes. This makes Castor a secure execution layer.
-
-But Castor is more than security. It's a **microkernel** that borrows from operating systems to give agents capabilities they can't get from guardrails alone: deterministic replay, process checkpointing, and context memory management.
+Castor inverts this. **The agent doesn't call tools. It requests them.** Every side effect is a syscall that passes through a kernel. The kernel validates, budgets, gates, and logs before anything executes.
 
 | | OS Concept | Castor Analog |
 |:---:|---|---|
-| 🏗️ | User / Kernel space | LLM agent / Castor engine |
-| 📞 | System calls | `proxy.syscall()` / `tool()` |
+| 🏗️ | User / Kernel space | Agent code / Castor kernel |
+| 📞 | System calls | `tool()` / `proxy.syscall()` |
 | 🎟️ | Capabilities | Depletable budget tokens |
-| ⏯️ | Process scheduling | Checkpoint/replay with HITL |
+| ⏯️ | Process checkpointing | Fork, replay, time-travel |
 | 🧠 | Virtual memory | Context window MMU |
 
-Four subsystems handle these concerns: [Gate](https://substratum-labs.github.io/castor-docs/architecture/overview) (syscall validation), [Scheduler](https://substratum-labs.github.io/castor-docs/architecture/checkpoint-replay) (checkpoint/replay), [Capability Manager](https://substratum-labs.github.io/castor-docs/architecture/capability-model) (budgets), and [MMU](https://substratum-labs.github.io/castor-docs/architecture/mmu) (context memory). Everything else (policy, tools, agents) lives in user space.
+Like Linux, your program (agent) uses libc (`castor.lib`) and never touches the kernel directly. The operator configures security policy. Three roles, fully separated:
+
+```
+Tool developer:  writes plain functions (no Castor knowledge)
+Agent developer: uses castor.lib.tool() (no kernel imports)
+Operator:        Castor(tools=, destructive=, budgets=)
+```
+
+## 🔧 CLI
+
+Run agents from the command line — like a shell for AI agents:
+
+```bash
+castor run agent.py:main \
+    --tool tools.py:search \
+    --tool tools.py:delete_file --destructive \
+    --budget api=50 \
+    --speculative
+```
+
+Agent and tool code have zero Castor knowledge. The operator configures everything via CLI flags.
+
+```bash
+castor ps                              # list agents
+castor inspect <pid>                   # view checkpoint
+castor approve <pid>                   # approve pending action
+castor reject <pid> --reason "..."     # reject with feedback
+```
 
 ## 🛡️ Guard Any Framework
 
-Already using an agent framework? Castor works as a guard layer. Override your framework's tool execution hook, add budget + HITL, done.
+Already using an agent framework? Castor works as a guard layer.
 
 <details>
 <summary>LangChain / LangGraph</summary>
@@ -99,8 +158,8 @@ async def castor_guard(request, execute):
     name = request.tool_call["name"]
     p = policies.get(name, {})
     if p.get("resource"):
-        cap.deduct(caps, p["resource"], p["cost"])        # budget
-    if p.get("destructive"):                               # HITL
+        cap.deduct(caps, p["resource"], p["cost"])
+    if p.get("destructive"):
         if input(f"Allow {name}? [y/n] ").strip() != "y":
             raise RuntimeError(f"{name} rejected")
     return await execute(request)
@@ -125,93 +184,18 @@ def castor_hook(context):
     name, args = context.tool_name, context.tool_input
     p = policies.get(name, {})
     if p.get("resource"):
-        cap.deduct(caps, p["resource"], p["cost"])        # budget
-    if p.get("destructive"):                               # HITL
+        cap.deduct(caps, p["resource"], p["cost"])
+    if p.get("destructive"):
         if input(f"Allow {name}? [y/n] ").strip() != "y":
-            return False                                   # block
-    return None                                            # proceed
+            return False
+    return None
 
 register_before_tool_call_hook(castor_hook)
 ```
 
 </details>
 
-Same pattern for any framework: intercept, deduct, gate, delegate. See [`examples/framework_guards/`](examples/framework_guards/) for 7 frameworks including smolagents, pydantic-ai, OpenAI Agents SDK, AutoGen, and Google ADK.
-
-## 🔧 Also Works As
-
-<details>
-<summary>CLI: run agents from the command line</summary>
-
-```bash
-castor run agent.py --budget api=50
-```
-
-```bash
-castor ps                          # list agents
-castor inspect <pid>               # view checkpoint state
-castor approve <pid>               # approve pending action
-castor reject <pid> --reason "..."  # reject with feedback
-castor modify <pid> --feedback "..." # modify with guidance
-```
-
-</details>
-
-<details>
-<summary>MCP Server: guard any MCP-compatible agent</summary>
-
-```python
-# tools.py
-from castor import castor_tool
-
-@castor_tool(consumes="api", cost_per_use=1.0)
-async def search(query: str) -> list[str]:
-    return [f"Result for: {query}"]
-
-@castor_tool(consumes="disk", destructive=True)
-def delete_files(paths: list[str]) -> int:
-    return len(paths)
-```
-
-```bash
-castor-mcp --tools-module tools
-```
-
-Or add to Claude Desktop:
-
-```json
-{
-  "mcpServers": {
-    "castor": {
-      "command": "castor-mcp",
-      "args": ["--tools-module", "tools"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary>SyscallProxy: direct proxy for streaming, preemption, sub-agents</summary>
-
-```python
-from castor import Castor, castor_tool, SyscallProxy
-
-@castor_tool(consumes="api", cost_per_use=1.0)
-async def search(query: str) -> list[str]:
-    return [f"Result for: {query}"]
-
-async def my_agent(proxy: SyscallProxy) -> str:
-    results = await proxy.search(query="hello")
-    remaining = proxy.capabilities["api"].remaining
-    return f"Found: {results} ({remaining} budget left)"
-
-kernel = Castor(tools=[search])
-cp = await kernel.run(my_agent, budgets={"api": 50.0})
-```
-
-</details>
+Same pattern for any framework: intercept, deduct, gate, delegate.
 
 ## 🔒 Security Scope
 
