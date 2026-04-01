@@ -138,64 +138,43 @@ castor reject <pid> --reason "..."     # reject with feedback
 
 ## 🛡️ Guard Any Framework
 
-Already using an agent framework? Castor works as a guard layer.
-
-<details>
-<summary>LangChain / LangGraph</summary>
+Already using an agent framework? Pass your tools through Castor. Your framework runs the agent loop, Castor guards the tool calls.
 
 ```python
-from langgraph.prebuilt import ToolNode
-from castor.capability.manager import CapabilityManager
+from castor import Castor
+from castor.lib import tool
 
-cap = CapabilityManager()
-caps = cap.create_capabilities({"api": 10, "disk": 3})
-policies = {
-    "web_search":   {"resource": "api",  "cost": 1},
-    "delete_file":  {"resource": "disk", "cost": 1, "destructive": True},
-}
+# ── Your existing tools (unchanged) ──
 
-async def castor_guard(request, execute):
-    name = request.tool_call["name"]
-    p = policies.get(name, {})
-    if p.get("resource"):
-        cap.deduct(caps, p["resource"], p["cost"])
-    if p.get("destructive"):
-        if input(f"Allow {name}? [y/n] ").strip() != "y":
-            raise RuntimeError(f"{name} rejected")
-    return await execute(request)
+async def web_search(query: str) -> str:
+    return f"Results for: {query}"          # your real search implementation
 
-node = ToolNode(tools=tools, awrap_tool_call=castor_guard)
+async def delete_file(path: str) -> str:
+    os.remove(path)                         # your real file deletion
+    return f"Deleted {path}"
+
+# ── Your existing agent logic (unchanged) ──
+
+async def my_agent():
+    results = await tool("web_search", query="old temp files")
+    for path in parse_paths(results):
+        await tool("delete_file", path=path)
+    return "Cleanup done"
+
+# ── Operator adds Castor (one place, no changes to above) ──
+
+kernel = Castor(
+    tools=[web_search, delete_file],
+    destructive=["delete_file"],
+    budgets={"api": 20, "disk": 5},
+)
+
+cp = await kernel.run(my_agent, speculative=True)
+summary = kernel.scan(cp)
+print(f"{summary.total_steps} steps, {summary.flagged_count} need review")
 ```
 
-</details>
-
-<details>
-<summary>CrewAI</summary>
-
-```python
-from crewai.hooks import register_before_tool_call_hook
-from castor.capability.manager import CapabilityManager
-
-cap = CapabilityManager()
-caps = cap.create_capabilities({"api": 10, "disk": 3})
-policies = { ... }  # same as above
-
-def castor_hook(context):
-    name, args = context.tool_name, context.tool_input
-    p = policies.get(name, {})
-    if p.get("resource"):
-        cap.deduct(caps, p["resource"], p["cost"])
-    if p.get("destructive"):
-        if input(f"Allow {name}? [y/n] ").strip() != "y":
-            return False
-    return None
-
-register_before_tool_call_hook(castor_hook)
-```
-
-</details>
-
-Same pattern for any framework: intercept, deduct, gate, delegate.
+This works with any framework — LangChain, CrewAI, smolagents, pydantic-ai, or your own code. The only requirement: tool calls go through `castor.lib.tool()`. The agent loop is yours.
 
 ## 🔒 Security Scope
 
