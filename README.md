@@ -6,7 +6,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 <p align="center">
-  <img src="assets/demo.gif" alt="Castor Demo: HITL modify flow" width="800">
+  <img src="assets/security_levels.png" alt="Castor: Same agent, three security levels" width="900">
 </p>
 
 **The secure execution layer for AI agents.** Budgets that cap spending. Human approval when limits are reached. Pause anywhere, resume later, replay deterministically.
