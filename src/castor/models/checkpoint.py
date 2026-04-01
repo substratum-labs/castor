@@ -83,8 +83,7 @@ class AgentCheckpoint(BaseModel):
         """
         if at_step < 0 or at_step > len(self.syscall_log):
             raise ValueError(
-                f"at_step={at_step} out of range "
-                f"(0..{len(self.syscall_log)})"
+                f"at_step={at_step} out of range (0..{len(self.syscall_log)})"
             )
         forked = self.model_copy(deep=True)
         forked.syscall_log = forked.syscall_log[:at_step]

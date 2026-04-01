@@ -183,9 +183,7 @@ class TestCheckpointFork:
             status="COMPLETED",
             agent_function_name="agent",
             capabilities={},
-            syscall_log=[
-                SyscallRecord(request={"tool_name": "a"}, response="r")
-            ],
+            syscall_log=[SyscallRecord(request={"tool_name": "a"}, response="r")],
             result="done",
         )
 
