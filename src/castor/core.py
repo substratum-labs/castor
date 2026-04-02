@@ -41,6 +41,7 @@ class Castor:
         store: str | Any | None = None,
         gate: GateProtocol | None = None,
         capability_manager: BudgetProtocol | None = None,
+        budgets: dict[str, float] | None = None,
         default_budgets: dict[str, float] | None = None,
         auto_budget: float | None = None,
         structured_results: bool = False,
@@ -121,7 +122,7 @@ class Castor:
                 self._agent_registry = default_agent_registry
             else:
                 self._agent_registry = None
-        self._default_budgets = default_budgets
+        self._default_budgets = budgets or default_budgets
         self._auto_budget = auto_budget
         self._structured_results = structured_results
         self._hitl = HITLHandler()

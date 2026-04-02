@@ -23,7 +23,7 @@ pip install castor-kernel
 
 ```python
 import asyncio
-from castor import Castor
+from castor import Castor, auto_approve
 from castor.lib import tool
 
 # Your existing tools — plain functions, no decorators needed
@@ -40,26 +40,25 @@ async def my_agent():
     await tool("delete_file", path="/tmp/old2")
     return "Cleaned up"
 
-# Operator wraps tools with Castor — one place, no code changes
 async def main():
     kernel = Castor(
         tools=[search, delete_file],
         destructive=["delete_file"],       # mark dangerous tools
-        budgets={"api": 10, "disk": 3},    # cap spending
     )
 
-    cp = await kernel.run(my_agent)
-    # delete_file is destructive → Castor suspends for approval
-    print(cp.status)  # "SUSPENDED_FOR_HITL"
+    # Option A: auto-approve (for testing / trusted environments)
+    cp = await kernel.run_until_complete(my_agent, on_hitl=auto_approve)
+    print(cp.result)  # "Cleaned up"
 
-    await kernel.approve(cp)               # human approves
-    cp = await kernel.run(my_agent, checkpoint=cp)  # resume from where it paused
-    print(cp.result)
+    # Option B: speculative — full speed, review after
+    cp = await kernel.run(my_agent, speculative=True)
+    summary = kernel.scan(cp)
+    print(f"{summary.total_steps} steps, {summary.flagged_count} need review")
 
 asyncio.run(main())
 ```
 
-The agent calls `delete_file`. Castor sees it's destructive, suspends, waits for human approval. After approval, it replays from checkpoint — cached results for everything already done, live execution from the pause point. **The agent doesn't know it was paused.**
+`search` runs immediately (safe tool). `delete_file` is destructive — in default mode Castor suspends for human approval. In speculative mode it runs but flags the step for post-hoc review. **The agent doesn't know either way.**
 
 ## 🛡️ Three Levels of Protection
 
