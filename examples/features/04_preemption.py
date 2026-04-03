@@ -1,8 +1,5 @@
 """Demo 04 — Preemption: Cancel a streaming LLM mid-sentence.
 
-Level 2 (SyscallProxy) — uses the raw proxy API for full kernel control.
-See examples 06-08 for Level 1 (castor.lib) equivalents.
-
 Your agent is streaming tokens. A policy violation appears mid-sentence.
 Castor cancels instantly, saves partial work, and charges only for tokens consumed.
 
@@ -30,54 +27,24 @@ def _ok(text: str) -> None:
     print(f"  \033[32m[OK]\033[0m {text}")
 
 
-def _warn(text: str) -> None:
-    print(f"  \033[33m[!!]\033[0m {text}")
-
-
 def _err(text: str) -> None:
     print(f"  \033[31m[!!]\033[0m {text}")
 
 
 # ── 1. Fake streaming LLM ──
 
-# The LLM will generate a plan that includes a dangerous action mid-stream.
 DANGEROUS_RESPONSE = [
-    "Step 1:",
-    " Back up",
-    " the database.",
-    "\n",
-    "Step 2:",
-    " Validate",
-    " schema.",
-    "\n",
-    "Step 3:",
-    " Run",
-    " DELETE",
-    " /production",
-    "/data",
-    "\n",
-    "Step 4:",
-    " Send",
-    " notification.",
+    "Step 1:", " Back up", " the database.", "\n",
+    "Step 2:", " Validate", " schema.", "\n",
+    "Step 3:", " Run", " DELETE", " /production", "/data", "\n",
+    "Step 4:", " Send", " notification.",
 ]
 
 SAFE_RESPONSE = [
-    "Step 1:",
-    " Back up",
-    " the database.",
-    "\n",
-    "Step 2:",
-    " Validate",
-    " schema.",
-    "\n",
-    "Step 3:",
-    " Deploy",
-    " to staging.",
-    "\n",
-    "Step 4:",
-    " Run",
-    " integration",
-    " tests.",
+    "Step 1:", " Back up", " the database.", "\n",
+    "Step 2:", " Validate", " schema.", "\n",
+    "Step 3:", " Deploy", " to staging.", "\n",
+    "Step 4:", " Run", " integration", " tests.",
 ]
 
 _use_safe = False
@@ -88,7 +55,7 @@ async def fake_llm_stream(model: str, prompt: str):
     source = SAFE_RESPONSE if _use_safe else DANGEROUS_RESPONSE
     for token in source:
         yield token
-        await asyncio.sleep(0.01)  # simulate network latency
+        await asyncio.sleep(0.01)
 
 
 # ── 2. Set up kernel with content safety callback ──
@@ -121,6 +88,7 @@ kernel = Castor(tools=[llm])
 
 
 # ── 3. Define agent ──
+# Note: preemption context requires proxy-level access (Level 2 API).
 
 
 async def planning_agent(proxy: SyscallProxy) -> str:
@@ -164,7 +132,7 @@ async def main() -> None:
     # --- Resume: agent adapts based on preemption context ---
     _h("Resuming with safety context")
     checkpoint.status = "RUNNING"
-    _use_safe = True  # Switch to safe LLM response
+    _use_safe = True
 
     task2 = await kernel.run_async(planning_agent, checkpoint=checkpoint)
     _task_ref = task2

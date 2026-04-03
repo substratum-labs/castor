@@ -8,7 +8,7 @@ from castor.scheduler.agent_registry import (
 from castor.scheduler.hitl import HITLHandler
 from castor.scheduler.persistence import CheckpointNotFoundError, CheckpointStore
 from castor.scheduler.proxy import ReplayDivergenceError, SyscallProxy
-from castor.scheduler.runner import AgentRunner
+from castor.scheduler.runner import AgentRunner, default_runner_factory
 
 __all__ = [
     "AgentNotFoundError",
@@ -20,4 +20,5 @@ __all__ = [
     "ReplayDivergenceError",
     "SyscallProxy",
     "castor_agent",
+    "default_runner_factory",
 ]

@@ -8,27 +8,54 @@ Castor cages LLMs inside a deterministic execution engine with strongly-typed to
 
 ## Quick Start
 
+```bash
+pip install castor-kernel
+```
+
 ```python
-from castor import Castor, SyscallProxy, castor_tool
+import asyncio
+from castor import Castor, auto_approve
+from castor.lib import tool
 
-@castor_tool(consumes="api", cost_per_use=1.0, destructive=True)
-async def send_email(to: str, body: str) -> str:
-    return f"Sent to {to}"
+# Your existing tools -- plain functions, no decorators needed
+async def search(query: str) -> list[str]:
+    return [f"Result for: {query}"]
 
-async def agent(proxy: SyscallProxy) -> str:
-    result = await proxy.send_email(to="team@co.com", body="Hello")
-    return f"Done: {result}"
+async def delete_file(path: str) -> str:
+    return f"Deleted {path}"
 
-kernel = Castor()
-cp = await kernel.run(agent, budgets={"api": 10.0})
-# cp.status == "SUSPENDED_FOR_HITL" (destructive tool requires approval)
+# Your agent -- doesn't know about Castor
+async def my_agent():
+    results = await tool("search", query="old logs")
+    await tool("delete_file", path="/tmp/old1")
+    return "Cleaned up"
+
+async def main():
+    kernel = Castor(
+        tools=[search, delete_file],
+        destructive=["delete_file"],       # mark dangerous tools
+        budgets={"api": 10},
+    )
+
+    # HITL mode -- destructive tools pause for approval
+    cp = await kernel.run(my_agent)
+
+    # Speculative mode -- full speed, review after
+    cp = await kernel.run(my_agent, speculative=True)
+    summary = kernel.scan(cp)
+    print(f"{summary.total_steps} steps, {summary.flagged_count} need review")
+
+asyncio.run(main())
 ```
 
 ## Key Features
 
+- **Three Security Levels** -- HITL (human approves every action), Speculative (full speed + post-hoc review), Time-Travel (rewind and fix mistakes).
 - **Checkpoint/Replay** -- Crash recovery with zero tool re-execution. Agent state is a deterministic syscall log.
 - **Capability Budgets** -- Per-resource spending limits with graceful degradation when exhausted.
 - **Human-in-the-Loop** -- Suspend, approve/reject/modify, and resume with full replay safety.
+- **Speculative Execution** -- Agent runs without interruption; destructive ops flagged for review.
+- **Time-Travel** -- `cp.fork(at_step=5)` rewinds to step 5; cached steps cost nothing.
 - **Token-Level Preemption** -- Cancel streaming LLM calls mid-token with proportional billing.
 - **Multi-Agent** -- Spawn child agents with delegated budgets and HITL propagation.
 
@@ -42,6 +69,14 @@ cp = await kernel.run(agent, budgets={"api": 10.0})
 | **MMU** | `castor.mmu` | Context window memory management |
 | **Lib** | `castor.lib` | Agent developer standard library |
 | **CLI** | `castor.cli` | Command-line interface |
+
+## Three Levels of Protection
+
+| Level | Mode | How it works |
+|-------|------|--------------|
+| **L1** | HITL | `kernel.run(agent)` -- destructive tools pause for human approval |
+| **L2** | Speculative | `kernel.run(agent, speculative=True)` -- full speed, `kernel.scan(cp)` for post-hoc review |
+| **L3** | Time-Travel | `cp.fork(at_step=5)` -- rewind to mistake, re-execute from there |
 
 ## Two APIs
 

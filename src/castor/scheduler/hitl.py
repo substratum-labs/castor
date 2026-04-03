@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from castor.kernel.journal import InMemoryJournal
 from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
 from castor.protocols import (
@@ -9,6 +11,7 @@ from castor.protocols import (
     BudgetProtocol,
     GateProtocol,
     MMUProtocol,
+    RunnerProtocol,
 )
 
 
@@ -18,6 +21,12 @@ class HITLHandler:
     Three modes: approve (execute as-is), reject (block with feedback),
     modify (log feedback so LLM re-plans on replay).
     """
+
+    def __init__(
+        self,
+        runner_factory: Callable[..., RunnerProtocol] | None = None,
+    ) -> None:
+        self._runner_factory = runner_factory
 
     async def approve(
         self,
@@ -204,12 +213,18 @@ class HITLHandler:
         """Replay a child agent after its HITL was resolved."""
         import asyncio
 
-        from castor.scheduler.runner import AgentRunner
-
         agent_fn = agent_registry.get(child_cp.agent_function_name)
-        runner = AgentRunner(
-            gate, capability_manager, lodge=lodge, agent_registry=agent_registry
-        )
+
+        if self._runner_factory is not None:
+            runner = self._runner_factory(
+                gate, capability_manager, lodge=lodge, agent_registry=agent_registry
+            )
+        else:
+            from castor.scheduler.runner import AgentRunner
+
+            runner = AgentRunner(
+                gate, capability_manager, lodge=lodge, agent_registry=agent_registry
+            )
 
         try:
             child_cp = await runner.run(agent_fn, child_cp)

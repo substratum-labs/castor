@@ -6,9 +6,16 @@ Pydantic models that form the kernel's data layer. All models are serializable f
 
 ### AgentCheckpoint
 
+The core state object. Key methods:
+
+- `fork(at_step=N)` -- Create a new checkpoint rewound to step N for time-travel replay.
+- `budget_used(resource)` / `budget_remaining(resource)` -- Budget introspection.
+
 ::: castor.models.checkpoint.AgentCheckpoint
 
 ### SyscallRecord
+
+Each record includes a `needs_review` flag (set at execution time in speculative mode) and an optional `review_reason`.
 
 ::: castor.models.checkpoint.SyscallRecord
 

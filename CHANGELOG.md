@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.5.1 (2026-04-01)
+
+### Fixes
+
+- **`budgets=` alias** — `Castor(budgets={"api": 50})` now works as an alias for `default_budgets=` so the Quick Start example is copy-pasteable.
+
+## v0.5.0 (2026-03-31)
+
+### Features
+
+- **Speculative Execution** — `kernel.run(agent, speculative=True)` runs the agent without HITL interruptions. Destructive operations are flagged with `needs_review` at execution time for post-hoc review.
+- **Execution Summary** — `kernel.scan(cp)` produces an `ExecutionSummary` with `total_steps`, `auto_verified`, `flagged_count`, and per-tool usage stats.
+- **Time-Travel (Fork)** — `cp.fork(at_step=N)` creates a new checkpoint rewound to step N. Steps 1..N replay from cache (free), steps N+1.. re-execute.
+- **Plain functions in `Castor(tools=)`** — No `@castor_tool` decorator needed. Pass raw callables and Castor auto-wraps them with `ToolMetadata.from_function()`.
+- **`Castor(destructive=[...])`** — Mark tool names as destructive/HITL without decorators.
+- **`Castor(llm=callable)`** — Auto-wrap an LLM callable as a tracked syscall with configurable `llm_cost` and `llm_resource`.
+- **`Castor(roche=True)`** — One-line Roche sandbox integration. Requires `roche-sandbox[castor]` package.
+- **`(name, func)` tuples** — `Castor(tools=[("search", my_search_fn)])` for explicit tool naming.
+- **Enhanced CLI** — `castor run agent.py:main --tool tools.py:search --destructive --budget api=50 --speculative`.
+- **`needs_review` flag** — Set at execution time on `SyscallRecord`, not post-hoc. Authoritative signal for review.
+- **Journal protocol** — `JournalProtocol` and `InMemoryJournal` for swappable journal backends.
+- **Protocol interfaces** — `GateProtocol`, `BudgetProtocol`, `CheckpointStoreProtocol`, `JournalProtocol` as component boundaries.
+
+### Breaking Changes
+
+- Destructive tools now auto-execute within budget by default, suspending only on budget exhaustion (not on every call).
+
 ## v0.4.0 (2026-03-08)
 
 ### Features

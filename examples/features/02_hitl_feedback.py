@@ -1,8 +1,5 @@
 """Demo 02 — HITL Feedback: Approve, Reject, or Redirect your agent.
 
-Level 2 (SyscallProxy) — uses the raw proxy API for full kernel control.
-See examples 06-08 for Level 1 (castor.lib) equivalents.
-
 The agent proposes. The human disposes. The agent adapts.
 Three identical agents run with three different human decisions.
 
@@ -12,7 +9,8 @@ Run:
 
 import asyncio
 
-from castor import Castor, SyscallProxy, castor_tool
+from castor import Castor
+from castor.lib import tool
 
 # ── Output helpers ──
 
@@ -29,25 +27,17 @@ def _warn(text: str) -> None:
     print(f"  \033[33m[!!]\033[0m {text}")
 
 
-# ── 1. Register tools ──
+# ── 1. Define tools (plain functions) ──
 
 
-@castor_tool(consumes="api", cost_per_use=1.0)
 async def research(topic: str) -> str:
     return f"Findings on '{topic}': 3 key insights discovered"
 
 
-@castor_tool(
-    consumes="api",
-    cost_per_use=2.0,
-    destructive=True,
-    requires_hitl=True,
-)
 async def send_email(to: str, subject: str, body: str) -> str:
     return f"Email sent to {to}: '{subject}'"
 
 
-@castor_tool(consumes="api", cost_per_use=0.5)
 async def save_draft(title: str, content: str) -> str:
     return f"Draft saved: '{title}'"
 
@@ -55,10 +45,11 @@ async def save_draft(title: str, content: str) -> str:
 # ── 2. Define adaptive agent ──
 
 
-async def email_agent(proxy: SyscallProxy) -> str:
-    findings = await proxy.research(topic="Q4 results")
+async def email_agent() -> str:
+    findings = await tool("research", topic="Q4 results")
 
-    result = await proxy.send_email(
+    result = await tool(
+        "send_email",
         to="team@company.com",
         subject="Q4 Results Summary",
         body=f"Here is the full report. {findings}",
@@ -66,7 +57,8 @@ async def email_agent(proxy: SyscallProxy) -> str:
 
     # Handle rejection: save as draft instead
     if result.rejected:
-        draft = await proxy.save_draft(
+        draft = await tool(
+            "save_draft",
             title="Q4 Email Draft",
             content=f"Original email (rejected: {result.feedback}). {findings}",
         )
@@ -74,7 +66,8 @@ async def email_agent(proxy: SyscallProxy) -> str:
 
     # Handle modification: revise and resend
     if result.modified:
-        result = await proxy.send_email(
+        result = await tool(
+            "send_email",
             to="team@company.com, manager@company.com",
             subject="Q4 Results (Revised)",
             body=f"Brief summary per feedback: '{result.feedback}'. {findings}",
@@ -86,7 +79,11 @@ async def email_agent(proxy: SyscallProxy) -> str:
 
 # ── 3. Run three scenarios ──
 
-kernel = Castor(tools=[research, send_email, save_draft], structured_results=True)
+kernel = Castor(
+    tools=[research, send_email, save_draft],
+    destructive=["send_email"],
+    structured_results=True,
+)
 
 
 async def run_scenario(

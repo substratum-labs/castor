@@ -13,10 +13,10 @@ from castor.gate.validator import SyscallGate
 from castor.kernel.journal import InMemoryJournal
 from castor.kernel.summary import ExecutionSummary, scan_journal
 from castor.models.checkpoint import AgentCheckpoint
-from castor.protocols import BudgetProtocol, GateProtocol
+from castor.protocols import BudgetProtocol, GateProtocol, RunnerProtocol
 from castor.scheduler.hitl import HITLHandler
 from castor.scheduler.proxy import SyscallProxy
-from castor.scheduler.runner import AgentRunner
+from castor.scheduler.runner import default_runner_factory
 
 
 class Castor:
@@ -46,6 +46,7 @@ class Castor:
         auto_budget: float | None = None,
         structured_results: bool = False,
         roche: bool | dict[str, Any] | None = None,
+        runner_factory: Callable[..., RunnerProtocol] | None = None,
     ) -> None:
         # -- Roche sandbox integration --
         if roche is not None:
@@ -125,7 +126,8 @@ class Castor:
         self._default_budgets = budgets or default_budgets
         self._auto_budget = auto_budget
         self._structured_results = structured_results
-        self._hitl = HITLHandler()
+        self._runner_factory = runner_factory or default_runner_factory
+        self._hitl = HITLHandler(runner_factory=self._runner_factory)
 
         # -- Persistence --
         self._store = None
@@ -252,7 +254,7 @@ class Castor:
         if checkpoint is None:
             checkpoint = self._make_checkpoint(agent_fn, budgets, pid)
 
-        runner = AgentRunner(
+        runner = self._runner_factory(
             self._gate,
             self._cap_mgr,
             lodge=self._lodge,
@@ -418,7 +420,7 @@ class Castor:
         if checkpoint is None:
             checkpoint = self._make_checkpoint(agent_fn, budgets, pid)
 
-        runner = AgentRunner(
+        runner = self._runner_factory(
             self._gate,
             self._cap_mgr,
             lodge=self._lodge,
@@ -447,7 +449,7 @@ class CastorTask:
 
     def __init__(
         self,
-        runner: AgentRunner,
+        runner: RunnerProtocol,
         task: asyncio.Task,
         checkpoint: AgentCheckpoint,
     ) -> None:

@@ -30,6 +30,7 @@ from castor.protocols import (
     GateProtocol,
     JournalProtocol,
     MMUProtocol,
+    RunnerProtocol,
 )
 from castor.scheduler.agent_registry import (
     AgentNotFoundError,
@@ -43,7 +44,7 @@ from castor.scheduler.persistence import (
     MemoryCheckpointStore,
 )
 from castor.scheduler.proxy import SyscallProxy
-from castor.scheduler.runner import AgentRunner
+from castor.scheduler.runner import AgentRunner, default_runner_factory
 
 stable(Castor)
 stable(SyscallProxy)
@@ -74,6 +75,7 @@ stable(interactive)
 
 experimental(MMUProtocol)
 experimental(AgentRegistryProtocol)
+experimental(RunnerProtocol)
 experimental(MMU)
 experimental(CastorTask)
 experimental(LLMSyscall)
@@ -120,5 +122,7 @@ __all__ = [
     "castor_agent",
     "castor_tool",
     "default_agent_registry",
+    "default_runner_factory",
     "interactive",
+    "RunnerProtocol",
 ]

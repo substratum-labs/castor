@@ -149,3 +149,29 @@ class AgentRunner:
                 self._current_checkpoint.preemption_reason = reason
                 self._current_checkpoint.preemption_payload = payload
             self._task.cancel()
+
+
+def default_runner_factory(
+    gate: GateProtocol,
+    capability_manager: BudgetProtocol,
+    *,
+    lodge: MMUProtocol | None = None,
+    agent_registry: AgentRegistryProtocol | None = None,
+    structured_results: bool = False,
+    speculative: bool = False,
+    **kwargs: Any,
+) -> AgentRunner:
+    """Create an AgentRunner with standard parameters.
+
+    This is the default ``runner_factory`` used by ``Castor()`` when no
+    custom factory is provided.  Pollux (or other runtimes) can supply
+    their own factory that returns a different ``RunnerProtocol`` implementation.
+    """
+    return AgentRunner(
+        gate,
+        capability_manager,
+        lodge=lodge,
+        agent_registry=agent_registry,
+        structured_results=structured_results,
+        speculative=speculative,
+    )

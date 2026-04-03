@@ -41,7 +41,7 @@ from pathlib import Path
 
 import litellm
 from agent import research_agent
-from tools import register_tools
+from tools import make_tools
 from ui import (
     console,
     print_act_header,
@@ -51,10 +51,7 @@ from ui import (
     rich_interactive,
 )
 
-from castor import Castor, SyscallGate
-from castor.gate.registry import ToolRegistry
-from castor.llm.wrapper import LLMSyscall
-from castor.scheduler.proxy import SyscallProxy
+from castor import Castor
 
 # Suppress litellm's verbose logging by default.
 litellm.suppress_debug_info = True
@@ -72,30 +69,6 @@ async def call_llm(model: str, messages: list[dict]) -> str:
     """Call an LLM provider via LiteLLM (supports 100+ models)."""
     response = await litellm.acompletion(model=model, messages=messages)
     return response.choices[0].message.content
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Kernel setup
-# ─────────────────────────────────────────────────────────────────────
-
-
-def setup_kernel(
-    knowledge_base: Path,
-) -> tuple[Castor, LLMSyscall]:
-    """Create a Castor kernel with all tools + LLM registered."""
-    registry = ToolRegistry()
-    register_tools(registry, knowledge_base)
-
-    llm = LLMSyscall(
-        registry,
-        call_fn=call_llm,
-        consumes="api",
-        cost_per_use=2.0,
-        tool_name="llm_inference",
-    )
-
-    kernel = Castor(gate=SyscallGate(registry), structured_results=True)
-    return kernel, llm
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -135,11 +108,20 @@ async def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="castor_demo_") as tmpdir:
         kb_path = Path(tmpdir) / "knowledge_base"
-        kernel, llm = setup_kernel(kb_path)
+        tools = make_tools(kb_path)
 
-        # Build agent closure — captures llm, topic, model.
-        async def agent_fn(proxy: SyscallProxy) -> str:
-            return await research_agent(proxy, llm, topic, model)
+        kernel = Castor(
+            tools=tools,
+            destructive=["send_email"],
+            llm=call_llm,
+            llm_cost=2.0,
+            llm_resource="api",
+            structured_results=True,
+        )
+
+        # Build agent closure — captures topic, model.
+        async def agent_fn() -> str:
+            return await research_agent(topic, model)
 
         # ── Banner ──
         console.print()
@@ -201,7 +183,6 @@ async def main() -> None:
 
         # Deep-copy the checkpoint to simulate loading from persistence.
         saved_cp = copy.deepcopy(cp)
-        # Reset status to RUNNING so the runner replays from the log.
         saved_cp.status = "RUNNING"
         saved_cp.result = None
 

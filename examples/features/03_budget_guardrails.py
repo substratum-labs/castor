@@ -1,8 +1,5 @@
 """Demo 03 — Budget Guardrails: Your agent cannot overspend.
 
-Level 2 (SyscallProxy) — uses the raw proxy API for full kernel control.
-See examples 06-08 for Level 1 (castor.lib) equivalents.
-
 Set a budget. The agent stops itself when it runs out. No surprise bills.
 Shows automatic cost enforcement with graceful degradation.
 
@@ -12,7 +9,8 @@ Run:
 
 import asyncio
 
-from castor import Castor, SyscallProxy, castor_tool
+from castor import Castor, castor_tool
+from castor.lib import tool
 
 # ── Output helpers ──
 
@@ -31,7 +29,7 @@ def _budget_bar(label: str, used: float, total: float) -> str:
     return f"{color}[{bar}]\033[0m {used:.1f}/{total:.1f}"
 
 
-# ── 1. Register tools ──
+# ── 1. Define tools (with cost metadata for budget tracking) ──
 
 
 @castor_tool(consumes="api", cost_per_use=1.0)
@@ -55,12 +53,14 @@ TOPICS = [
 ]
 
 
-async def research_loop(proxy: SyscallProxy) -> str:
+async def research_loop() -> str:
+    from castor.lib import budget
+
     completed: list[str] = []
 
     for topic in TOPICS:
-        # Search
-        result = await proxy.search(query=topic)
+        # Search (costs 1.0 api)
+        result = await tool("search", query=topic)
         is_exhausted = (
             isinstance(result, dict)
             and result.get("status") == "INSUFFICIENT_CAPABILITY"
@@ -68,27 +68,24 @@ async def research_loop(proxy: SyscallProxy) -> str:
         if is_exhausted:
             print("    search    \033[31mINSUFFICIENT\033[0m")
             break
-        api_used = proxy.checkpoint.budget_used("api")
-        api_total = api_used + proxy.budget("api")
-        print(f"    search    api: {_budget_bar('api', api_used, api_total)}")
+        api_remaining = budget("api")
+        print(f"    search    api remaining: {api_remaining:.1f}")
 
-        # Summarize
-        result = await proxy.summarize(data=str(result))
+        # Summarize (costs 2.0 llm)
+        result = await tool("summarize", data=str(result))
         is_exhausted = (
             isinstance(result, dict)
             and result.get("status") == "INSUFFICIENT_CAPABILITY"
         )
         if is_exhausted:
-            remain = proxy.budget("llm")
+            llm_remaining = budget("llm")
             print(
                 f"    summarize \033[31mINSUFFICIENT "
-                f"(need 2.0, have {remain:.1f})\033[0m"
+                f"(need 2.0, have {llm_remaining:.1f})\033[0m"
             )
             completed.append(f"{topic}: searched but NOT summarized")
             break
-        llm_used = proxy.checkpoint.budget_used("llm")
-        llm_total = llm_used + proxy.budget("llm")
-        print(f"    summarize llm: {_budget_bar('llm', llm_used, llm_total)}")
+        print(f"    summarize llm remaining: {budget('llm'):.1f}")
         completed.append(f"{topic}: {result}")
 
     return f"Completed {len(completed)}/{len(TOPICS)} topics"

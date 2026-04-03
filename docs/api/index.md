@@ -29,6 +29,8 @@ Castor marks each export with a stability level:
 | [`HITLHandler`](hitl.md#castor.scheduler.hitl.HITLHandler) | `castor.scheduler.hitl` | Approve / reject / modify |
 | [`AgentRunner`](runner.md#castor.scheduler.runner.AgentRunner) | `castor.scheduler.runner` | Agent execution loop |
 | [`CheckpointStore`](runner.md#castor.scheduler.persistence.CheckpointStore) | `castor.scheduler.persistence` | SQLite persistence |
+| [`ExecutionSummary`](kernel.md#castor.kernel.summary.ExecutionSummary) | `castor.kernel.summary` | Speculative execution review summary |
+| [`InMemoryJournal`](kernel.md) | `castor.kernel.journal` | Dict-backed journal for replay |
 | `auto_approve` | `castor.hitl_policies` | Auto-approve HITL policy |
 | `auto_reject` | `castor.hitl_policies` | Auto-reject HITL policy |
 | `interactive` | `castor.hitl_policies` | Terminal interactive policy |
@@ -55,9 +57,10 @@ Castor marks each export with a stability level:
 
 | Command | Purpose |
 |---------|---------|
-| [`castor run`](cli.md) | Run an agent from a Python file |
+| [`castor run`](cli.md) | Run an agent from a Python file (`--speculative`, `--tool`, `--destructive`) |
 | [`castor ps`](cli.md) | List all agent checkpoints |
 | [`castor inspect`](cli.md) | Show checkpoint details |
+| [`castor approve`](cli.md) | Approve a pending HITL request |
 | [`castor reject`](cli.md) | Reject a pending HITL request |
 | [`castor modify`](cli.md) | Modify a pending HITL request |
 

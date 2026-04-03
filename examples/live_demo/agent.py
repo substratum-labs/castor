@@ -10,16 +10,15 @@ The agent follows a fixed pipeline:
 6. **Send** — call ``send_email`` (destructive → HITL approval).
 7. **Fallback** — if rejected, save a draft instead.
 
-All LLM calls go through ``LLMSyscall.infer()`` so responses are cached in
-the ``syscall_log`` and replayed deterministically on resume.
+All LLM calls go through ``castor.lib.tool("llm_inference", ...)`` so responses
+are cached in the ``syscall_log`` and replayed deterministically on resume.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from castor.llm.wrapper import LLMSyscall
-from castor.scheduler.proxy import SyscallProxy
+from castor.lib import tool
 
 SYSTEM_PROMPT = """\
 You are a research assistant. You help users research topics and compose \
@@ -28,28 +27,19 @@ Keep your responses short and to the point — no more than 2-3 paragraphs.
 """
 
 
-async def research_agent(
-    proxy: SyscallProxy,
-    llm: LLMSyscall,
-    topic: str,
-    model: str,
-) -> str:
+async def research_agent(topic: str, model: str) -> str:
     """Run the full research-to-email pipeline.
 
     Parameters
     ----------
-    proxy:
-        The Castor syscall proxy (injected by the runner).
-    llm:
-        ``LLMSyscall`` instance wrapping the real LLM provider.
     topic:
         Free-text research topic provided by the user.
     model:
         LiteLLM model identifier (e.g. ``"anthropic/claude-sonnet-4-5-20250929"``).
     """
     # ── Step 1: LLM plans research strategy ──
-    plan = await llm.infer(
-        proxy,
+    plan = await tool(
+        "llm_inference",
         model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -64,18 +54,18 @@ async def research_agent(
     )
 
     # ── Step 2: Gather data ──
-    search_results = await proxy.web_search(query=topic)
+    search_results = await tool("web_search", query=topic)
 
     # ── Step 3: Read existing context ──
-    existing_notes = await proxy.read_notes(topic=topic)
+    existing_notes = await tool("read_notes", topic=topic)
 
     # ── Step 4: Save combined findings ──
     combined = _format_findings(topic, search_results, existing_notes, plan)
-    await proxy.save_notes(topic=topic, content=combined)
+    await tool("save_notes", topic=topic, content=combined)
 
     # ── Step 5: LLM composes email ──
-    email_body = await llm.infer(
-        proxy,
+    email_body = await tool(
+        "llm_inference",
         model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -92,7 +82,8 @@ async def research_agent(
     )
 
     # ── Step 6: Send email (HITL) ──
-    result = await proxy.send_email(
+    result = await tool(
+        "send_email",
         to="team@company.com",
         subject=f"Research Summary: {topic}",
         body=email_body,
@@ -100,7 +91,8 @@ async def research_agent(
 
     # ── Step 7: Handle rejection ──
     if _is_rejected(result):
-        await proxy.save_draft(
+        await tool(
+            "save_draft",
             filename=f"{topic.replace(' ', '-')}-draft.md",
             content=f"# Draft: {topic}\n\n{email_body}",
         )

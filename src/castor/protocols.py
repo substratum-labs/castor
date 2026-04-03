@@ -8,6 +8,7 @@ by IPC proxy classes — callers never change.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterator
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -182,4 +183,43 @@ class JournalProtocol(Protocol):
 
     def scan_from(self, index: int) -> Iterator[tuple[int, SyscallRecord]]:
         """Iterate (index, record) pairs starting from *index*."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Runner — agent execution scheduling
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class RunnerProtocol(Protocol):
+    """Interface for agent execution scheduling.
+
+    The Runner is responsible for:
+    - Creating a SyscallProxy and setting the ContextVar bridge
+    - Invoking the agent function
+    - Handling completion, suspension (HITL), and preemption
+
+    Level 0: ``AgentRunner`` — sequential, non-real-time (digital scenarios).
+    Pollux: ``PolluxRunner`` — real-time priority scheduling (embodied scenarios).
+    """
+
+    async def run(
+        self,
+        agent_fn: Callable[..., Awaitable[Any]],
+        checkpoint: AgentCheckpoint,
+    ) -> AgentCheckpoint:
+        """Execute an agent function and return the final checkpoint."""
+        ...
+
+    async def run_as_task(
+        self,
+        agent_fn: Callable[..., Awaitable[Any]],
+        checkpoint: AgentCheckpoint,
+    ) -> asyncio.Task:
+        """Launch an agent as a background asyncio.Task for preemption."""
+        ...
+
+    def preempt(self, reason: str, payload: dict[str, Any] | None = None) -> None:
+        """Preempt the currently running agent task."""
         ...

@@ -9,12 +9,8 @@ Run:
 
 import asyncio
 
-from castor import (
-    Castor,
-    SyscallProxy,
-    castor_agent,
-    castor_tool,
-)
+from castor import Castor, castor_agent
+from castor.lib import join, spawn, tool
 
 # ── Output helpers ──
 
@@ -31,34 +27,21 @@ def _warn(text: str) -> None:
     print(f"  \033[33m[!!]\033[0m {text}")
 
 
-def _replay(text: str) -> None:
-    print(f"  \033[90m[REPLAY]\033[0m {text}")
+# ── 1. Define tools (plain functions) ──
 
 
-# ── 1. Register tools ──
-
-
-@castor_tool(consumes="network", cost_per_use=1.0)
 async def web_search(query: str) -> list[str]:
     return [f"Finding 1 for '{query}'", f"Finding 2 for '{query}'"]
 
 
-@castor_tool(consumes="disk", cost_per_use=0.5)
 async def write_note(filename: str, content: str) -> str:
     return f"Saved {filename} ({len(content)} chars)"
 
 
-@castor_tool(consumes="disk", cost_per_use=0.5)
 async def read_note(filename: str) -> str:
     return "Finding 1 for 'AI safety': important results"
 
 
-@castor_tool(
-    consumes="network",
-    cost_per_use=2.0,
-    destructive=True,
-    requires_hitl=True,
-)
 async def send_message(platform: str, channel: str, body: str) -> str:
     return f"Message sent to {platform}#{channel}"
 
@@ -67,9 +50,10 @@ async def send_message(platform: str, channel: str, body: str) -> str:
 
 
 @castor_agent(name="researcher")
-async def researcher(proxy: SyscallProxy) -> str:
-    results = await proxy.web_search(query="AI safety 2026")
-    await proxy.write_note(
+async def researcher() -> str:
+    results = await tool("web_search", query="AI safety 2026")
+    await tool(
+        "write_note",
         filename="findings.md",
         content=f"Research findings: {results}",
     )
@@ -77,9 +61,10 @@ async def researcher(proxy: SyscallProxy) -> str:
 
 
 @castor_agent(name="publisher")
-async def publisher(proxy: SyscallProxy) -> str:
-    note = await proxy.read_note(filename="findings.md")
-    result = await proxy.send_message(
+async def publisher() -> str:
+    note = await tool("read_note", filename="findings.md")
+    result = await tool(
+        "send_message",
         platform="slack",
         channel="#research",
         body=f"Summary: {note[:50]}",
@@ -90,22 +75,22 @@ async def publisher(proxy: SyscallProxy) -> str:
 # ── 3. Define coordinator agent ──
 
 
-async def coordinator(proxy: SyscallProxy) -> str:
+async def coordinator() -> str:
     # Spawn two children with delegated budgets
     print("  Spawning child agents...")
     caps = {"network": 5.0, "disk": 3.0}
-    handle_a = await proxy.spawn("researcher", capabilities=caps)
+    handle_a = await spawn("researcher", capabilities=caps)
     _ok(f"researcher spawned (handle={handle_a})")
 
-    handle_b = await proxy.spawn("publisher", capabilities=caps)
+    handle_b = await spawn("publisher", capabilities=caps)
     _ok(f"publisher spawned (handle={handle_b})")
 
     # Join — waits for children to complete (or suspends if child needs HITL)
     print("\n  Joining children...")
-    result_a = await proxy.join(handle_a)
+    result_a = await join(handle_a)
     _ok(f"researcher: {result_a}")
 
-    result_b = await proxy.join(handle_b)
+    result_b = await join(handle_b)
     _ok(f"publisher: {result_b}")
 
     return f"Coordinated: [{result_a}] + [{result_b}]"
@@ -115,7 +100,10 @@ async def coordinator(proxy: SyscallProxy) -> str:
 
 
 async def main() -> None:
-    kernel = Castor(tools=[web_search, write_note, read_note, send_message])
+    kernel = Castor(
+        tools=[web_search, write_note, read_note, send_message],
+        destructive=["send_message"],
+    )
 
     _h("Castor Multi-Agent Demo")
     print("  Coordinator PID: coord-001")
@@ -155,7 +143,6 @@ async def main() -> None:
     # ── Agent Tree ──
     _h("Agent Tree")
 
-    # Parent
     def _fmt(c, res: str) -> str:
         u = c.budget_used(res)
         return f"{res}={u:.1f}/{u + c.budget_remaining(res):.1f}"
@@ -167,7 +154,6 @@ async def main() -> None:
         f"  {_fmt(cp, 'disk')}"
     )
 
-    # Children (from syscall log)
     for record in cp.syscall_log:
         if record.child_checkpoint:
             child = record.child_checkpoint
