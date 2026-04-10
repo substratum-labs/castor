@@ -53,6 +53,11 @@ autogen = [
 google_adk = [
     "google-adk>=0.1",
 ]
+# NOTE: mnemos is the sister project at github.com/substratum-labs/mnemos.
+# It is not yet on PyPI; install locally with `uv pip install -e ../mnemos`.
+# This optional group is intentionally empty so that resolvers don't try to
+# pull in an unrelated PyPI package named "mnemos".
+mnemos = []
 demo = [
     "rich>=13.0",
     "litellm>=1.0",
