@@ -196,6 +196,24 @@ class MnemosLLMSyscall:
         """Drop all Mnemos contexts managed by this syscall."""
         await self._lifecycle.drop_all()
 
+    async def pin_for(self, pid: str) -> None:
+        """Pin the Mnemos context for this agent (e.g., during HITL wait).
+
+        No-op if there's no Mnemos context registered for this pid yet.
+        """
+        handle = self._lifecycle.get(pid)
+        if handle is not None:
+            await self._client.hint_pin(handle)
+
+    async def unpin_for(self, pid: str) -> None:
+        """Unpin the Mnemos context for this agent (e.g., on HITL resume).
+
+        No-op if there's no Mnemos context registered for this pid.
+        """
+        handle = self._lifecycle.get(pid)
+        if handle is not None:
+            await self._client.hint_unpin(handle)
+
     @property
     def lifecycle(self) -> ContextLifecycleManager:
         return self._lifecycle

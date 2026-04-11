@@ -36,10 +36,12 @@ Usage::
         )
 """
 
+from castor.mnemos.adapter import MnemosCastor
 from castor.mnemos.lifecycle import ContextLifecycleManager
 from castor.mnemos.wrapper import MnemosLLMSyscall
 
 __all__ = [
     "ContextLifecycleManager",
+    "MnemosCastor",
     "MnemosLLMSyscall",
 ]

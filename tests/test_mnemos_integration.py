@@ -18,7 +18,8 @@ mnemos = pytest.importorskip("mnemos")
 from mnemos.client import MnemosClient  # noqa: E402
 
 from castor.core import Castor  # noqa: E402
-from castor.mnemos import MnemosLLMSyscall  # noqa: E402
+from castor.gate.decorator import castor_tool  # noqa: E402
+from castor.mnemos import MnemosCastor, MnemosLLMSyscall  # noqa: E402
 
 # Path to the mnemosd binary built from the sister mnemos repo
 MNEMOSD_BIN = os.path.abspath(
@@ -163,3 +164,128 @@ async def test_castor_mnemos_drop_idempotent(mnemos_client):
     cp = await kernel.run(agent, budgets={"api_usd": 10.0})
     await syscall.drop_for(cp.pid)
     await syscall.drop_for(cp.pid)  # second call should not raise
+
+
+# --- D: MnemosCastor adapter tests ---
+
+
+async def test_pin_unpin_noop_without_handle(mnemos_client):
+    """pin_for/unpin_for on a pid with no registered handle should be no-ops."""
+    kernel = Castor()
+    syscall = MnemosLLMSyscall(
+        registry=kernel.gate.registry,
+        client=mnemos_client,
+        model_id="test-model",
+    )
+    # Nothing registered for this pid
+    await syscall.pin_for("nonexistent-pid")
+    await syscall.unpin_for("nonexistent-pid")
+    # Just verifying no exception raised
+
+
+async def test_pin_unpin_on_real_handle(mnemos_client):
+    """pin_for/unpin_for should succeed against a real Mnemos context."""
+    kernel = Castor()
+    syscall = MnemosLLMSyscall(
+        registry=kernel.gate.registry,
+        client=mnemos_client,
+        model_id="test-model",
+    )
+
+    async def agent(proxy):
+        return await syscall.infer(proxy, tokens=[1, 2, 3], max_new_tokens=2)
+
+    cp = await kernel.run(agent, budgets={"api_usd": 10.0})
+    assert syscall.lifecycle.has(cp.pid)
+    # Round-trip pin/unpin — should not raise
+    await syscall.pin_for(cp.pid)
+    await syscall.unpin_for(cp.pid)
+    await syscall.drop_for(cp.pid)
+
+
+async def test_mnemos_castor_drops_on_completion(mnemos_client):
+    """MnemosCastor.run() should auto-drop context on COMPLETED."""
+    kernel = Castor()
+    syscall = MnemosLLMSyscall(
+        registry=kernel.gate.registry,
+        client=mnemos_client,
+        model_id="test-model",
+    )
+    mkernel = MnemosCastor(kernel, syscall)
+
+    async def agent(proxy):
+        return await syscall.infer(proxy, tokens=[1, 2, 3], max_new_tokens=2)
+
+    cp = await mkernel.run(agent, budgets={"api_usd": 10.0})
+    assert cp.status == "COMPLETED"
+    # Auto-dropped — no manual drop_for needed
+    assert not syscall.lifecycle.has(cp.pid)
+
+
+async def test_mnemos_castor_hitl_pin_flow(mnemos_client):
+    """MnemosCastor should pin on HITL suspend, unpin on approve."""
+
+    # A destructive tool requires HITL by default
+    @castor_tool(requires_hitl=True, cost_per_use=0.5)
+    def sensitive_action(target: str) -> str:
+        return f"acted on {target}"
+
+    kernel = Castor(tools=[sensitive_action])
+    syscall = MnemosLLMSyscall(
+        registry=kernel.gate.registry,
+        client=mnemos_client,
+        model_id="test-model",
+    )
+    mkernel = MnemosCastor(kernel, syscall)
+
+    async def agent(proxy):
+        # First an LLM call (populates Mnemos context)
+        await syscall.infer(proxy, tokens=[1, 2, 3], max_new_tokens=2)
+        # Then a destructive tool call — triggers HITL suspend
+        return await proxy.syscall("sensitive_action", {"target": "db"})
+
+    cp = await mkernel.run(agent, budgets={"api_usd": 10.0, "_default": 10.0})
+    # Agent suspended waiting for HITL
+    assert cp.status == "SUSPENDED_FOR_HITL"
+    # Context still registered — and should be pinned (we trust gRPC call succeeded)
+    assert syscall.lifecycle.has(cp.pid)
+
+    # Approve — unpins first, then Castor executes the suspended syscall
+    await mkernel.approve(cp)
+    # After approve, agent should have completed — we need to resume
+    cp2 = await mkernel.run(agent, checkpoint=cp)
+    assert cp2.status == "COMPLETED"
+    # Auto-dropped after completion
+    assert not syscall.lifecycle.has(cp2.pid)
+
+
+async def test_mnemos_castor_run_until_complete_with_auto_approve(mnemos_client):
+    """run_until_complete should pin/unpin across HITL and auto-drop at end."""
+
+    @castor_tool(requires_hitl=True, cost_per_use=0.5)
+    def another_action(value: int) -> int:
+        return value * 2
+
+    kernel = Castor(tools=[another_action])
+    syscall = MnemosLLMSyscall(
+        registry=kernel.gate.registry,
+        client=mnemos_client,
+        model_id="test-model",
+    )
+    mkernel = MnemosCastor(kernel, syscall)
+
+    async def agent(proxy):
+        await syscall.infer(proxy, tokens=[1, 2, 3], max_new_tokens=2)
+        return await proxy.syscall("another_action", {"value": 21})
+
+    async def auto_approve(cp):
+        return ("approve", None)
+
+    cp = await mkernel.run_until_complete(
+        agent,
+        on_hitl=auto_approve,
+        budgets={"api_usd": 10.0, "_default": 10.0},
+    )
+    assert cp.status == "COMPLETED"
+    # Auto-dropped
+    assert not syscall.lifecycle.has(cp.pid)
