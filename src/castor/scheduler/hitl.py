@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from castor.kernel.journal import InMemoryJournal
-from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
+from castor.models.checkpoint import (
+    AgentCheckpoint,
+    SyscallRecord,
+    compute_invocation_id,
+)
 from castor.protocols import (
     AgentRegistryProtocol,
     BudgetProtocol,
@@ -61,7 +65,20 @@ class HITLHandler:
         result = await gate.execute(tool_name, validated)
 
         journal = InMemoryJournal(checkpoint.syscall_log)
-        journal.append(SyscallRecord(request=request, response=result, was_hitl=True))
+        inv_id = compute_invocation_id(
+            checkpoint.pid,
+            len(journal),
+            tool_name,
+            arguments,
+        )
+        journal.append(
+            SyscallRecord(
+                request=request,
+                response=result,
+                was_hitl=True,
+                invocation_id=inv_id,
+            )
+        )
         checkpoint.pending_hitl = None
         checkpoint.status = "RUNNING"
 
@@ -74,15 +91,23 @@ class HITLHandler:
         if checkpoint.pending_hitl is None:
             raise ValueError("No pending HITL request to reject")
 
+        request = checkpoint.pending_hitl
         journal = InMemoryJournal(checkpoint.syscall_log)
+        inv_id = compute_invocation_id(
+            checkpoint.pid,
+            len(journal),
+            request.get("tool_name", ""),
+            request.get("arguments", {}),
+        )
         journal.append(
             SyscallRecord(
-                request=checkpoint.pending_hitl,
+                request=request,
                 response={
                     "status": "HITL_REJECTED",
                     "human_feedback": feedback,
                 },
                 was_hitl=True,
+                invocation_id=inv_id,
             )
         )
         checkpoint.pending_hitl = None
@@ -98,15 +123,23 @@ class HITLHandler:
         if checkpoint.pending_hitl is None:
             raise ValueError("No pending HITL request to modify")
 
+        request = checkpoint.pending_hitl
         journal = InMemoryJournal(checkpoint.syscall_log)
+        inv_id = compute_invocation_id(
+            checkpoint.pid,
+            len(journal),
+            request.get("tool_name", ""),
+            request.get("arguments", {}),
+        )
         journal.append(
             SyscallRecord(
-                request=checkpoint.pending_hitl,
+                request=request,
                 response={
                     "status": "HITL_MODIFIED",
                     "human_feedback": feedback,
                 },
                 was_hitl=True,
+                invocation_id=inv_id,
             )
         )
         checkpoint.pending_hitl = None

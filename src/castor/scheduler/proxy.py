@@ -23,6 +23,7 @@ from castor.models.checkpoint import (
     AgentCheckpoint,
     SuspendInterrupt,
     SyscallRecord,
+    compute_invocation_id,
 )
 from castor.models.result import SyscallResult
 from castor.observability import get_logger, get_meter
@@ -611,8 +612,29 @@ class SyscallProxy:
             if cap is not None:
                 cap.current_usage = cap.max_budget
 
+    def _make_invocation_id(self, request: dict[str, Any]) -> str:
+        """Compute a deterministic invocation_id for the next journal entry.
+
+        Uses the current journal length (= next syscall index) so the id
+        is stable across replays of the same execution path.
+        """
+        tool_name = request.get("tool_name", "")
+        arguments = request.get("arguments", {})
+        return compute_invocation_id(
+            pid=self.checkpoint.pid,
+            syscall_index=len(self._journal),
+            tool_name=tool_name,
+            arguments=arguments if isinstance(arguments, dict) else {},
+        )
+
     def _append_record(self, record: SyscallRecord) -> None:
-        """Append a record to the journal and advance replay index to stay in sync."""
+        """Append a record to the journal and advance replay index to stay in sync.
+
+        If the record doesn't have an invocation_id, one is computed
+        from its request and the current journal position.
+        """
+        if record.invocation_id is None and record.request:
+            record.invocation_id = self._make_invocation_id(record.request)
         self._journal.append(record)
         self._replay_index = len(self._journal)
 

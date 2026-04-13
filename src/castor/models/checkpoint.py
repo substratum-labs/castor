@@ -1,47 +1,194 @@
-"""Checkpoint/Replay data models for the Castor Stream scheduler."""
+"""Checkpoint/Replay data models for the Castor Stream scheduler.
+
+State Taxonomy
+--------------
+Every field on ``AgentCheckpoint`` and ``SyscallRecord`` is classified
+into one of three semantic categories:
+
+**Control truth** — fields whose consistency is *required* for correct
+execution semantics: ownership, lifecycle, budget authority, pause/resume
+intent, committed replay cursor. In a future distributed (Orrery)
+deployment these must be strongly consistent across nodes.
+
+**Execution state** — fields that capture *what happened*: the syscall
+journal, context history, terminal result, and intermediate artifacts.
+These can tolerate eventual consistency; the journal is the authoritative
+record of past execution, but its growth is proportional to agent work.
+
+**Informational** — fields that support debugging, observability, or
+human experience but are *never* consulted for execution decisions.
+Loss or staleness of these fields does not affect correctness.
+
+This classification is a design constraint, not a runtime enforcement
+(yet). It prepares the ground for Orrery, where the control plane and
+data plane will be physically separated.
+"""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from castor.models.capability import Capability
 
 
 class CastorMessage(BaseModel):
-    """A message in the agent's context history with Lodge metadata."""
+    """A message in the agent's context history with MMU metadata.
+
+    Classification: **execution state** — part of the agent's working
+    memory, managed by the MMU, and persisted in the checkpoint.
+    """
 
     role: str
     content: str
-    pinned: bool = False
-    token_count: int = 0
+    pinned: bool = False  # Never evicted by MMU if True
+    token_count: int = 0  # 0 = use estimator
 
 
 class SyscallRecord(BaseModel):
+    """One entry in the execution journal (syscall_log).
+
+    Each record captures a single tool invocation: the request that was
+    dispatched, the response that came back, and metadata about HITL and
+    speculative review. The journal is append-only during a run and is
+    the authoritative source for replay.
+
+    Classification: **execution state** — the journal is the core of
+    replay, but its individual entries are immutable facts, not live
+    control state.
+    """
+
+    # ── Execution state ──
     request: dict[str, Any]
+    """The syscall request: ``{tool_name, arguments}``."""
+
     response: Any
+    """The tool's return value (or error)."""
+
+    invocation_id: str | None = None
+    """Deterministic content-addressable identity for this invocation.
+
+    Computed as ``sha256(pid || syscall_index || tool_name || canon(args))``
+    at dispatch time. Stable across replays of the same execution path.
+    Enables future at-most-once delivery, idempotent retry, and external
+    side-effect reconciliation.
+
+    ``None`` for records created before this field was introduced
+    (backwards compatible).
+    """
+
+    # ── Informational ──
     was_hitl: bool = False
+    """True if this invocation was approved by a human."""
+
     needs_review: bool = False
+    """True if flagged for post-hoc review (speculative execution)."""
+
     review_reason: str | None = None
+    """Why this invocation was flagged (speculative execution)."""
+
+    # ── Execution state (nested) ──
     child_checkpoint: AgentCheckpoint | None = None
+    """For spawn/join: the child agent's checkpoint at completion."""
+
+
+def compute_invocation_id(
+    pid: str,
+    syscall_index: int,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> str:
+    """Compute a deterministic, content-addressable invocation identity.
+
+    The hash is over ``pid || index || tool_name || canonical_args`` so
+    that:
+
+    - The same execution path always produces the same id (replay-stable).
+    - Different paths (e.g. after a fork) produce different ids.
+    - The id can serve as an idempotency key for external systems.
+
+    Returns a hex-encoded SHA-256 truncated to 32 characters for
+    compactness. Collisions are astronomically unlikely at this length
+    for the expected cardinality (millions of invocations, not billions).
+    """
+    canonical = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
+    payload = f"{pid}|{syscall_index}|{tool_name}|{canonical}"
+    return hashlib.sha256(payload.encode()).hexdigest()[:32]
 
 
 class AgentCheckpoint(BaseModel):
-    pid: str
-    parent_pid: str | None = None
-    status: Literal["RUNNING", "SUSPENDED_FOR_HITL", "PREEMPTED", "COMPLETED", "FAILED"]
-    agent_function_name: str
-    capabilities: dict[str, Capability]
-    syscall_log: list[SyscallRecord] = []
-    pending_hitl: dict[str, Any] | None = None
-    context_history: list[CastorMessage | dict[str, Any]] = []
-    result: Any | None = None
+    """Complete execution state of a Castor agent process.
 
-    # Preemption context (informational, not part of deterministic replay)
+    This is the unit of persistence, replay, fork, and migration.
+    Every field is classified below to guide future separation of
+    the control plane (strongly consistent) from the data plane
+    (eventually consistent).
+    """
+
+    # ── Control truth ──
+    # These fields determine *who runs* and *what authority they have*.
+
+    pid: str
+    """Unique process identity. Deterministic for spawned children
+    (``{parent_pid}::{agent_name}-{spawn_count}``)."""
+
+    parent_pid: str | None = None
+    """Parent that spawned this agent (``None`` for root)."""
+
+    status: Literal[
+        "RUNNING",
+        "SUSPENDED_FOR_HITL",
+        "PREEMPTED",
+        "COMPLETED",
+        "FAILED",
+    ]
+    """Lifecycle state. Transitions are enforced by the runner."""
+
+    agent_function_name: str
+    """Registered name of the agent function to execute."""
+
+    capabilities: dict[str, Capability]
+    """Budget authority. The kernel *enforces* these limits — they are
+    not advisory. Delegated from parent on spawn, reclaimed on join."""
+
+    pending_hitl: dict[str, Any] | None = None
+    """The syscall request that caused suspension. ``None`` when not
+    suspended. Set by the kernel's Suspend decision, cleared by
+    approve/reject/modify."""
+
+    # ── Execution state ──
+    # These fields capture *what happened*. They grow with agent work.
+
+    syscall_log: list[SyscallRecord] = Field(default_factory=list)
+    """Append-only execution journal. The replay cursor is implicit
+    (``len(syscall_log)`` after replay catch-up). Each entry is a
+    committed fact that was either executed live or replayed from cache."""
+
+    context_history: list[CastorMessage | dict[str, Any]] = Field(
+        default_factory=list,
+    )
+    """Agent's working memory (messages). Managed by the MMU: subject
+    to eviction, pinning, and page-out. Plain dicts in this list are
+    user-layer data that bypass MMU eviction."""
+
+    result: Any | None = None
+    """Terminal return value of the agent function. Set on COMPLETED."""
+
+    # ── Informational ──
+    # Loss of these fields does not affect execution correctness.
+
     preemption_reason: str | None = None
+    """Human-readable reason for preemption (e.g. "user cancelled")."""
+
     preemption_payload: dict[str, Any] | None = None
+    """Arbitrary data attached by the preemptor."""
+
     partial_work: str | None = None
+    """Accumulated streaming output at the time of preemption. Useful
+    for showing the user what the agent was working on when stopped."""
 
     # ── Convenience properties ──
 
