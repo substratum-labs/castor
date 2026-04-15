@@ -127,7 +127,13 @@ class CheckpointStoreProtocol(Protocol):
 
 @runtime_checkable
 class MMUProtocol(Protocol):
-    """Interface for context window memory management."""
+    """Interface for context window memory management.
+
+    The MMU bridges the MemoryPolicy (application-level) with kernel
+    syscalls (execution-truth level). It provides the hard-watermark
+    safety net and dispatches evict/recall/pin/store operations through
+    the proxy so they appear in the journal.
+    """
 
     @property
     def kernel_tool_names(self) -> set[str]: ...
@@ -135,6 +141,142 @@ class MMUProtocol(Protocol):
     async def check_and_evict(
         self, proxy: Any, checkpoint: AgentCheckpoint
     ) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# Memory Policy — application-level eviction & recall strategy
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class MemoryPolicyProtocol(Protocol):
+    """Application-provided memory management strategy.
+
+    The kernel calls these methods but does NOT depend on a specific
+    implementation. Tiphys provides a semantic + episodic policy;
+    castor-server provides a simple FIFO. The kernel only uses the
+    returned decisions to issue mem_evict / mem_recall syscalls.
+
+    This is the "page replacement algorithm" in OS terms — it lives
+    above the kernel primitives but its decisions are executed through
+    kernel syscalls for replay safety.
+    """
+
+    async def should_evict(
+        self,
+        context_history: list[Any],
+        token_budget: int,
+    ) -> list[int] | None:
+        """Return message indices to evict, or ``None`` if no eviction needed.
+
+        Called by the MMU when the soft watermark is approached. The
+        returned indices will be passed to ``mem_evict``. Returning
+        ``None`` skips voluntary eviction (the hard watermark may still
+        trigger FIFO eviction as a safety net).
+        """
+        ...
+
+    async def generate_summary(
+        self,
+        evicted_messages: list[Any],
+    ) -> str | None:
+        """Optionally summarize evicted messages for context retention.
+
+        If a string is returned, the MMU issues a ``mem_summarize``
+        syscall (which goes through the journal and costs budget) to
+        produce a summary message that stays in ``context_history``.
+
+        Return ``None`` to skip summarization.
+        """
+        ...
+
+    async def should_recall(
+        self,
+        context_history: list[Any],
+        current_query: str,
+    ) -> str | None:
+        """Return a recall query if cold storage should be searched.
+
+        Called before each LLM turn. If a non-``None`` string is
+        returned, the MMU issues a ``mem_recall`` syscall to fetch
+        relevant messages from cold storage and insert them into
+        ``context_history``.
+        """
+        ...
+
+    async def on_session_end(
+        self,
+        context_history: list[Any],
+        syscall_log: list[Any],
+    ) -> None:
+        """Hook invoked when a session completes or is terminated.
+
+        Use this for post-session consolidation: episodic lesson
+        extraction, knowledge distillation, cache warming, etc.
+        This is *not* a syscall — it runs after the journal is sealed.
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Cold Storage Backend — evicted / explicit memory persistence
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class ColdStorageProtocol(Protocol):
+    """Backend for persisting evicted messages and explicit mem_store data.
+
+    Separate from the agent's application-level memory (e.g. Tiphys's
+    ScopedMemoryStore or Evolution Ledger). The two are queried
+    through a unified retrieval interface but stored independently
+    (Decision 3 → B: separate storage, unified retrieval).
+
+    Namespace by ``agent_id`` (not session_id) so evicted context is
+    shared across sessions of the same agent (Tiphys requirement:
+    cross-session ColdStorage sharing).
+    """
+
+    async def store(
+        self,
+        agent_id: str,
+        messages: list[Any],
+        summary: str | None = None,
+        source: str = "eviction",
+    ) -> None:
+        """Persist messages (and optional summary) to cold storage.
+
+        ``source`` distinguishes eviction-driven storage from explicit
+        ``mem_store`` calls so retrieval can filter by provenance.
+        """
+        ...
+
+    async def search(
+        self,
+        agent_id: str,
+        query: str,
+        max_results: int = 5,
+        source_filter: str | None = None,
+    ) -> list[Any]:
+        """Retrieve relevant messages from cold storage.
+
+        ``source_filter`` optionally restricts to a specific provenance
+        (e.g. ``"eviction"``, ``"explicit"``, ``"episodic"``).
+        """
+        ...
+
+    async def store_explicit(
+        self,
+        agent_id: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Store an explicit memory entry (from ``mem_store`` syscall).
+
+        Unlike ``store()`` which receives evicted CastorMessages, this
+        stores arbitrary content the agent explicitly wanted to remember.
+        """
+        ...
 
 
 # ---------------------------------------------------------------------------

@@ -14,7 +14,9 @@ from castor.hitl_policies import auto_approve, auto_reject, interactive
 from castor.kernel.journal import InMemoryJournal
 from castor.kernel.summary import ExecutionSummary
 from castor.llm.wrapper import LLMSyscall, StreamingLLMSyscall
+from castor.mmu.cold_storage import InMemoryColdStorage
 from castor.mmu.core import MMU
+from castor.mmu.policy import DefaultMemoryPolicy
 from castor.models.capability import Capability, SyscallRequest, SyscallResponse
 from castor.models.checkpoint import (
     AgentCheckpoint,
@@ -28,8 +30,10 @@ from castor.protocols import (
     AgentRegistryProtocol,
     BudgetProtocol,
     CheckpointStoreProtocol,
+    ColdStorageProtocol,
     GateProtocol,
     JournalProtocol,
+    MemoryPolicyProtocol,
     MMUProtocol,
     RunnerProtocol,
 )
@@ -98,8 +102,12 @@ __all__ = [
     "Castor",
     "ExecutionSummary",
     "SyscallGate",
+    "ColdStorageProtocol",
+    "DefaultMemoryPolicy",
+    "InMemoryColdStorage",
     "MMU",
     "MMUProtocol",
+    "MemoryPolicyProtocol",
     "CastorMessage",
     "CastorTask",
     "CheckpointStore",
