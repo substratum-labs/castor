@@ -142,6 +142,10 @@ class MMUProtocol(Protocol):
         self, proxy: Any, checkpoint: AgentCheckpoint
     ) -> None: ...
 
+    def pause_auto_evict(self) -> None: ...
+
+    def resume_auto_evict(self) -> None: ...
+
 
 # ---------------------------------------------------------------------------
 # Memory Policy — application-level eviction & recall strategy

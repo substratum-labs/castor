@@ -7,8 +7,8 @@ import pytest
 from castor.capability.manager import CapabilityManager
 from castor.gate.registry import ToolMetadata, ToolRegistry
 from castor.gate.validator import SyscallGate
+from castor.mmu.cold_storage import InMemoryColdStorage
 from castor.mmu.core import MMU
-from castor.mmu.drivers.mock_driver import InMemoryDriver
 from castor.protocols import (
     AgentRegistryProtocol,
     BudgetProtocol,
@@ -75,8 +75,8 @@ class TestCheckpointStoreProtocolConformance:
 class TestMMUProtocolConformance:
     def test_mmu_is_mmu_protocol(self):
         registry = ToolRegistry()
-        driver = InMemoryDriver()
-        mmu = MMU(registry, driver, watermark=100)
+        cold = InMemoryColdStorage()
+        mmu = MMU(registry, cold_storage=cold, hard_watermark=100)
         # runtime_checkable doesn't verify properties, so check manually
         assert hasattr(mmu, "kernel_tool_names")
         assert hasattr(mmu, "check_and_evict")

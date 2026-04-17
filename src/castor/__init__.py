@@ -22,6 +22,7 @@ from castor.models.checkpoint import (
     AgentCheckpoint,
     CastorMessage,
     SuspendInterrupt,
+    SyscallPurpose,
     SyscallRecord,
     compute_invocation_id,
 )
@@ -120,6 +121,7 @@ __all__ = [
     "StreamingLLMSyscall",
     "SuspendInterrupt",
     "SyscallProxy",
+    "SyscallPurpose",
     "SyscallRecord",
     "SyscallRequest",
     "SyscallResponse",

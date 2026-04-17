@@ -22,6 +22,7 @@ from castor.kernel.journal import InMemoryJournal
 from castor.models.checkpoint import (
     AgentCheckpoint,
     SuspendInterrupt,
+    SyscallPurpose,
     SyscallRecord,
     compute_invocation_id,
 )
@@ -41,6 +42,10 @@ _syscall_counter = _meter.create_counter("castor_syscalls_total")
 _syscall_duration = _meter.create_histogram("castor_syscall_duration_seconds")
 _hitl_counter = _meter.create_counter("castor_hitl_total")
 _spawn_counter = _meter.create_counter("castor_spawns_total")
+
+# Memory syscall names — used to tag SyscallRecord.purpose and trigger
+# post-syscall effects (eviction application, cold storage persistence).
+_MEMORY_SYSCALL_NAMES = frozenset({"mem_evict", "mem_recall", "mem_pin", "mem_store"})
 
 
 class SyscallProxy:
@@ -313,6 +318,11 @@ class SyscallProxy:
             },
         )
 
+        # Tag memory syscalls with their purpose for cost accounting.
+        purpose = SyscallPurpose.TASK_EXECUTION
+        if tool_name in _MEMORY_SYSCALL_NAMES:
+            purpose = SyscallPurpose.MEMORY_MANAGEMENT
+
         # Kernel decided whether this step needs review (via Allow decision)
         self._append_record(
             SyscallRecord(
@@ -320,8 +330,16 @@ class SyscallProxy:
                 response=result,
                 needs_review=decision.needs_review,
                 review_reason=decision.review_reason,
+                purpose=purpose,
             )
         )
+
+        # Post-syscall effects for memory operations.
+        if tool_name in _MEMORY_SYSCALL_NAMES and self._lodge is not None:
+            await self._apply_memory_effects(
+                tool_name, request.get("arguments", {}), result
+            )
+
         return self._wrap_if_needed(tool_name, result)
 
     async def _handle_spawn(
@@ -611,6 +629,43 @@ class SyscallProxy:
             cap = self.checkpoint.capabilities.get(resource_type)
             if cap is not None:
                 cap.current_usage = cap.max_budget
+
+    async def _apply_memory_effects(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: Any,
+    ) -> None:
+        """Apply post-syscall side effects for memory operations.
+
+        These run AFTER the journal record is appended, so the effect
+        is committed. The checkpoint is mutated in place.
+        """
+        from castor.mmu.core import MEM_EVICT, MEM_PIN, MEM_RECALL, MMU
+
+        mmu = self._lodge
+        if not isinstance(mmu, MMU):
+            return
+
+        if tool_name == MEM_EVICT:
+            indices = arguments.get("indices") or (
+                result.get("indices", []) if isinstance(result, dict) else []
+            )
+            summary = arguments.get("summary")
+            if indices:
+                removed = mmu.apply_eviction(self.checkpoint, indices)
+                await mmu.persist_evicted(removed, summary)
+
+        elif tool_name == MEM_RECALL:
+            messages = result.get("messages", []) if isinstance(result, dict) else []
+            mmu.apply_recall(self.checkpoint, messages)
+
+        elif tool_name == MEM_PIN:
+            index = arguments.get("index", 0)
+            mmu.apply_pin(self.checkpoint, index)
+
+        # mem_store has no post-syscall effect — the tool handler
+        # already called cold_storage.store_explicit().
 
     def _make_invocation_id(self, request: dict[str, Any]) -> str:
         """Compute a deterministic invocation_id for the next journal entry.

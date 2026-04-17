@@ -1,8 +1,8 @@
-"""Integration tests for MMU: eviction + page-in + replay determinism.
+"""Integration tests for MMU: eviction through syscall + replay determinism.
 
-These tests exercise the full kernel workflow with MMU enabled:
-agent execution, automatic eviction before LLM calls, search_memory
-page-in, HITL suspension, and replay determinism.
+These exercise the full kernel workflow with the new memory syscalls:
+mem_evict, mem_recall, mem_pin, mem_store — all routed through
+proxy.syscall() and verified in the journal.
 """
 
 from __future__ import annotations
@@ -14,14 +14,11 @@ from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
 from castor.llm.wrapper import LLMSyscall
-from castor.mmu.core import MMU, PAGE_OUT_TOOL, SEARCH_MEMORY_TOOL
-from castor.mmu.drivers.mock_driver import InMemoryDriver
-from castor.models.checkpoint import AgentCheckpoint, CastorMessage
-from castor.scheduler.hitl import HITLHandler
+from castor.mmu.cold_storage import InMemoryColdStorage
+from castor.mmu.core import MEM_EVICT, MEM_PIN, MEM_RECALL, MEM_STORE, MMU
+from castor.models.checkpoint import AgentCheckpoint, CastorMessage, SyscallPurpose
 from castor.scheduler.proxy import SyscallProxy
 from castor.scheduler.runner import AgentRunner
-
-# ── Fixtures ──
 
 
 @pytest.fixture
@@ -30,30 +27,23 @@ def registry():
 
 
 @pytest.fixture
-def driver():
-    return InMemoryDriver()
+def cold_storage():
+    return InMemoryColdStorage()
 
 
 @pytest.fixture
-def lodge(registry, driver):
+def lodge(registry, cold_storage):
     return MMU(
         registry,
-        driver,
-        watermark=50,  # low watermark to trigger eviction easily
-        consumes="system",
-        cost_per_use=0.0,
+        cold_storage=cold_storage,
+        hard_watermark=50,
+        agent_id="integ-agent",
     )
 
 
 @pytest.fixture
-def llm_call_log():
-    return []
-
-
-@pytest.fixture
-def llm(registry, llm_call_log):
+def llm(registry):
     async def fake_llm(model: str, prompt: str) -> str:
-        llm_call_log.append(prompt)
         return f"LLM response for: {prompt[:30]}"
 
     return LLMSyscall(registry, call_fn=fake_llm, consumes="network", cost_per_use=1.0)
@@ -73,11 +63,6 @@ def cap_mgr():
     return CapabilityManager()
 
 
-@pytest.fixture
-def hitl():
-    return HITLHandler()
-
-
 def _make_checkpoint(cap_mgr, messages=None):
     caps = cap_mgr.create_capabilities({"network": 100.0, "system": 100.0})
     cp = AgentCheckpoint(
@@ -91,165 +76,124 @@ def _make_checkpoint(cap_mgr, messages=None):
     return cp
 
 
-# ── Test 1: Eviction triggers before LLM call, page-in retrieves data ──
-
-
-class TestEvictionAndPageIn:
-    async def test_eviction_and_search_memory(self, gate, cap_mgr, lodge, llm, driver):
-        """Large context triggers eviction before LLM, search retrieves it."""
-        messages = [
-            CastorMessage(
-                role="system", content="You are helpful.", pinned=True, token_count=10
-            ),
-            CastorMessage(
-                role="user", content="Tell me about battery technology", token_count=30
-            ),
-            CastorMessage(
-                role="assistant",
-                content="Battery tech is advancing rapidly",
-                token_count=25,
-            ),
-        ]
-        checkpoint = _make_checkpoint(cap_mgr, messages)
-
-        async def agent_fn(proxy: SyscallProxy) -> str:
-            # This LLM call should trigger eviction (total=65 > watermark=50)
-            await llm.infer(proxy, model="gpt-4", prompt="Analyze findings")
-            # Now search for the evicted content
-            result = await proxy.syscall(
-                SEARCH_MEMORY_TOOL,
-                {"query": "battery", "pid": checkpoint.pid},
+class TestMemStoreSyscall:
+    @pytest.mark.asyncio
+    async def test_mem_store_through_syscall(self, gate, cap_mgr, lodge, cold_storage):
+        async def agent(proxy: SyscallProxy):
+            return await proxy.syscall(
+                MEM_STORE,
+                {"content": "important fact", "metadata": {"tag": "test"}},
             )
-            return result
 
+        cp = _make_checkpoint(cap_mgr)
         runner = AgentRunner(gate, cap_mgr, lodge=lodge)
-        result = await runner.run(agent_fn, checkpoint)
+        result_cp = await runner.run(agent, cp)
+        assert result_cp.status == "COMPLETED"
 
-        assert result.status == "COMPLETED"
-
-        # Verify syscall sequence: page_out + llm_inference + search_memory
-        tool_names = [r.request["tool_name"] for r in result.syscall_log]
-        assert PAGE_OUT_TOOL in tool_names
-        assert "llm_inference" in tool_names
-        assert SEARCH_MEMORY_TOOL in tool_names
-
-        # Pinned system message survived
-        pinned = [
-            m
-            for m in result.context_history
-            if isinstance(m, CastorMessage) and m.pinned
+        store_records = [
+            r for r in result_cp.syscall_log if r.request.get("tool_name") == MEM_STORE
         ]
-        assert len(pinned) == 1
-        assert pinned[0].content == "You are helpful."
+        assert len(store_records) == 1
+        assert store_records[0].purpose == SyscallPurpose.MEMORY_MANAGEMENT
 
-        # Search found the evicted content
-        search_record = next(
-            r
-            for r in result.syscall_log
-            if r.request["tool_name"] == SEARCH_MEMORY_TOOL
+        results = await cold_storage.search(
+            "integ-agent", "important", source_filter="explicit"
         )
-        assert "battery" in search_record.response.lower()
+        assert len(results) >= 1
 
 
-# ── Test 2: Pinned messages survive even extreme eviction ──
-
-
-class TestPinnedSurvival:
-    async def test_pinned_messages_never_evicted(self, gate, cap_mgr, lodge, llm):
-        """Even with massive context, pinned messages are never evicted."""
-        messages = [
-            CastorMessage(
-                role="system", content="System prompt", pinned=True, token_count=10
-            ),
-            CastorMessage(
-                role="user", content="HITL approved action", pinned=True, token_count=10
-            ),
-            CastorMessage(
-                role="user", content="expendable message " * 5, token_count=40
-            ),
-        ]
-        checkpoint = _make_checkpoint(cap_mgr, messages)
-
-        async def agent_fn(proxy: SyscallProxy) -> str:
-            await llm.infer(proxy, model="gpt-4", prompt="test")
+class TestMemPinSyscall:
+    @pytest.mark.asyncio
+    async def test_mem_pin_through_syscall(self, gate, cap_mgr, lodge):
+        async def agent(proxy: SyscallProxy):
+            await proxy.syscall(MEM_PIN, {"index": 0})
             return "done"
 
-        runner = AgentRunner(gate, cap_mgr, lodge=lodge)
-        result = await runner.run(agent_fn, checkpoint)
-
-        assert result.status == "COMPLETED"
-        # Both pinned messages survive
-        pinned = [
-            m
-            for m in result.context_history
-            if isinstance(m, CastorMessage) and m.pinned
-        ]
-        assert len(pinned) == 2
-
-
-# ── Test 3: Replay determinism — driver not called on replay ──
-
-
-class TestEvictionReplayDeterminism:
-    async def test_driver_not_called_on_replay(
-        self, registry, gate, cap_mgr, lodge, llm, llm_call_log, driver, hitl
-    ):
-        """After HITL approve + replay, driver.ingest is NOT called again."""
-
-        # Register a destructive tool to trigger HITL
-        @castor_tool(
-            consumes="network",
-            cost_per_use=1.0,
-            destructive=True,
-            requires_hitl=True,
-            registry=registry,
+        cp = _make_checkpoint(
+            cap_mgr,
+            [CastorMessage(role="user", content="pin me")],
         )
-        def dangerous_action(action: str) -> str:
-            return f"executed: {action}"
+        runner = AgentRunner(gate, cap_mgr, lodge=lodge)
+        result_cp = await runner.run(agent, cp)
+        assert result_cp.status == "COMPLETED"
+        assert result_cp.context_history[0].pinned is True
 
-        # Rebuild gate with new tool
-        gate = SyscallGate(registry)
 
-        messages = [
-            CastorMessage(role="system", content="sys", pinned=True, token_count=5),
-            CastorMessage(role="user", content="old context data", token_count=60),
+class TestMemRecallSyscall:
+    @pytest.mark.asyncio
+    async def test_mem_recall_through_syscall(self, gate, cap_mgr, lodge, cold_storage):
+        await cold_storage.store_explicit("integ-agent", "recalled fact about tables")
+
+        async def agent(proxy: SyscallProxy):
+            return await proxy.syscall(
+                MEM_RECALL, {"query": "tables", "max_results": 3}
+            )
+
+        cp = _make_checkpoint(
+            cap_mgr,
+            [CastorMessage(role="user", content="what tables?")],
+        )
+        runner = AgentRunner(gate, cap_mgr, lodge=lodge)
+        result_cp = await runner.run(agent, cp)
+        assert result_cp.status == "COMPLETED"
+
+        contents = [
+            m.content for m in result_cp.context_history if isinstance(m, CastorMessage)
         ]
-        checkpoint = _make_checkpoint(cap_mgr, messages)
+        assert any("tables" in c for c in contents)
 
-        ingest_count = 0
-        original_ingest = driver.ingest
 
-        async def tracking_ingest(msgs, pid):
-            nonlocal ingest_count
-            ingest_count += 1
-            return await original_ingest(msgs, pid)
+class TestCrossSessionRecall:
+    @pytest.mark.asyncio
+    async def test_recall_not_filtered_by_session(self, gate, cap_mgr, cold_storage):
+        registry = ToolRegistry()
+        mmu = MMU(
+            registry,
+            cold_storage=cold_storage,
+            hard_watermark=1000,
+            agent_id="shared-agent",
+        )
 
-        driver.ingest = tracking_ingest
+        await cold_storage.store(
+            "shared-agent",
+            [CastorMessage(role="user", content="session A knowledge")],
+        )
 
-        async def agent_fn(proxy: SyscallProxy) -> str:
-            # LLM call triggers eviction
-            await llm.infer(proxy, model="gpt-4", prompt="plan")
-            # Destructive action triggers HITL
-            await proxy.syscall("dangerous_action", {"action": "deploy"})
+        async def agent_b(proxy: SyscallProxy):
+            return await proxy.syscall(
+                MEM_RECALL, {"query": "session A", "max_results": 5}
+            )
+
+        gate_b = SyscallGate(registry)
+        cp_b = _make_checkpoint(cap_mgr)
+        runner = AgentRunner(gate_b, cap_mgr, lodge=mmu)
+        result_cp = await runner.run(agent_b, cp_b)
+
+        response = result_cp.result
+        assert isinstance(response, dict)
+        messages = response.get("messages", [])
+        assert len(messages) >= 1
+        assert any("session A" in str(m) for m in messages)
+
+
+class TestPauseAutoEvict:
+    @pytest.mark.asyncio
+    async def test_manual_evict_works_when_paused(self, gate, cap_mgr, lodge):
+        async def agent(proxy: SyscallProxy):
+            await proxy.syscall(MEM_EVICT, {"indices": [0], "summary": None})
             return "done"
 
-        # Run 1: eviction + LLM → suspends at dangerous_action
-        runner1 = AgentRunner(gate, cap_mgr, lodge=lodge)
-        await runner1.run(agent_fn, checkpoint)
+        cp = _make_checkpoint(
+            cap_mgr,
+            [
+                CastorMessage(role="user", content="to evict"),
+                CastorMessage(role="user", content="to keep"),
+            ],
+        )
 
-        assert checkpoint.status == "SUSPENDED_FOR_HITL"
-        assert ingest_count == 1
-        assert len(llm_call_log) == 1
+        lodge.pause_auto_evict()
+        runner = AgentRunner(gate, cap_mgr, lodge=lodge)
+        result_cp = await runner.run(agent, cp)
 
-        # Approve HITL
-        await hitl.approve(checkpoint, gate, cap_mgr)
-
-        # Run 2: full replay — driver.ingest must NOT be called again
-        runner2 = AgentRunner(gate, cap_mgr, lodge=lodge)
-        result = await runner2.run(agent_fn, checkpoint)
-
-        assert result.status == "COMPLETED"
-        # Driver was NOT called during replay
-        assert ingest_count == 1
-        # LLM was NOT called during replay
-        assert len(llm_call_log) == 1
+        assert len(result_cp.context_history) == 1
+        assert result_cp.context_history[0].content == "to keep"

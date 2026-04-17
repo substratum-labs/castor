@@ -1,15 +1,15 @@
-"""Unit tests for MMU: token counting, drivers, and eviction logic."""
+"""Unit tests for MMU: token counting, eviction logic, pause/resume."""
 
 from __future__ import annotations
 
+import pytest
+
 from castor.capability.manager import CapabilityManager
 from castor.gate.registry import ToolRegistry
-from castor.gate.validator import SyscallGate
-from castor.mmu.core import MMU, PAGE_OUT_TOOL, SEARCH_MEMORY_TOOL
-from castor.mmu.drivers.mock_driver import InMemoryDriver
+from castor.mmu.cold_storage import InMemoryColdStorage
+from castor.mmu.core import MEM_EVICT, MEM_PIN, MEM_RECALL, MEM_STORE, MMU
 from castor.mmu.token_counter import CharCountEstimator, TokenCounter
 from castor.models.checkpoint import AgentCheckpoint, CastorMessage
-from castor.scheduler.proxy import SyscallProxy
 
 # ── TokenCounter ──
 
@@ -48,62 +48,28 @@ class TestCastorMessage:
         assert restored == msg
 
 
-# ── InMemoryDriver ──
+# ── MMU helpers ──
 
 
-class TestInMemoryDriver:
-    async def test_ingest_and_search(self):
-        driver = InMemoryDriver()
-        await driver.ingest(
-            [{"role": "user", "content": "battery tech breakthroughs"}],
-            pid="agent-1",
-        )
-        result = await driver.search("battery", pid="agent-1")
-        assert "battery" in result.lower()
-
-    async def test_search_no_match(self):
-        driver = InMemoryDriver()
-        await driver.ingest(
-            [{"role": "user", "content": "hello world"}],
-            pid="agent-1",
-        )
-        result = await driver.search("quantum", pid="agent-1")
-        assert "no matching" in result.lower()
-
-    async def test_search_empty_store(self):
-        driver = InMemoryDriver()
-        result = await driver.search("anything", pid="agent-1")
-        assert "no matching" in result.lower()
-
-    async def test_multiple_pids_isolated(self):
-        driver = InMemoryDriver()
-        await driver.ingest([{"role": "user", "content": "alpha"}], pid="a")
-        await driver.ingest([{"role": "user", "content": "beta"}], pid="b")
-        assert "alpha" in (await driver.search("alpha", pid="a")).lower()
-        assert "no matching" in (await driver.search("alpha", pid="b")).lower()
-
-
-# ── MMU: eviction logic ──
-
-
-def _make_lodge(
-    registry: ToolRegistry,
-    watermark: int = 100,
-) -> tuple[MMU, InMemoryDriver]:
-    driver = InMemoryDriver()
-    lodge = MMU(
-        registry, driver, watermark=watermark, consumes="system", cost_per_use=0.0
+def _make_mmu(watermark: int = 100) -> tuple[MMU, InMemoryColdStorage, ToolRegistry]:
+    registry = ToolRegistry()
+    cold = InMemoryColdStorage()
+    mmu = MMU(
+        registry,
+        cold_storage=cold,
+        hard_watermark=watermark,
+        agent_id="test-agent",
     )
-    return lodge, driver
+    return mmu, cold, registry
 
 
 def _make_checkpoint(
-    cap_mgr: CapabilityManager,
     messages: list[CastorMessage] | None = None,
 ) -> AgentCheckpoint:
-    caps = cap_mgr.create_capabilities({"system": 100.0, "network": 100.0})
+    cap_mgr = CapabilityManager()
+    caps = cap_mgr.create_capabilities({"system": 100.0})
     cp = AgentCheckpoint(
-        pid="lodge-test-001",
+        pid="mmu-test-001",
         status="RUNNING",
         agent_function_name="test_agent",
         capabilities=caps,
@@ -113,160 +79,182 @@ def _make_checkpoint(
     return cp
 
 
-class TestMMUEviction:
+# ── Token counting ──
+
+
+class TestMMUTokenCounting:
     def test_total_tokens_uses_token_count_field(self):
-        registry = ToolRegistry()
-        lodge, _ = _make_lodge(registry, watermark=100)
-        cap_mgr = CapabilityManager()
+        mmu, _, _ = _make_mmu()
         cp = _make_checkpoint(
-            cap_mgr,
             [
                 CastorMessage(role="user", content="x", token_count=50),
                 CastorMessage(role="assistant", content="y", token_count=30),
-            ],
+            ]
         )
-        assert lodge.total_tokens(cp) == 80
+        assert mmu.total_tokens(cp) == 80
 
     def test_total_tokens_falls_back_to_counter(self):
-        registry = ToolRegistry()
-        lodge, _ = _make_lodge(registry, watermark=100)
-        cap_mgr = CapabilityManager()
+        mmu, _, _ = _make_mmu()
         cp = _make_checkpoint(
-            cap_mgr,
-            [
-                CastorMessage(role="user", content="a" * 40),  # ~10 tokens
-            ],
+            [CastorMessage(role="user", content="a" * 40)]  # ~10 tokens
         )
-        assert lodge.total_tokens(cp) == 10
+        assert mmu.total_tokens(cp) == 10
 
-    def test_select_victims_fifo_unpinned(self):
-        registry = ToolRegistry()
-        lodge, _ = _make_lodge(registry, watermark=20)
-        cap_mgr = CapabilityManager()
+    def test_plain_dicts_ignored(self):
+        mmu, _, _ = _make_mmu()
+        cp = _make_checkpoint()
+        cp.context_history = [
+            CastorMessage(role="user", content="x", token_count=10),
+            {"role": "system", "content": "not counted"},
+        ]
+        assert mmu.total_tokens(cp) == 10
+
+
+# ── FIFO selection ──
+
+
+class TestFIFOSelection:
+    def test_selects_oldest_non_pinned(self):
+        mmu, _, _ = _make_mmu(watermark=20)
         cp = _make_checkpoint(
-            cap_mgr,
             [
                 CastorMessage(
                     role="system", content="sys", pinned=True, token_count=10
                 ),
                 CastorMessage(role="user", content="old", token_count=15),
                 CastorMessage(role="user", content="new", token_count=15),
-            ],
+            ]
         )
-        victims = lodge._select_victims(cp)
-        assert len(victims) >= 1
-        assert all(not v.pinned for v in victims)
-        assert victims[0].content == "old"
+        indices = mmu._fifo_select(cp, target=20)
+        assert 0 not in indices  # pinned
+        assert 1 in indices  # oldest non-pinned
 
-    def test_pinned_never_evicted(self):
-        registry = ToolRegistry()
-        lodge, _ = _make_lodge(registry, watermark=5)
-        cap_mgr = CapabilityManager()
+    def test_pinned_never_selected(self):
+        mmu, _, _ = _make_mmu(watermark=5)
         cp = _make_checkpoint(
-            cap_mgr,
             [
-                CastorMessage(
-                    role="system",
-                    content="important",
-                    pinned=True,
-                    token_count=50,
-                ),
-            ],
+                CastorMessage(role="system", content="x" * 100, pinned=True),
+                CastorMessage(role="user", content="y" * 100, pinned=True),
+            ]
         )
-        victims = lodge._select_victims(cp)
-        assert len(victims) == 0
+        indices = mmu._fifo_select(cp, target=5)
+        assert indices == []
 
-    def test_under_watermark_no_eviction(self):
-        registry = ToolRegistry()
-        lodge, _ = _make_lodge(registry, watermark=1000)
-        cap_mgr = CapabilityManager()
+    def test_empty_history(self):
+        mmu, _, _ = _make_mmu()
+        cp = _make_checkpoint()
+        indices = mmu._fifo_select(cp, target=0)
+        assert indices == []
+
+
+# ── Apply methods ──
+
+
+class TestApplyMethods:
+    def test_apply_eviction_removes_by_index(self):
+        mmu, _, _ = _make_mmu()
         cp = _make_checkpoint(
-            cap_mgr,
             [
-                CastorMessage(role="user", content="small", token_count=5),
-            ],
+                CastorMessage(role="user", content="a", token_count=10),
+                CastorMessage(role="user", content="b", token_count=10),
+                CastorMessage(role="user", content="c", token_count=10),
+            ]
         )
-        assert lodge.total_tokens(cp) <= lodge._watermark
-        victims = lodge._select_victims(cp)
-        assert len(victims) == 0
-
-
-# ── MMU: eviction via syscall ──
-
-
-class TestEvictionViaSyscall:
-    async def test_eviction_produces_syscall_record(self):
-        """Eviction goes through proxy.syscall() and produces a SyscallRecord."""
-        registry = ToolRegistry()
-        lodge, driver = _make_lodge(registry, watermark=10)
-        gate = SyscallGate(registry)
-        cap_mgr = CapabilityManager()
-
-        cp = _make_checkpoint(
-            cap_mgr,
-            [
-                CastorMessage(
-                    role="system", content="pinned", pinned=True, token_count=5
-                ),
-                CastorMessage(role="user", content="old message", token_count=20),
-            ],
-        )
-
-        proxy = SyscallProxy(cp, gate, cap_mgr, lodge=lodge)
-        await lodge.check_and_evict(proxy, cp)
-
-        # Should have logged a sys_kernel_page_out syscall
-        assert len(cp.syscall_log) == 1
-        assert cp.syscall_log[0].request["tool_name"] == PAGE_OUT_TOOL
-
-        # Pinned message survives, unpinned was evicted
+        removed = mmu.apply_eviction(cp, [0, 2])
         assert len(cp.context_history) == 1
-        assert cp.context_history[0].pinned is True  # type: ignore[union-attr]
+        assert cp.context_history[0].content == "b"
+        assert len(removed) == 2
+        assert removed[0].content == "a"
+        assert removed[1].content == "c"
 
-        # Driver received the evicted message
-        stored = await driver.search("old message", pid="lodge-test-001")
-        assert "old message" in stored.lower()
+    def test_apply_pin(self):
+        mmu, _, _ = _make_mmu()
+        cp = _make_checkpoint([CastorMessage(role="user", content="x")])
+        assert not cp.context_history[0].pinned
+        mmu.apply_pin(cp, 0)
+        assert cp.context_history[0].pinned
 
-    async def test_search_memory_via_syscall(self):
-        """search_memory tool routes through proxy and returns results."""
-        registry = ToolRegistry()
-        lodge, driver = _make_lodge(registry, watermark=10)
-        gate = SyscallGate(registry)
-        cap_mgr = CapabilityManager()
-
-        # Pre-populate driver with some data
-        await driver.ingest(
-            [{"role": "user", "content": "quantum computing advances"}],
-            pid="lodge-test-001",
-        )
-
-        cp = _make_checkpoint(cap_mgr)
-        proxy = SyscallProxy(cp, gate, cap_mgr, lodge=lodge)
-
-        result = await proxy.syscall(
-            SEARCH_MEMORY_TOOL,
-            {"query": "quantum", "pid": "lodge-test-001"},
-        )
-        assert "quantum" in result.lower()
-        assert len(cp.syscall_log) == 1
-        assert cp.syscall_log[0].request["tool_name"] == SEARCH_MEMORY_TOOL
-
-    async def test_no_eviction_when_under_watermark(self):
-        """No syscall logged when under watermark."""
-        registry = ToolRegistry()
-        lodge, _ = _make_lodge(registry, watermark=1000)
-        gate = SyscallGate(registry)
-        cap_mgr = CapabilityManager()
-
+    def test_apply_recall_inserts_before_last(self):
+        mmu, _, _ = _make_mmu()
         cp = _make_checkpoint(
-            cap_mgr,
             [
-                CastorMessage(role="user", content="small", token_count=5),
-            ],
+                CastorMessage(role="user", content="first"),
+                CastorMessage(role="user", content="last"),
+            ]
         )
+        mmu.apply_recall(
+            cp,
+            [{"role": "system", "content": "recalled fact"}],
+        )
+        assert len(cp.context_history) == 3
+        assert cp.context_history[1].content == "recalled fact"
+        assert cp.context_history[2].content == "last"
 
-        proxy = SyscallProxy(cp, gate, cap_mgr, lodge=lodge)
-        await lodge.check_and_evict(proxy, cp)
+    @pytest.mark.asyncio
+    async def test_persist_evicted_stores_to_cold(self):
+        mmu, cold, _ = _make_mmu()
+        msgs = [CastorMessage(role="user", content="evicted data")]
+        await mmu.persist_evicted(msgs, summary="test summary")
+        results = await cold.search("test-agent", "evicted")
+        assert len(results) >= 1
 
-        assert len(cp.syscall_log) == 0
-        assert len(cp.context_history) == 1
+
+# ── Pause / Resume ──
+
+
+class TestPauseResume:
+    def test_pause_stops_auto_evict(self):
+        mmu, _, _ = _make_mmu()
+        mmu.pause_auto_evict()
+        assert mmu._auto_evict_paused is True
+
+    def test_resume_restores_auto_evict(self):
+        mmu, _, _ = _make_mmu()
+        mmu.pause_auto_evict()
+        mmu.resume_auto_evict()
+        assert mmu._auto_evict_paused is False
+
+    def test_resume_idempotent(self):
+        mmu, _, _ = _make_mmu()
+        mmu.resume_auto_evict()  # already not paused
+        assert mmu._auto_evict_paused is False
+
+
+# ── Tool registration ──
+
+
+class TestToolRegistration:
+    def test_all_four_tools_registered(self):
+        _, _, registry = _make_mmu()
+        names = set(registry.list_tools())
+        assert MEM_EVICT in names
+        assert MEM_RECALL in names
+        assert MEM_PIN in names
+        assert MEM_STORE in names
+
+    def test_kernel_tool_names_contains_all_four(self):
+        mmu, _, _ = _make_mmu()
+        assert mmu.kernel_tool_names == {MEM_EVICT, MEM_RECALL, MEM_PIN, MEM_STORE}
+
+
+# ── on_session_end ──
+
+
+class TestOnSessionEnd:
+    @pytest.mark.asyncio
+    async def test_calls_policy_on_session_end(self):
+        from unittest.mock import AsyncMock
+
+        mmu, _, _ = _make_mmu()
+        mmu._policy.on_session_end = AsyncMock()
+        await mmu.on_session_end([], [])
+        mmu._policy.on_session_end.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_exception_logged_not_raised(self):
+        from unittest.mock import AsyncMock
+
+        mmu, _, _ = _make_mmu()
+        mmu._policy.on_session_end = AsyncMock(side_effect=RuntimeError("boom"))
+        # Should NOT raise
+        await mmu.on_session_end([], [])

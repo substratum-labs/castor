@@ -28,11 +28,32 @@ from __future__ import annotations
 
 import hashlib
 import json
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from castor.models.capability import Capability
+
+
+class SyscallPurpose(StrEnum):
+    """Classification of a syscall's role in the agent's execution.
+
+    Used for cost accounting: budget dashboards can separate the agent's
+    primary work from the kernel's memory management overhead.
+
+    Closed set — adding values requires a contract change in
+    ``castor-internal/contracts/memory.md``.
+    """
+
+    TASK_EXECUTION = "task_execution"
+    """Default — the agent's main work (tool calls, LLM inference)."""
+
+    MEMORY_MANAGEMENT = "memory_management"
+    """mem_* syscalls and any LLM calls triggered by memory summarization."""
+
+    INTROSPECTION = "introspection"
+    """Status, budget, and capability queries (future)."""
 
 
 class CastorMessage(BaseModel):
@@ -67,6 +88,15 @@ class SyscallRecord(BaseModel):
 
     response: Any
     """The tool's return value (or error)."""
+
+    purpose: SyscallPurpose = SyscallPurpose.TASK_EXECUTION
+    """Classification for cost accounting.
+
+    Default ``TASK_EXECUTION`` for backwards compatibility — old records
+    without the field deserialize to this value. The kernel sets
+    ``MEMORY_MANAGEMENT`` when dispatching mem_* syscalls and any LLM
+    calls triggered by memory summarization.
+    """
 
     invocation_id: str | None = None
     """Deterministic content-addressable identity for this invocation.
