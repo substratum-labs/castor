@@ -546,7 +546,7 @@ mcp = [
     { name = "fastmcp" },
 ]
 mnemos = [
-    { name = "mnemos" },
+    { name = "mnemos-engine" },
 ]
 observability = [
     { name = "opentelemetry-api", version = "1.34.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
@@ -588,7 +588,7 @@ requires-dist = [
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.27" },
-    { name = "mnemos", marker = "extra == 'mnemos'", editable = "../mnemos" },
+    { name = "mnemos-engine", marker = "extra == 'mnemos'", editable = "../mnemos" },
     { name = "openai-agents", marker = "extra == 'openai-agents'", specifier = ">=0.1" },
     { name = "opentelemetry-api", marker = "extra == 'observability'", specifier = ">=1.20" },
     { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.20" },
@@ -3264,7 +3264,7 @@ wheels = [
 ]
 
 [[package]]
-name = "mnemos"
+name = "mnemos-engine"
 version = "0.1.0"
 source = { editable = "../mnemos" }
 dependencies = [
@@ -3633,8 +3633,8 @@ resolution-markers = [
     "python_full_version < '3.13'",
 ]
 dependencies = [
-    { name = "importlib-metadata" },
-    { name = "typing-extensions" },
+    { name = "importlib-metadata", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "typing-extensions", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4d/5e/94a8cb759e4e409022229418294e098ca7feca00eb3c467bb20cbd329bda/opentelemetry_api-1.34.1.tar.gz", hash = "sha256:64f0bd06d42824843731d05beea88d4d4b6ae59f9fe347ff7dfa2cc14233bbb3", size = 64987, upload-time = "2025-06-10T08:55:19.818Z" }
 wheels = [

@@ -54,10 +54,12 @@ google_adk = [
     "google-adk>=0.1",
 ]
 # Mnemos is the sister project at github.com/substratum-labs/mnemos.
-# Not yet on PyPI — resolved via [tool.uv.sources] below to the local
-# editable checkout. Brings in Mnemos' constraints (e.g. protobuf>=6.30)
-# so runtime/gencode versions stay compatible.
-mnemos = ["mnemos"]
+# Distribution name is "mnemos-engine" on PyPI (the bare "mnemos" name is
+# squatted). Python import name is unchanged — `from mnemos.client import ...`
+# still works. Resolved via [tool.uv.sources] below to the local editable
+# checkout until Mnemos publishes. Brings in Mnemos' constraints
+# (e.g. protobuf>=6.30) so runtime/gencode versions stay compatible.
+mnemos = ["mnemos-engine"]
 demo = [
     "rich>=13.0",
     "litellm>=1.0",
@@ -91,7 +93,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-mnemos = { path = "../mnemos", editable = true }
+mnemos-engine = { path = "../mnemos", editable = true }
 
 # Mnemos requires protobuf>=6.30, but autogen-core caps protobuf<5.30
 # (all versions through 0.7.x). Mark them mutually exclusive so uv keeps
