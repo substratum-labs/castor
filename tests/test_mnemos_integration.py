@@ -13,13 +13,21 @@ import time
 
 import pytest
 
-# Skip the entire module if mnemos package is not installed
-mnemos = pytest.importorskip("mnemos")
-from mnemos.client import MnemosClient  # noqa: E402
-
-from castor.core import Castor  # noqa: E402
-from castor.gate.decorator import castor_tool  # noqa: E402
-from castor.mnemos import MnemosCastor, MnemosLLMSyscall  # noqa: E402
+# Skip the entire module if mnemos gencode cannot load (e.g. protobuf
+# runtime/gencode version mismatch when autogen extra is active instead
+# of mnemos extra — they're marked mutually exclusive in pyproject.toml).
+# importorskip() only catches ImportError; protobuf VersionError slips past
+# it, so we try the real gencode import and set pytestmark directly.
+try:
+    from mnemos.client import MnemosClient  # noqa: E402
+except Exception as _mnemos_err:  # ImportError OR protobuf VersionError
+    pytestmark = pytest.mark.skip(
+        reason=f"mnemos not usable in this environment: {_mnemos_err!s}"
+    )
+else:
+    from castor.core import Castor  # noqa: E402
+    from castor.gate.decorator import castor_tool  # noqa: E402
+    from castor.mnemos import MnemosCastor, MnemosLLMSyscall  # noqa: E402
 
 # Path to the mnemosd binary built from the sister mnemos repo
 MNEMOSD_BIN = os.path.abspath(

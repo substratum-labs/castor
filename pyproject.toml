@@ -53,11 +53,11 @@ autogen = [
 google_adk = [
     "google-adk>=0.1",
 ]
-# NOTE: mnemos is the sister project at github.com/substratum-labs/mnemos.
-# It is not yet on PyPI; install locally with `uv pip install -e ../mnemos`.
-# This optional group is intentionally empty so that resolvers don't try to
-# pull in an unrelated PyPI package named "mnemos".
-mnemos = []
+# Mnemos is the sister project at github.com/substratum-labs/mnemos.
+# Not yet on PyPI — resolved via [tool.uv.sources] below to the local
+# editable checkout. Brings in Mnemos' constraints (e.g. protobuf>=6.30)
+# so runtime/gencode versions stay compatible.
+mnemos = ["mnemos"]
 demo = [
     "rich>=13.0",
     "litellm>=1.0",
@@ -88,6 +88,18 @@ dev = [
     "ruff>=0.8",
     "hypothesis>=6.0",
     "pydantic-ai>=0.1",
+]
+
+[tool.uv.sources]
+mnemos = { path = "../mnemos", editable = true }
+
+# Mnemos requires protobuf>=6.30, but autogen-core caps protobuf<5.30
+# (all versions through 0.7.x). Mark them mutually exclusive so uv keeps
+# separate resolution slots — you can install one OR the other, not both.
+# Castor's main code uses neither; both are optional adapter extras.
+[tool.uv]
+conflicts = [
+    [{ extra = "autogen" }, { extra = "mnemos" }],
 ]
 
 [build-system]
