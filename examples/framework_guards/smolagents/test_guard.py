@@ -8,7 +8,7 @@ import pytest
 from smolagents import tool
 from smolagents.models import ChatMessage, Model
 
-from castor.capability.manager import CapabilityExhaustedError
+from castor.budget.manager import BudgetExhaustedError
 
 sys.path.insert(0, ".")
 from examples.framework_guards.smolagents.guard import CastorGuardedAgent, ToolRejectedError
@@ -79,7 +79,7 @@ def test_budget_deduction():
 
 def test_budget_exhausted():
     agent = make_agent(budgets={"network": 0.5})
-    with pytest.raises(CapabilityExhaustedError):
+    with pytest.raises(BudgetExhaustedError):
         agent.execute_tool_call("safe_tool", {"query": "test"})
     assert len(agent.audit_log) == 0
 

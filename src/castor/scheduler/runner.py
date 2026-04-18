@@ -44,7 +44,7 @@ class AgentRunner:
         speculative: bool = False,
     ) -> None:
         self._gate = gate
-        self._cap_mgr = capability_manager
+        self._budget_mgr = capability_manager
         self._lodge = lodge
         self._agent_registry = agent_registry
         self._structured_results = structured_results
@@ -74,7 +74,7 @@ class AgentRunner:
         proxy = SyscallProxy(
             checkpoint,
             self._gate,
-            self._cap_mgr,
+            self._budget_mgr,
             lodge=self._lodge,
             kernel_tool_names=kernel_tools,
             agent_registry=self._agent_registry,

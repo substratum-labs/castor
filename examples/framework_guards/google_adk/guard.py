@@ -41,7 +41,7 @@ from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.tools import BaseTool
 from google.adk.tools.tool_context import ToolContext
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 
 
 class ToolRejectedError(Exception):
@@ -69,8 +69,8 @@ def castor_before_tool_callback(
     Returns:
         A callback function for ``Agent(before_tool_callback=...)``.
     """
-    cap_mgr = CapabilityManager()
-    capabilities = cap_mgr.create_capabilities(budgets)
+    budget_mgr = BudgetManager()
+    capabilities = budget_mgr.create_budgets(budgets)
     audit_log: list[dict[str, Any]] = []
 
     def callback(
@@ -83,9 +83,9 @@ def castor_before_tool_callback(
         resource = policy.get("resource")
         cost = policy.get("cost", 0.0)
 
-        # 1. Budget deduction (raises CapabilityExhaustedError if over budget)
+        # 1. Budget deduction (raises BudgetExhaustedError if over budget)
         if resource:
-            cap_mgr.deduct(capabilities, resource, cost)
+            budget_mgr.deduct(capabilities, resource, cost)
 
         # 2. HITL gate for destructive tools
         if policy.get("destructive", False):
@@ -101,7 +101,7 @@ def castor_before_tool_callback(
     # Attach state for external access
     callback.capabilities = capabilities  # type: ignore[attr-defined]
     callback.audit_log = audit_log  # type: ignore[attr-defined]
-    callback.cap_mgr = cap_mgr  # type: ignore[attr-defined]
+    callback.budget_mgr = budget_mgr  # type: ignore[attr-defined]
     return callback
 
 
@@ -118,8 +118,8 @@ class CastorGuardPlugin(BasePlugin):
         hitl_policy: Callable[[str, dict[str, Any]], bool] | None = None,
     ) -> None:
         super().__init__(name="castor_guard")
-        self.cap_mgr = CapabilityManager()
-        self.capabilities = self.cap_mgr.create_capabilities(budgets)
+        self.budget_mgr = BudgetManager()
+        self.capabilities = self.budget_mgr.create_budgets(budgets)
         self.tool_policies = tool_policies
         self._hitl_policy = hitl_policy
         self.audit_log: list[dict[str, Any]] = []
@@ -138,7 +138,7 @@ class CastorGuardPlugin(BasePlugin):
 
         # 1. Budget deduction
         if resource:
-            self.cap_mgr.deduct(self.capabilities, resource, cost)
+            self.budget_mgr.deduct(self.capabilities, resource, cost)
 
         # 2. HITL gate
         if policy.get("destructive", False):

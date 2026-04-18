@@ -2,7 +2,7 @@
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
@@ -33,8 +33,8 @@ def gate(registry):
 
 
 @pytest.fixture
-def cap_mgr():
-    return CapabilityManager()
+def budget_mgr():
+    return BudgetManager()
 
 
 @pytest.fixture
@@ -42,8 +42,8 @@ def handler():
     return HITLHandler()
 
 
-def make_suspended_checkpoint(cap_mgr):
-    caps = cap_mgr.create_capabilities({"disk": 50.0})
+def make_suspended_checkpoint(budget_mgr):
+    caps = budget_mgr.create_budgets({"disk": 50.0})
     return AgentCheckpoint(
         pid="test-001",
         status="SUSPENDED_FOR_HITL",
@@ -57,9 +57,9 @@ def make_suspended_checkpoint(cap_mgr):
 
 
 class TestApprove:
-    async def test_approve_executes_and_logs(self, handler, gate, cap_mgr):
-        checkpoint = make_suspended_checkpoint(cap_mgr)
-        await handler.approve(checkpoint, gate, cap_mgr)
+    async def test_approve_executes_and_logs(self, handler, gate, budget_mgr):
+        checkpoint = make_suspended_checkpoint(budget_mgr)
+        await handler.approve(checkpoint, gate, budget_mgr)
 
         assert checkpoint.status == "RUNNING"
         assert checkpoint.pending_hitl is None
@@ -70,13 +70,13 @@ class TestApprove:
         assert record.request["tool_name"] == "delete_files"
         assert record.response == 2  # len(["/tmp/a", "/tmp/b"])
 
-    async def test_approve_deducts_capability(self, handler, gate, cap_mgr):
-        checkpoint = make_suspended_checkpoint(cap_mgr)
-        await handler.approve(checkpoint, gate, cap_mgr)
+    async def test_approve_deducts_capability(self, handler, gate, budget_mgr):
+        checkpoint = make_suspended_checkpoint(budget_mgr)
+        await handler.approve(checkpoint, gate, budget_mgr)
         assert checkpoint.capabilities["disk"].current_usage == 1.0
 
-    async def test_approve_no_pending_raises(self, handler, gate, cap_mgr):
-        caps = cap_mgr.create_capabilities({"disk": 50.0})
+    async def test_approve_no_pending_raises(self, handler, gate, budget_mgr):
+        caps = budget_mgr.create_budgets({"disk": 50.0})
         checkpoint = AgentCheckpoint(
             pid="test-001",
             status="RUNNING",
@@ -84,12 +84,12 @@ class TestApprove:
             capabilities=caps,
         )
         with pytest.raises(ValueError, match="No pending"):
-            await handler.approve(checkpoint, gate, cap_mgr)
+            await handler.approve(checkpoint, gate, budget_mgr)
 
 
 class TestReject:
-    def test_reject_logs_feedback(self, handler, cap_mgr):
-        checkpoint = make_suspended_checkpoint(cap_mgr)
+    def test_reject_logs_feedback(self, handler, budget_mgr):
+        checkpoint = make_suspended_checkpoint(budget_mgr)
         handler.reject(checkpoint, "Too risky, do not delete.")
 
         assert checkpoint.status == "RUNNING"
@@ -101,8 +101,8 @@ class TestReject:
         assert record.response["status"] == "HITL_REJECTED"
         assert record.response["human_feedback"] == "Too risky, do not delete."
 
-    def test_reject_no_pending_raises(self, handler, cap_mgr):
-        caps = cap_mgr.create_capabilities({"disk": 50.0})
+    def test_reject_no_pending_raises(self, handler, budget_mgr):
+        caps = budget_mgr.create_budgets({"disk": 50.0})
         checkpoint = AgentCheckpoint(
             pid="test-001",
             status="RUNNING",
@@ -114,8 +114,8 @@ class TestReject:
 
 
 class TestModify:
-    def test_modify_logs_feedback(self, handler, cap_mgr):
-        checkpoint = make_suspended_checkpoint(cap_mgr)
+    def test_modify_logs_feedback(self, handler, budget_mgr):
+        checkpoint = make_suspended_checkpoint(budget_mgr)
         handler.modify(checkpoint, "Only delete files older than 7 days.")
 
         assert checkpoint.status == "RUNNING"
@@ -127,8 +127,8 @@ class TestModify:
         assert record.response["status"] == "HITL_MODIFIED"
         assert "older than 7 days" in record.response["human_feedback"]
 
-    def test_modify_preserves_original_request(self, handler, cap_mgr):
-        checkpoint = make_suspended_checkpoint(cap_mgr)
+    def test_modify_preserves_original_request(self, handler, budget_mgr):
+        checkpoint = make_suspended_checkpoint(budget_mgr)
         handler.modify(checkpoint, "Keep recent files.")
 
         record = checkpoint.syscall_log[0]
@@ -138,8 +138,8 @@ class TestModify:
             "arguments": {"paths": ["/tmp/a", "/tmp/b"]},
         }
 
-    def test_modify_no_pending_raises(self, handler, cap_mgr):
-        caps = cap_mgr.create_capabilities({"disk": 50.0})
+    def test_modify_no_pending_raises(self, handler, budget_mgr):
+        caps = budget_mgr.create_budgets({"disk": 50.0})
         checkpoint = AgentCheckpoint(
             pid="test-001",
             status="RUNNING",

@@ -1,7 +1,7 @@
 """CastorGuardedAgent — smolagents + Castor security guard layer.
 
 Subclasses smolagents ToolCallingAgent to add:
-- Budget enforcement via Castor CapabilityManager
+- Budget enforcement via Castor BudgetManager
 - HITL gates for destructive tool calls
 - Audit logging of all tool executions
 """
@@ -12,7 +12,7 @@ from typing import Any
 
 from smolagents import ToolCallingAgent
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 
 
 class CastorGuardedAgent(ToolCallingAgent):
@@ -39,8 +39,8 @@ class CastorGuardedAgent(ToolCallingAgent):
         **kwargs,
     ):
         super().__init__(tools=tools, model=model, **kwargs)
-        self.cap_mgr = CapabilityManager()
-        self.capabilities = self.cap_mgr.create_capabilities(budgets)
+        self.budget_mgr = BudgetManager()
+        self.capabilities = self.budget_mgr.create_budgets(budgets)
         self.tool_policies = tool_policies
         self._hitl_policy = hitl_policy
         self.audit_log: list[dict[str, Any]] = []
@@ -52,7 +52,7 @@ class CastorGuardedAgent(ToolCallingAgent):
 
         # 1. Budget deduction — hard cap
         if resource:
-            self.cap_mgr.deduct(self.capabilities, resource, cost)
+            self.budget_mgr.deduct(self.capabilities, resource, cost)
 
         # 2. HITL gate — destructive tools require human approval
         if policy.get("destructive", False):

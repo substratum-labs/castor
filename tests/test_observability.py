@@ -29,7 +29,7 @@ class TestNoopFallback:
 class TestLoggingIntegration:
     async def test_syscall_emits_log(self, caplog):
         """Syscall execution emits structured log messages."""
-        from castor.capability.manager import CapabilityManager
+        from castor.budget.manager import BudgetManager
         from castor.gate.decorator import castor_tool
         from castor.gate.registry import ToolRegistry
         from castor.gate.validator import SyscallGate
@@ -43,15 +43,15 @@ class TestLoggingIntegration:
             return [f"result for {query}"]
 
         gate = SyscallGate(registry)
-        cap_mgr = CapabilityManager()
-        caps = cap_mgr.create_capabilities({"test": 100.0})
+        budget_mgr = BudgetManager()
+        caps = budget_mgr.create_budgets({"test": 100.0})
         cp = AgentCheckpoint(
             pid="test-001",
             status="RUNNING",
             agent_function_name="test",
             capabilities=caps,
         )
-        proxy = SyscallProxy(cp, gate, cap_mgr)
+        proxy = SyscallProxy(cp, gate, budget_mgr)
 
         with caplog.at_level(logging.DEBUG, logger="castor.scheduler"):
             await proxy.syscall("search", {"query": "hello"})

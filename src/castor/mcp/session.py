@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from castor.models.capability import Capability
+from castor.models.budget import Budget
 
 STATE_KEY = "castor_session"
 
@@ -25,7 +25,7 @@ class SessionState(BaseModel):
     """Per-MCP-session state: budgets + pending HITL queue."""
 
     initialized: bool = False
-    capabilities: dict[str, Capability] = {}
+    capabilities: dict[str, Budget] = {}
     pending_hitl: dict[str, HITLRequest] = {}
     audit_log: list[dict[str, Any]] = []
 

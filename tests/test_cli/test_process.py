@@ -2,7 +2,7 @@
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.models.checkpoint import AgentCheckpoint
 from castor.scheduler.persistence import CheckpointStore
 
@@ -14,17 +14,17 @@ def store(tmp_path):
 
 
 @pytest.fixture()
-def cap_mgr():
-    return CapabilityManager()
+def budget_mgr():
+    return BudgetManager()
 
 
 @pytest.fixture()
-def saved_checkpoint(store, cap_mgr):
+def saved_checkpoint(store, budget_mgr):
     cp = AgentCheckpoint(
         pid="agent-test-1234",
         status="COMPLETED",
         agent_function_name="test_agent",
-        capabilities=cap_mgr.create_capabilities({"api": 10.0}),
+        capabilities=budget_mgr.create_budgets({"api": 10.0}),
         result="done",
     )
     store.save(cp)

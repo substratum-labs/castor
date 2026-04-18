@@ -38,7 +38,7 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.prebuilt.tool_node import ToolCallRequest, ToolNode
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 
 
 class ToolRejectedError(Exception):
@@ -65,8 +65,8 @@ def castor_tool_node(
         hitl_policy: Optional callable ``(tool_name, args) -> bool`` for
             programmatic HITL decisions. None means interactive prompt.
     """
-    cap_mgr = CapabilityManager()
-    capabilities = cap_mgr.create_capabilities(budgets)
+    budget_mgr = BudgetManager()
+    capabilities = budget_mgr.create_budgets(budgets)
     audit_log: list[dict[str, Any]] = []
 
     async def castor_guard(
@@ -81,7 +81,7 @@ def castor_tool_node(
 
         # 1. Budget deduction
         if resource:
-            cap_mgr.deduct(capabilities, resource, cost)
+            budget_mgr.deduct(capabilities, resource, cost)
 
         # 2. HITL gate
         if policy.get("destructive", False):
@@ -113,12 +113,12 @@ def guard_tools(
 
     Returns a list of guarded tools that can replace the originals.
     """
-    cap_mgr = CapabilityManager()
-    capabilities = cap_mgr.create_capabilities(budgets)
+    budget_mgr = BudgetManager()
+    capabilities = budget_mgr.create_budgets(budgets)
     return [
         CastorGuardedTool(
             inner=t,
-            cap_mgr=cap_mgr,
+            budget_mgr=budget_mgr,
             capabilities=capabilities,
             policy=tool_policies.get(t.name, {}),
             hitl_policy=hitl_policy,
@@ -131,7 +131,7 @@ class CastorGuardedTool(BaseTool):
     """Wraps a LangChain BaseTool with Castor budget + HITL enforcement."""
 
     inner: BaseTool
-    cap_mgr: CapabilityManager
+    budget_mgr: BudgetManager
     capabilities: dict[str, Any]
     policy: dict[str, Any]
     hitl_policy: Callable[[str, dict[str, Any]], bool] | None = None
@@ -153,7 +153,7 @@ class CastorGuardedTool(BaseTool):
         cost = self.policy.get("cost", 0.0)
 
         if resource:
-            self.cap_mgr.deduct(self.capabilities, resource, cost)
+            self.budget_mgr.deduct(self.capabilities, resource, cost)
         if self.policy.get("destructive", False):
             _hitl_gate(self.name, kwargs, self.hitl_policy)
 
@@ -164,7 +164,7 @@ class CastorGuardedTool(BaseTool):
         cost = self.policy.get("cost", 0.0)
 
         if resource:
-            self.cap_mgr.deduct(self.capabilities, resource, cost)
+            self.budget_mgr.deduct(self.capabilities, resource, cost)
         if self.policy.get("destructive", False):
             _hitl_gate(self.name, kwargs, self.hitl_policy)
 

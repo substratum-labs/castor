@@ -14,7 +14,7 @@ from fastmcp.tools.tool import Tool, ToolResult
 from mcp.types import TextContent, ToolAnnotations
 from pydantic import ValidationError
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.registry import ToolMetadata, ToolRegistry, default_registry
 from castor.gate.validator import SyscallGate
 from castor.mcp.session import HITLRequest, load_state, save_state
@@ -61,7 +61,7 @@ class CastorMCPTool(Tool):
             return _text_result("Error: No MCP context available.")
 
         gate: SyscallGate = ctx.lifespan_context["gate"]
-        cap_mgr: CapabilityManager = ctx.lifespan_context["cap_mgr"]
+        budget_mgr: BudgetManager = ctx.lifespan_context["budget_mgr"]
         state = await load_state(ctx)
 
         # 1. Require session initialization
@@ -80,7 +80,9 @@ class CastorMCPTool(Tool):
 
         # 3. Budget enforcement
         if self.cost_per_use > 0:
-            if not cap_mgr.check(state.capabilities, self.consumes, self.cost_per_use):
+            if not budget_mgr.check(
+                state.capabilities, self.consumes, self.cost_per_use
+            ):
                 cap = state.capabilities.get(self.consumes)
                 remaining = (cap.max_budget - cap.current_usage) if cap else 0.0
                 await save_state(ctx, state)
@@ -88,7 +90,7 @@ class CastorMCPTool(Tool):
                     f"Budget exhausted for '{self.consumes}': "
                     f"need {self.cost_per_use}, remaining {remaining:.2f}."
                 )
-            cap_mgr.deduct(state.capabilities, self.consumes, self.cost_per_use)
+            budget_mgr.deduct(state.capabilities, self.consumes, self.cost_per_use)
 
         # 4. HITL gate for destructive/requires_hitl tools
         if self.requires_hitl_approval or self.is_destructive:
@@ -122,7 +124,7 @@ class CastorMCPTool(Tool):
         try:
             result = await gate.execute(self.name, validated)
         except Exception as e:
-            cap_mgr.refund(state.capabilities, self.consumes, self.cost_per_use)
+            budget_mgr.refund(state.capabilities, self.consumes, self.cost_per_use)
             await save_state(ctx, state)
             return _text_result(f"Tool execution failed: {e}")
 
@@ -186,8 +188,8 @@ def _register_meta_tools(server: FastMCP) -> None:
         if state.initialized:
             return "Session already initialized. Budgets cannot be changed mid-session."
 
-        cap_mgr: CapabilityManager = ctx.lifespan_context["cap_mgr"]
-        state.capabilities = cap_mgr.create_capabilities(budgets)
+        budget_mgr: BudgetManager = ctx.lifespan_context["budget_mgr"]
+        state.capabilities = budget_mgr.create_budgets(budgets)
         state.initialized = True
         await save_state(ctx, state)
 
@@ -233,12 +235,12 @@ def _register_meta_tools(server: FastMCP) -> None:
 
         req = state.pending_hitl.pop(request_id)
         gate: SyscallGate = ctx.lifespan_context["gate"]
-        cap_mgr: CapabilityManager = ctx.lifespan_context["cap_mgr"]
+        budget_mgr: BudgetManager = ctx.lifespan_context["budget_mgr"]
 
         try:
             result = await gate.execute(req.tool_name, req.arguments)
         except Exception as e:
-            cap_mgr.refund(state.capabilities, req.resource, req.cost)
+            budget_mgr.refund(state.capabilities, req.resource, req.cost)
             await save_state(ctx, state)
             return f"Execution failed: {e}. Budget refunded."
 
@@ -265,8 +267,8 @@ def _register_meta_tools(server: FastMCP) -> None:
             return f"No pending request with ID '{request_id}'."
 
         req = state.pending_hitl.pop(request_id)
-        cap_mgr: CapabilityManager = ctx.lifespan_context["cap_mgr"]
-        cap_mgr.refund(state.capabilities, req.resource, req.cost)
+        budget_mgr: BudgetManager = ctx.lifespan_context["budget_mgr"]
+        budget_mgr.refund(state.capabilities, req.resource, req.cost)
 
         state.audit_log.append(
             {"tool": req.tool_name, "hitl": "rejected", "reason": reason}
@@ -289,8 +291,8 @@ def _register_meta_tools(server: FastMCP) -> None:
             return f"No pending request with ID '{request_id}'."
 
         req = state.pending_hitl.pop(request_id)
-        cap_mgr: CapabilityManager = ctx.lifespan_context["cap_mgr"]
-        cap_mgr.refund(state.capabilities, req.resource, req.cost)
+        budget_mgr: BudgetManager = ctx.lifespan_context["budget_mgr"]
+        budget_mgr.refund(state.capabilities, req.resource, req.cost)
 
         state.audit_log.append(
             {"tool": req.tool_name, "hitl": "modified", "feedback": feedback}
@@ -349,7 +351,7 @@ def create_mcp_server(
     else:
         _gate = SyscallGate(default_registry)
 
-    _cap_mgr = CapabilityManager()
+    _budget_mgr = BudgetManager()
 
     if instructions is None:
         tool_names = _gate.list_tools()
@@ -365,7 +367,7 @@ def create_mcp_server(
 
     @asynccontextmanager
     async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
-        yield {"gate": _gate, "cap_mgr": _cap_mgr}
+        yield {"gate": _gate, "budget_mgr": _budget_mgr}
 
     server = FastMCP(name=name, instructions=instructions, lifespan=lifespan)
 

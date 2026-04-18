@@ -6,7 +6,7 @@ import pytest
 
 from castor import (
     AgentCheckpoint,
-    Capability,
+    Budget,
     Castor,
     CheckpointStoreProtocol,
     MemoryCheckpointStore,
@@ -15,7 +15,7 @@ from castor import (
     ToolMetadata,
     castor_tool,
 )
-from castor.capability.manager import CapabilityExhaustedError, CapabilityManager
+from castor.budget.manager import BudgetExhaustedError, BudgetManager
 from castor.gate.registry import ToolRegistry
 from castor.scheduler.persistence import CheckpointNotFoundError
 
@@ -26,23 +26,23 @@ class TestBudgetSkipMissingResource:
     """deduct() should no-op when resource type is not tracked."""
 
     def test_deduct_missing_resource_noop(self):
-        mgr = CapabilityManager()
-        caps: dict[str, Capability] = {}  # No budgets configured
+        mgr = BudgetManager()
+        caps: dict[str, Budget] = {}  # No budgets configured
         # Should NOT raise — missing resource = not tracked
         mgr.deduct(caps, "api", 1.0)
 
     def test_deduct_tracked_resource_still_enforced(self):
-        mgr = CapabilityManager()
-        caps = mgr.create_capabilities({"api": 5.0})
+        mgr = BudgetManager()
+        caps = mgr.create_budgets({"api": 5.0})
         mgr.deduct(caps, "api", 3.0)
         assert caps["api"].current_usage == 3.0
         # Should still raise when budget is actually exhausted
-        with pytest.raises(CapabilityExhaustedError):
+        with pytest.raises(BudgetExhaustedError):
             mgr.deduct(caps, "api", 3.0)
 
     def test_deduct_untracked_alongside_tracked(self):
-        mgr = CapabilityManager()
-        caps = mgr.create_capabilities({"api": 10.0})
+        mgr = BudgetManager()
+        caps = mgr.create_budgets({"api": 10.0})
         # "storage" is not in caps — should no-op
         mgr.deduct(caps, "storage", 5.0)
         # "api" should still work normally
@@ -50,14 +50,14 @@ class TestBudgetSkipMissingResource:
         assert caps["api"].current_usage == 2.0
 
     def test_check_missing_resource_returns_true(self):
-        mgr = CapabilityManager()
-        caps: dict[str, Capability] = {}
+        mgr = BudgetManager()
+        caps: dict[str, Budget] = {}
         # Not tracked → allowed
         assert mgr.check(caps, "api", 100.0) is True
 
     def test_check_tracked_resource_still_enforced(self):
-        mgr = CapabilityManager()
-        caps = mgr.create_capabilities({"api": 5.0})
+        mgr = BudgetManager()
+        caps = mgr.create_budgets({"api": 5.0})
         assert mgr.check(caps, "api", 3.0) is True
         assert mgr.check(caps, "api", 6.0) is False
 
@@ -238,7 +238,7 @@ class TestCastorPublicProperties:
 
     def test_capability_manager_property(self):
         kernel = Castor(tools=[_cost_tool])
-        assert isinstance(kernel.capability_manager, CapabilityManager)
+        assert isinstance(kernel.capability_manager, BudgetManager)
 
     def test_store_property_none(self):
         kernel = Castor(tools=[_cost_tool])

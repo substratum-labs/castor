@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from castor.capability.manager import CapabilityExhaustedError
+from castor.budget.manager import BudgetExhaustedError
 from castor.kernel.decisions import (
     Allow,
     Deny,
@@ -79,7 +79,7 @@ class SyscallProxy:
     ) -> None:
         self.checkpoint = checkpoint
         self._gate = gate
-        self._cap_mgr = capability_manager
+        self._budget_mgr = capability_manager
         self._lodge = lodge
         self._llm_tool_names = llm_tool_names or {"llm_inference"}
         self._kernel_tool_names = kernel_tool_names or set()
@@ -236,7 +236,7 @@ class SyscallProxy:
         validated = decision.validated_args
 
         if decision.cost > 0:
-            self._cap_mgr.deduct(
+            self._budget_mgr.deduct(
                 self.checkpoint.capabilities,
                 tool_meta.consumes,
                 tool_meta.cost_per_use,
@@ -291,7 +291,7 @@ class SyscallProxy:
             # is never logged, so replay will re-attempt the syscall and deduct
             # again, causing a permanent budget leak.
             if tool_meta.cost_per_use > 0:
-                self._cap_mgr.refund(
+                self._budget_mgr.refund(
                     self.checkpoint.capabilities,
                     tool_meta.consumes,
                     tool_meta.cost_per_use,
@@ -358,7 +358,7 @@ class SyscallProxy:
         agent_fn = self._agent_registry.get(agent_name)
 
         # 2. Delegate capabilities from parent to child
-        child_caps = self._cap_mgr.delegate(
+        child_budgets = self._budget_mgr.delegate(
             self.checkpoint.capabilities, requested_caps
         )
 
@@ -372,7 +372,7 @@ class SyscallProxy:
             parent_pid=self.checkpoint.pid,
             status="RUNNING",
             agent_function_name=agent_name,
-            capabilities=child_caps,
+            capabilities=child_budgets,
         )
 
         # 5. Run child with its own proxy
@@ -380,7 +380,7 @@ class SyscallProxy:
         child_proxy = SyscallProxy(
             checkpoint=child_cp,
             gate=self._gate,
-            capability_manager=self._cap_mgr,
+            capability_manager=self._budget_mgr,
             lodge=self._lodge,
             llm_tool_names=self._llm_tool_names,
             kernel_tool_names=child_kernel_tools,
@@ -396,11 +396,13 @@ class SyscallProxy:
             raise SuspendInterrupt(self.checkpoint)
         except BaseException:
             # Child raised unexpectedly — reclaim delegated budget to prevent leak
-            self._cap_mgr.reclaim(self.checkpoint.capabilities, child_cp.capabilities)
+            self._budget_mgr.reclaim(
+                self.checkpoint.capabilities, child_cp.capabilities
+            )
             raise
 
         # 6. Reclaim unused child budget
-        self._cap_mgr.reclaim(self.checkpoint.capabilities, child_cp.capabilities)
+        self._budget_mgr.reclaim(self.checkpoint.capabilities, child_cp.capabilities)
 
         # 7. Log and return
         _spawn_counter.add(1, {"type": "sync"})
@@ -439,7 +441,7 @@ class SyscallProxy:
         agent_fn = self._agent_registry.get(agent_name)
 
         # 2. Delegate capabilities from parent to child
-        child_caps = self._cap_mgr.delegate(
+        child_budgets = self._budget_mgr.delegate(
             self.checkpoint.capabilities, requested_caps
         )
 
@@ -454,7 +456,7 @@ class SyscallProxy:
                 parent_pid=self.checkpoint.pid,
                 status="RUNNING",
                 agent_function_name=agent_name,
-                capabilities=child_caps,
+                capabilities=child_budgets,
             )
 
             # 5. Launch child as background task
@@ -462,7 +464,7 @@ class SyscallProxy:
             child_proxy = SyscallProxy(
                 checkpoint=child_cp,
                 gate=self._gate,
-                capability_manager=self._cap_mgr,
+                capability_manager=self._budget_mgr,
                 lodge=self._lodge,
                 llm_tool_names=self._llm_tool_names,
                 kernel_tool_names=child_kernel_tools,
@@ -509,7 +511,7 @@ class SyscallProxy:
             self._async_tasks[child_pid] = task
             self._async_checkpoints[child_pid] = child_cp
         except BaseException:
-            self._cap_mgr.reclaim(self.checkpoint.capabilities, child_caps)
+            self._budget_mgr.reclaim(self.checkpoint.capabilities, child_budgets)
             raise
 
         # 6. Log spawn and return handle immediately
@@ -544,7 +546,9 @@ class SyscallProxy:
             await task
         except BaseException:
             # Child raised unexpectedly — reclaim budget
-            self._cap_mgr.reclaim(self.checkpoint.capabilities, child_cp.capabilities)
+            self._budget_mgr.reclaim(
+                self.checkpoint.capabilities, child_cp.capabilities
+            )
             del self._async_tasks[handle]
             del self._async_checkpoints[handle]
             raise
@@ -559,7 +563,7 @@ class SyscallProxy:
             raise SuspendInterrupt(self.checkpoint)
 
         # Child completed — reclaim unused budget
-        self._cap_mgr.reclaim(self.checkpoint.capabilities, child_cp.capabilities)
+        self._budget_mgr.reclaim(self.checkpoint.capabilities, child_cp.capabilities)
 
         self._append_record(
             SyscallRecord(
@@ -623,8 +627,8 @@ class SyscallProxy:
         amount consumed (e.g. ``tokens * cost_per_token``).
         """
         try:
-            self._cap_mgr.deduct(self.checkpoint.capabilities, resource_type, cost)
-        except CapabilityExhaustedError:
+            self._budget_mgr.deduct(self.checkpoint.capabilities, resource_type, cost)
+        except BudgetExhaustedError:
             # Budget is already exhausted — charge whatever remains.
             cap = self.checkpoint.capabilities.get(resource_type)
             if cap is not None:

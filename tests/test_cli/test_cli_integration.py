@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.models.checkpoint import AgentCheckpoint
 from castor.scheduler.persistence import CheckpointStore
 
@@ -29,8 +29,8 @@ def store(temp_db):
 
 
 @pytest.fixture
-def cap_mgr():
-    return CapabilityManager()
+def budget_mgr():
+    return BudgetManager()
 
 
 def run_cli(*args: str, db_path: Path) -> subprocess.CompletedProcess[str]:
@@ -39,8 +39,8 @@ def run_cli(*args: str, db_path: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
 
-def make_suspended(cap_mgr, pid="agent-001"):
-    caps = cap_mgr.create_capabilities({"disk": 50.0})
+def make_suspended(budget_mgr, pid="agent-001"):
+    caps = budget_mgr.create_budgets({"disk": 50.0})
     return AgentCheckpoint(
         pid=pid,
         status="SUSPENDED_FOR_HITL",
@@ -59,9 +59,9 @@ class TestCLIPs:
         assert result.returncode == 0
         assert "No agents" in result.stdout or "No checkpoints" in result.stdout
 
-    def test_ps_shows_checkpoints(self, store, cap_mgr, temp_db):
-        cp1 = make_suspended(cap_mgr, pid="agent-001")
-        caps2 = cap_mgr.create_capabilities({"disk": 10.0})
+    def test_ps_shows_checkpoints(self, store, budget_mgr, temp_db):
+        cp1 = make_suspended(budget_mgr, pid="agent-001")
+        caps2 = budget_mgr.create_budgets({"disk": 10.0})
         cp2 = AgentCheckpoint(
             pid="agent-002",
             status="COMPLETED",
@@ -80,8 +80,8 @@ class TestCLIPs:
 
 
 class TestCLIInspect:
-    def test_inspect_checkpoint(self, store, cap_mgr, temp_db):
-        cp = make_suspended(cap_mgr)
+    def test_inspect_checkpoint(self, store, budget_mgr, temp_db):
+        cp = make_suspended(budget_mgr)
         store.save(cp)
 
         result = run_cli("inspect", "agent-001", db_path=temp_db)
@@ -99,8 +99,8 @@ class TestCLIInspect:
 
 
 class TestCLIReject:
-    def test_reject_records_feedback(self, store, cap_mgr, temp_db):
-        cp = make_suspended(cap_mgr)
+    def test_reject_records_feedback(self, store, budget_mgr, temp_db):
+        cp = make_suspended(budget_mgr)
         store.save(cp)
 
         result = run_cli(
@@ -121,8 +121,8 @@ class TestCLIReject:
         assert updated.syscall_log[0].response["status"] == "HITL_REJECTED"
         assert updated.syscall_log[0].response["human_feedback"] == "Too dangerous"
 
-    def test_reject_child_hitl_blocked(self, store, cap_mgr, temp_db):
-        caps = cap_mgr.create_capabilities({"disk": 50.0})
+    def test_reject_child_hitl_blocked(self, store, budget_mgr, temp_db):
+        caps = budget_mgr.create_budgets({"disk": 50.0})
         cp = AgentCheckpoint(
             pid="agent-001",
             status="SUSPENDED_FOR_HITL",
@@ -146,8 +146,8 @@ class TestCLIReject:
         assert result.returncode == 1
         assert "child HITL" in result.stderr
 
-    def test_reject_no_pending_fails(self, store, cap_mgr, temp_db):
-        caps = cap_mgr.create_capabilities({"disk": 10.0})
+    def test_reject_no_pending_fails(self, store, budget_mgr, temp_db):
+        caps = budget_mgr.create_budgets({"disk": 10.0})
         cp = AgentCheckpoint(
             pid="agent-001",
             status="RUNNING",
@@ -179,8 +179,8 @@ class TestCLIReject:
 
 
 class TestCLIModify:
-    def test_modify_records_feedback(self, store, cap_mgr, temp_db):
-        cp = make_suspended(cap_mgr)
+    def test_modify_records_feedback(self, store, budget_mgr, temp_db):
+        cp = make_suspended(budget_mgr)
         store.save(cp)
 
         result = run_cli(
@@ -200,8 +200,8 @@ class TestCLIModify:
         assert updated.syscall_log[0].response["status"] == "HITL_MODIFIED"
         assert "old files" in updated.syscall_log[0].response["human_feedback"]
 
-    def test_modify_child_hitl_blocked(self, store, cap_mgr, temp_db):
-        caps = cap_mgr.create_capabilities({"disk": 50.0})
+    def test_modify_child_hitl_blocked(self, store, budget_mgr, temp_db):
+        caps = budget_mgr.create_budgets({"disk": 50.0})
         cp = AgentCheckpoint(
             pid="agent-001",
             status="SUSPENDED_FOR_HITL",
@@ -225,8 +225,8 @@ class TestCLIModify:
         assert result.returncode == 1
         assert "child HITL" in result.stderr
 
-    def test_modify_no_pending_fails(self, store, cap_mgr, temp_db):
-        caps = cap_mgr.create_capabilities({"disk": 10.0})
+    def test_modify_no_pending_fails(self, store, budget_mgr, temp_db):
+        caps = budget_mgr.create_budgets({"disk": 10.0})
         cp = AgentCheckpoint(
             pid="agent-001",
             status="COMPLETED",

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
@@ -32,8 +32,8 @@ def gate(registry):
 
 
 @pytest.fixture
-def cap_mgr():
-    return CapabilityManager()
+def budget_mgr():
+    return BudgetManager()
 
 
 @pytest.fixture
@@ -41,8 +41,8 @@ def hitl():
     return HITLHandler()
 
 
-def _make_checkpoint(cap_mgr):
-    caps = cap_mgr.create_capabilities({"api_usd": 10.0, "disk": 10.0})
+def _make_checkpoint(budget_mgr):
+    caps = budget_mgr.create_budgets({"api_usd": 10.0, "disk": 10.0})
     return AgentCheckpoint(
         pid="llm-agent-001",
         status="RUNNING",
@@ -55,7 +55,7 @@ class TestLLMReplayDeterminism:
     """LLM responses must be served from cache on replay, never re-fetched."""
 
     async def test_llm_not_called_on_replay_after_hitl(
-        self, registry, gate, cap_mgr, hitl
+        self, registry, gate, budget_mgr, hitl
     ):
         # ── Arrange: mock LLM client with call tracking ──
         call_log: list[dict] = []
@@ -95,8 +95,8 @@ class TestLLMReplayDeterminism:
             return "complete"
 
         # ── Act: first run — suspends at delete_files ──
-        checkpoint = _make_checkpoint(cap_mgr)
-        runner1 = AgentRunner(gate, cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
+        runner1 = AgentRunner(gate, budget_mgr)
         await runner1.run(llm_agent, checkpoint)
 
         assert checkpoint.status == "SUSPENDED_FOR_HITL"
@@ -105,12 +105,12 @@ class TestLLMReplayDeterminism:
         assert len(call_log) == 1
 
         # ── Human approves ──
-        await hitl.approve(checkpoint, gate, cap_mgr)
+        await hitl.approve(checkpoint, gate, budget_mgr)
         assert checkpoint.status == "RUNNING"
         assert len(checkpoint.syscall_log) == 2  # llm_inference + delete_files
 
         # ── Resume via replay ──
-        runner2 = AgentRunner(gate, cap_mgr)
+        runner2 = AgentRunner(gate, budget_mgr)
         result = await runner2.run(llm_agent, checkpoint)
 
         # ── Assert: LLM was NOT called again ──
@@ -123,7 +123,7 @@ class TestLLMReplayDeterminism:
         assert llm_record.request["tool_name"] == "llm_inference"
         assert llm_record.response == "Generated plan: delete /tmp/old"
 
-    async def test_llm_response_survives_full_replay(self, registry, gate, cap_mgr):
+    async def test_llm_response_survives_full_replay(self, registry, gate, budget_mgr):
         """Run agent to completion, then replay entirely from cache."""
         call_count = 0
 
@@ -145,8 +145,8 @@ class TestLLMReplayDeterminism:
             return f"{r1} | {r2}"
 
         # First run — two live LLM calls
-        checkpoint = _make_checkpoint(cap_mgr)
-        runner1 = AgentRunner(gate, cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
+        runner1 = AgentRunner(gate, budget_mgr)
         await runner1.run(simple_agent, checkpoint)
 
         assert checkpoint.status == "COMPLETED"
@@ -155,7 +155,7 @@ class TestLLMReplayDeterminism:
         assert checkpoint.syscall_log[1].response == "response #2"
 
         # Full replay — zero live LLM calls (all served from log)
-        runner2 = AgentRunner(gate, cap_mgr)
+        runner2 = AgentRunner(gate, budget_mgr)
         replayed = await runner2.run(simple_agent, checkpoint)
 
         assert replayed.status == "COMPLETED"
@@ -163,7 +163,7 @@ class TestLLMReplayDeterminism:
         assert replayed.syscall_log[0].response == "response #1"
         assert replayed.syscall_log[1].response == "response #2"
 
-    async def test_llm_syscall_with_custom_tool_name(self, registry, gate, cap_mgr):
+    async def test_llm_syscall_with_custom_tool_name(self, registry, gate, budget_mgr):
         """LLMSyscall can be registered under a custom tool name."""
         called = False
 
@@ -183,8 +183,8 @@ class TestLLMReplayDeterminism:
         async def agent(proxy: SyscallProxy) -> str:
             return await llm.infer(proxy, model="claude-3", prompt="hello")
 
-        checkpoint = _make_checkpoint(cap_mgr)
-        runner = AgentRunner(gate, cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         await runner.run(agent, checkpoint)
 
         assert checkpoint.status == "COMPLETED"

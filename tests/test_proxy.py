@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
@@ -27,14 +27,14 @@ def gate(registry):
 
 
 @pytest.fixture
-def cap_mgr():
-    return CapabilityManager()
+def budget_mgr():
+    return BudgetManager()
 
 
-def make_checkpoint(cap_mgr, caps=None, syscall_log=None):
+def make_checkpoint(budget_mgr, caps=None, syscall_log=None):
     """Create a checkpoint with default capabilities."""
     if caps is None:
-        caps = cap_mgr.create_capabilities({"test": 100.0})
+        caps = budget_mgr.create_budgets({"test": 100.0})
     return AgentCheckpoint(
         pid="test-001",
         status="RUNNING",
@@ -67,10 +67,10 @@ def register_delete(registry):
 
 
 class TestReplayPath:
-    async def test_replay_returns_cached_response(self, registry, gate, cap_mgr):
+    async def test_replay_returns_cached_response(self, registry, gate, budget_mgr):
         register_search(registry)
         checkpoint = make_checkpoint(
-            cap_mgr,
+            budget_mgr,
             syscall_log=[
                 SyscallRecord(
                     request={"tool_name": "search", "arguments": {"query": "hello"}},
@@ -78,16 +78,16 @@ class TestReplayPath:
                 )
             ],
         )
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         result = await proxy.syscall("search", {"query": "hello"})
         assert result == ["cached result"]
         assert proxy._replay_index == 1
 
-    async def test_replay_multiple_cached(self, registry, gate, cap_mgr):
+    async def test_replay_multiple_cached(self, registry, gate, budget_mgr):
         register_search(registry)
         checkpoint = make_checkpoint(
-            cap_mgr,
+            budget_mgr,
             syscall_log=[
                 SyscallRecord(
                     request={"tool_name": "search", "arguments": {"query": "a"}},
@@ -99,7 +99,7 @@ class TestReplayPath:
                 ),
             ],
         )
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         r1 = await proxy.syscall("search", {"query": "a"})
         r2 = await proxy.syscall("search", {"query": "b"})
@@ -107,10 +107,10 @@ class TestReplayPath:
         assert r2 == ["result b"]
         assert not proxy.is_replaying
 
-    async def test_replay_divergence_raises(self, registry, gate, cap_mgr):
+    async def test_replay_divergence_raises(self, registry, gate, budget_mgr):
         register_search(registry)
         checkpoint = make_checkpoint(
-            cap_mgr,
+            budget_mgr,
             syscall_log=[
                 SyscallRecord(
                     request={"tool_name": "search", "arguments": {"query": "hello"}},
@@ -118,7 +118,7 @@ class TestReplayPath:
                 )
             ],
         )
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         with pytest.raises(ReplayDivergenceError) as exc_info:
             await proxy.syscall("search", {"query": "DIFFERENT"})
@@ -126,10 +126,10 @@ class TestReplayPath:
 
 
 class TestFastPath:
-    async def test_new_syscall_executes_and_logs(self, registry, gate, cap_mgr):
+    async def test_new_syscall_executes_and_logs(self, registry, gate, budget_mgr):
         register_search(registry)
-        checkpoint = make_checkpoint(cap_mgr)
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         result = await proxy.syscall("search", {"query": "hello"})
         assert result == ["result for hello"]
@@ -140,19 +140,19 @@ class TestFastPath:
         }
         assert checkpoint.syscall_log[0].response == ["result for hello"]
 
-    async def test_capability_deducted(self, registry, gate, cap_mgr):
+    async def test_capability_deducted(self, registry, gate, budget_mgr):
         register_search(registry)
-        checkpoint = make_checkpoint(cap_mgr)
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         await proxy.syscall("search", {"query": "test"})
         assert checkpoint.capabilities["test"].current_usage == 1.0
 
-    async def test_capability_exhaustion(self, registry, gate, cap_mgr):
+    async def test_capability_exhaustion(self, registry, gate, budget_mgr):
         register_search(registry)
-        caps = cap_mgr.create_capabilities({"test": 0.5})  # Not enough for cost=1.0
-        checkpoint = make_checkpoint(cap_mgr, caps=caps)
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        caps = budget_mgr.create_budgets({"test": 0.5})  # Not enough for cost=1.0
+        checkpoint = make_checkpoint(budget_mgr, caps=caps)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         result = await proxy.syscall("search", {"query": "test"})
         assert result["status"] == "INSUFFICIENT_CAPABILITY"
@@ -160,10 +160,10 @@ class TestFastPath:
 
 
 class TestSlowPath:
-    async def test_destructive_tool_suspends(self, registry, gate, cap_mgr):
+    async def test_destructive_tool_suspends(self, registry, gate, budget_mgr):
         register_delete(registry)
-        checkpoint = make_checkpoint(cap_mgr)
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         with pytest.raises(SuspendInterrupt) as exc_info:
             await proxy.syscall("delete_files", {"paths": ["/tmp/a"]})
@@ -175,10 +175,10 @@ class TestSlowPath:
         }
         assert exc_info.value.checkpoint is checkpoint
 
-    async def test_suspension_does_not_log(self, registry, gate, cap_mgr):
+    async def test_suspension_does_not_log(self, registry, gate, budget_mgr):
         register_delete(registry)
-        checkpoint = make_checkpoint(cap_mgr)
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         with pytest.raises(SuspendInterrupt):
             await proxy.syscall("delete_files", {"paths": ["/tmp/a"]})
@@ -188,10 +188,10 @@ class TestSlowPath:
 
 
 class TestValidationError:
-    async def test_invalid_args_return_feedback(self, registry, gate, cap_mgr):
+    async def test_invalid_args_return_feedback(self, registry, gate, budget_mgr):
         register_search(registry)
-        checkpoint = make_checkpoint(cap_mgr)
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         # 'query' is required but missing
         result = await proxy.syscall("search", {})
@@ -204,13 +204,13 @@ class TestValidationError:
 class TestBudgetRefundOnFailure:
     """Budget must be refunded if tool execution fails or is cancelled."""
 
-    async def test_refund_on_tool_exception(self, registry, gate, cap_mgr):
+    async def test_refund_on_tool_exception(self, registry, gate, budget_mgr):
         @castor_tool(consumes="test", cost_per_use=2.0, registry=registry)
         async def flaky_tool(query: str) -> str:
             raise RuntimeError("network timeout")
 
-        checkpoint = make_checkpoint(cap_mgr)
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         with pytest.raises(RuntimeError, match="network timeout"):
             await proxy.syscall("flaky_tool", {"query": "test"})
@@ -219,7 +219,7 @@ class TestBudgetRefundOnFailure:
         assert checkpoint.capabilities["test"].current_usage == 0.0
         assert len(checkpoint.syscall_log) == 0
 
-    async def test_refund_on_cancellation(self, registry, gate, cap_mgr):
+    async def test_refund_on_cancellation(self, registry, gate, budget_mgr):
         """Simulates preemption via asyncio.CancelledError during tool exec."""
         cancel_event = asyncio.Event()
 
@@ -229,8 +229,8 @@ class TestBudgetRefundOnFailure:
             await asyncio.sleep(60)  # will be cancelled
             return "never reached"
 
-        checkpoint = make_checkpoint(cap_mgr)
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         async def run_syscall():
             await proxy.syscall("slow_tool", {"query": "test"})
@@ -246,11 +246,11 @@ class TestBudgetRefundOnFailure:
         assert checkpoint.capabilities["test"].current_usage == 0.0
         assert len(checkpoint.syscall_log) == 0
 
-    async def test_no_refund_on_success(self, registry, gate, cap_mgr):
+    async def test_no_refund_on_success(self, registry, gate, budget_mgr):
         """Sanity check: successful execution keeps the deduction."""
         register_search(registry)
-        checkpoint = make_checkpoint(cap_mgr)
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         await proxy.syscall("search", {"query": "hello"})
 
@@ -265,28 +265,30 @@ class TestWALIntegration:
 
         return CheckpointStore(f"sqlite:///{tmp_path / 'test.db'}")
 
-    async def test_wal_written_before_execution(self, registry, gate, cap_mgr, store):
+    async def test_wal_written_before_execution(
+        self, registry, gate, budget_mgr, store
+    ):
         """WAL entry is written before tool executes."""
         register_search(registry)
-        checkpoint = make_checkpoint(cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
         store.save(checkpoint)
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr, checkpoint_store=store)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr, checkpoint_store=store)
 
         await proxy.syscall("search", {"query": "hello"})
 
         # WAL should be completed (no pending entries)
         assert store.list_pending_wal() == []
 
-    async def test_wal_abandoned_on_failure(self, registry, gate, cap_mgr, store):
+    async def test_wal_abandoned_on_failure(self, registry, gate, budget_mgr, store):
         """If tool execution fails, WAL entry is marked ABANDONED (not left PENDING)."""
 
         @castor_tool(consumes="test", cost_per_use=2.0, registry=registry)
         async def failing_tool(query: str) -> str:
             raise RuntimeError("boom")
 
-        checkpoint = make_checkpoint(cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
         store.save(checkpoint)
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr, checkpoint_store=store)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr, checkpoint_store=store)
 
         with pytest.raises(RuntimeError, match="boom"):
             await proxy.syscall("failing_tool", {"query": "test"})
@@ -294,18 +296,18 @@ class TestWALIntegration:
         # WAL entry should be ABANDONED, not left PENDING (prevents double refund)
         assert store.list_pending_wal() == []
 
-    async def test_no_store_no_wal(self, registry, gate, cap_mgr):
+    async def test_no_store_no_wal(self, registry, gate, budget_mgr):
         """When no store is provided, proxy works without WAL (backwards compat)."""
         register_search(registry)
-        checkpoint = make_checkpoint(cap_mgr)
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)  # no store
+        checkpoint = make_checkpoint(budget_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)  # no store
 
         result = await proxy.syscall("search", {"query": "hello"})
         assert result == ["result for hello"]
 
 
 class TestToolTimeout:
-    async def test_async_tool_timeout(self, registry, gate, cap_mgr):
+    async def test_async_tool_timeout(self, registry, gate, budget_mgr):
         """Async tool exceeding timeout raises asyncio.TimeoutError, budget refunded."""
 
         @castor_tool(
@@ -318,8 +320,8 @@ class TestToolTimeout:
             await asyncio.sleep(10)
             return "never reached"
 
-        checkpoint = make_checkpoint(cap_mgr)
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         with pytest.raises(asyncio.TimeoutError):
             await proxy.syscall("slow_tool", {"query": "test"})
@@ -327,7 +329,7 @@ class TestToolTimeout:
         # Budget refunded
         assert checkpoint.capabilities["test"].current_usage == 0.0
 
-    async def test_sync_tool_timeout(self, registry, gate, cap_mgr):
+    async def test_sync_tool_timeout(self, registry, gate, budget_mgr):
         """Sync CPU-bound tool with timeout runs in executor and times out."""
         import time
 
@@ -341,30 +343,30 @@ class TestToolTimeout:
             time.sleep(10)
             return "never reached"
 
-        checkpoint = make_checkpoint(cap_mgr)
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         with pytest.raises(asyncio.TimeoutError):
             await proxy.syscall("cpu_bound_tool", {"query": "test"})
 
         assert checkpoint.capabilities["test"].current_usage == 0.0
 
-    async def test_no_timeout_default(self, registry, gate, cap_mgr):
+    async def test_no_timeout_default(self, registry, gate, budget_mgr):
         """Tools without timeout_seconds work normally (backwards compat)."""
         register_search(registry)
-        checkpoint = make_checkpoint(cap_mgr)
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         result = await proxy.syscall("search", {"query": "hello"})
         assert result == ["result for hello"]
 
 
 class TestReplayThenLive:
-    async def test_replay_then_live_execution(self, registry, gate, cap_mgr):
+    async def test_replay_then_live_execution(self, registry, gate, budget_mgr):
         """After replaying cached syscalls, new ones execute live."""
         register_search(registry)
         checkpoint = make_checkpoint(
-            cap_mgr,
+            budget_mgr,
             syscall_log=[
                 SyscallRecord(
                     request={"tool_name": "search", "arguments": {"query": "cached"}},
@@ -372,7 +374,7 @@ class TestReplayThenLive:
                 )
             ],
         )
-        proxy = SyscallProxy(checkpoint, gate, cap_mgr)
+        proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
         # Replay
         r1 = await proxy.syscall("search", {"query": "cached"})

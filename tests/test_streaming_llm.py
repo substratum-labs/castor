@@ -19,7 +19,7 @@ import asyncio
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
@@ -43,12 +43,12 @@ def gate(registry):
 
 
 @pytest.fixture
-def cap_mgr():
-    return CapabilityManager()
+def budget_mgr():
+    return BudgetManager()
 
 
-def _make_checkpoint(cap_mgr, budget=10.0):
-    caps = cap_mgr.create_capabilities({"api_usd": budget})
+def _make_checkpoint(budget_mgr, budget=10.0):
+    caps = budget_mgr.create_budgets({"api_usd": budget})
     return AgentCheckpoint(
         pid="stream-test-001",
         status="RUNNING",
@@ -63,7 +63,9 @@ def _make_checkpoint(cap_mgr, budget=10.0):
 class TestStreamingCompletion:
     """StreamingLLMSyscall accumulates chunks and returns the full text."""
 
-    async def test_streaming_completes_and_accumulates(self, registry, gate, cap_mgr):
+    async def test_streaming_completes_and_accumulates(
+        self, registry, gate, budget_mgr
+    ):
         async def fake_stream(model: str, prompt: str):
             for word in ["Hello", " ", "World"]:
                 yield word
@@ -78,8 +80,8 @@ class TestStreamingCompletion:
         async def agent(proxy: SyscallProxy) -> str:
             return await llm.infer(proxy, model="test", prompt="hi")
 
-        checkpoint = _make_checkpoint(cap_mgr)
-        runner = AgentRunner(gate, cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         result = await runner.run(agent, checkpoint)
 
         assert result.status == "COMPLETED"
@@ -88,7 +90,7 @@ class TestStreamingCompletion:
         assert result.syscall_log[0].response == "Hello World"
         assert result.syscall_log[0].request["tool_name"] == "llm_inference_streaming"
 
-    async def test_streaming_with_custom_tool_name(self, registry, gate, cap_mgr):
+    async def test_streaming_with_custom_tool_name(self, registry, gate, budget_mgr):
         async def fake_stream(model: str, prompt: str):
             yield "response"
 
@@ -103,13 +105,13 @@ class TestStreamingCompletion:
         async def agent(proxy: SyscallProxy) -> str:
             return await llm.infer(proxy, model="claude", prompt="hi")
 
-        checkpoint = _make_checkpoint(cap_mgr)
-        runner = AgentRunner(gate, cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         await runner.run(agent, checkpoint)
 
         assert checkpoint.syscall_log[0].request["tool_name"] == "claude_streaming"
 
-    async def test_streaming_empty_response(self, registry, gate, cap_mgr):
+    async def test_streaming_empty_response(self, registry, gate, budget_mgr):
         async def empty_stream(model: str, prompt: str):
             return
             yield  # noqa: RET504 — make it an async generator
@@ -121,8 +123,8 @@ class TestStreamingCompletion:
         async def agent(proxy: SyscallProxy) -> str:
             return await llm.infer(proxy, model="test", prompt="empty")
 
-        checkpoint = _make_checkpoint(cap_mgr)
-        runner = AgentRunner(gate, cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         await runner.run(agent, checkpoint)
 
         assert checkpoint.result == ""
@@ -132,7 +134,7 @@ class TestStreamingCompletion:
 class TestStreamingPreemption:
     """CancelledError during streaming saves accumulated text to partial_work."""
 
-    async def test_preemption_saves_partial_work(self, registry, gate, cap_mgr):
+    async def test_preemption_saves_partial_work(self, registry, gate, budget_mgr):
         started = asyncio.Event()
 
         async def slow_stream(model: str, prompt: str):
@@ -153,8 +155,8 @@ class TestStreamingPreemption:
         async def agent(proxy: SyscallProxy) -> str:
             return await llm.infer(proxy, model="test", prompt="stream me")
 
-        checkpoint = _make_checkpoint(cap_mgr)
-        runner = AgentRunner(gate, cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         task = await runner.run_as_task(agent, checkpoint)
         await started.wait()
 
@@ -170,7 +172,7 @@ class TestStreamingPreemption:
         assert len(checkpoint.syscall_log) == 0
 
     async def test_preemption_without_streaming_has_no_partial_work(
-        self, registry, gate, cap_mgr
+        self, registry, gate, budget_mgr
     ):
         """Non-streaming preemption still works — partial_work stays None."""
         started = asyncio.Event()
@@ -185,8 +187,8 @@ class TestStreamingPreemption:
             await asyncio.sleep(10)
             return "done"
 
-        checkpoint = _make_checkpoint(cap_mgr)
-        runner = AgentRunner(gate, cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         task = await runner.run_as_task(agent, checkpoint)
         await started.wait()
 
@@ -203,7 +205,7 @@ class TestStreamingReplay:
     """Streaming LLM responses are replayed from cache without re-streaming."""
 
     async def test_streaming_replay_serves_cached_response(
-        self, registry, gate, cap_mgr
+        self, registry, gate, budget_mgr
     ):
         call_count = 0
 
@@ -224,8 +226,8 @@ class TestStreamingReplay:
             return await llm.infer(proxy, model="test", prompt="first")
 
         # First run — live streaming
-        checkpoint = _make_checkpoint(cap_mgr)
-        runner1 = AgentRunner(gate, cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
+        runner1 = AgentRunner(gate, budget_mgr)
         await runner1.run(agent, checkpoint)
 
         assert checkpoint.status == "COMPLETED"
@@ -233,7 +235,7 @@ class TestStreamingReplay:
         assert checkpoint.result == "cached response"
 
         # Full replay — zero new streaming calls
-        runner2 = AgentRunner(gate, cap_mgr)
+        runner2 = AgentRunner(gate, budget_mgr)
         replayed = await runner2.run(agent, checkpoint)
 
         assert replayed.status == "COMPLETED"
@@ -244,7 +246,7 @@ class TestStreamingReplay:
 class TestStreamingCallbacks:
     """on_chunk / on_chunk_async callbacks fire for every chunk."""
 
-    async def test_on_chunk_callback_fires(self, registry, gate, cap_mgr):
+    async def test_on_chunk_callback_fires(self, registry, gate, budget_mgr):
         chunks_seen: list[tuple[str, str]] = []
 
         def track_chunks(chunk: str, accumulated: str) -> None:
@@ -266,8 +268,8 @@ class TestStreamingCallbacks:
         async def agent(proxy: SyscallProxy) -> str:
             return await llm.infer(proxy, model="test", prompt="hi")
 
-        checkpoint = _make_checkpoint(cap_mgr)
-        runner = AgentRunner(gate, cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         await runner.run(agent, checkpoint)
 
         assert len(chunks_seen) == 3
@@ -275,7 +277,7 @@ class TestStreamingCallbacks:
         assert chunks_seen[1] == (" ", "Hello ")
         assert chunks_seen[2] == ("World", "Hello World")
 
-    async def test_on_chunk_async_callback(self, registry, gate, cap_mgr):
+    async def test_on_chunk_async_callback(self, registry, gate, budget_mgr):
         chunks_seen: list[str] = []
 
         async def async_tracker(chunk: str, accumulated: str) -> None:
@@ -297,15 +299,15 @@ class TestStreamingCallbacks:
         async def agent(proxy: SyscallProxy) -> str:
             return await llm.infer(proxy, model="test", prompt="abc")
 
-        checkpoint = _make_checkpoint(cap_mgr)
-        runner = AgentRunner(gate, cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         await runner.run(agent, checkpoint)
 
         assert chunks_seen == ["a", "b", "c"]
 
-    async def test_content_preemption_via_callback(self, registry, gate, cap_mgr):
+    async def test_content_preemption_via_callback(self, registry, gate, budget_mgr):
         """External code can preempt from on_chunk callback."""
-        runner = AgentRunner(gate, cap_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         started = asyncio.Event()
 
         def danger_detector(chunk: str, accumulated: str) -> None:
@@ -331,7 +333,7 @@ class TestStreamingCallbacks:
         async def agent(proxy: SyscallProxy) -> str:
             return await llm.infer(proxy, model="test", prompt="plan")
 
-        checkpoint = _make_checkpoint(cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
         task = await runner.run_as_task(agent, checkpoint)
         await started.wait()
         # Give the event loop a tick for cancel to propagate
@@ -348,7 +350,7 @@ class TestStreamingCallbacks:
 class TestStreamingConcurrency:
     """Parent and child sharing one StreamingLLMSyscall don't interfere."""
 
-    async def test_concurrent_streaming_isolation(self, registry, gate, cap_mgr):
+    async def test_concurrent_streaming_isolation(self, registry, gate, budget_mgr):
         agent_registry = AgentRegistry()
 
         async def parent_stream(model: str, prompt: str):
@@ -387,8 +389,8 @@ class TestStreamingConcurrency:
             )
             return f"{parent_result} | {child_result}"
 
-        checkpoint = _make_checkpoint(cap_mgr)
-        runner = AgentRunner(gate, cap_mgr, agent_registry=agent_registry)
+        checkpoint = _make_checkpoint(budget_mgr)
+        runner = AgentRunner(gate, budget_mgr, agent_registry=agent_registry)
         result = await runner.run(parent_agent, checkpoint)
 
         assert result.status == "COMPLETED"
@@ -401,7 +403,7 @@ class TestStreamingConcurrency:
 class TestResumeContext:
     """Preemption context is accessible on resume via proxy.preemption_context."""
 
-    async def test_preemption_context_accessible(self, registry, gate, cap_mgr):
+    async def test_preemption_context_accessible(self, registry, gate, budget_mgr):
         started = asyncio.Event()
 
         async def fake_stream(model: str, prompt: str):
@@ -421,8 +423,8 @@ class TestResumeContext:
         async def agent_v1(proxy: SyscallProxy) -> str:
             return await llm.infer(proxy, model="test", prompt="stream")
 
-        checkpoint = _make_checkpoint(cap_mgr)
-        runner = AgentRunner(gate, cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         task = await runner.run_as_task(agent_v1, checkpoint)
         await started.wait()
         runner.preempt("HUMAN_ABORT", {"instruction": "adapt"})
@@ -444,7 +446,7 @@ class TestResumeContext:
             return "adapted"
 
         checkpoint.status = "RUNNING"
-        runner2 = AgentRunner(gate, cap_mgr)
+        runner2 = AgentRunner(gate, budget_mgr)
         await runner2.run(agent_v2, checkpoint)
 
         assert context_seen is not None
@@ -453,7 +455,7 @@ class TestResumeContext:
         assert context_seen["partial_work"] == "partial"
 
     async def test_preemption_context_cleared_on_completion(
-        self, registry, gate, cap_mgr
+        self, registry, gate, budget_mgr
     ):
         """Preemption fields are cleared after successful run."""
 
@@ -464,13 +466,13 @@ class TestResumeContext:
         async def agent(proxy: SyscallProxy) -> str:
             return await proxy.syscall("search", {"query": "test"})
 
-        checkpoint = _make_checkpoint(cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
         # Simulate residual preemption context from a prior run
         checkpoint.preemption_reason = "STALE_REASON"
         checkpoint.preemption_payload = {"old": True}
         checkpoint.partial_work = "old partial"
 
-        runner = AgentRunner(gate, cap_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         await runner.run(agent, checkpoint)
 
         assert checkpoint.status == "COMPLETED"
@@ -480,7 +482,7 @@ class TestResumeContext:
         assert checkpoint.partial_work is None
 
     async def test_no_preemption_context_when_not_preempted(
-        self, registry, gate, cap_mgr
+        self, registry, gate, budget_mgr
     ):
         @castor_tool(consumes="api_usd", cost_per_use=0.1, registry=registry)
         def search(query: str) -> str:
@@ -493,8 +495,8 @@ class TestResumeContext:
             context_seen = proxy.preemption_context
             return await proxy.syscall("search", {"query": "test"})
 
-        checkpoint = _make_checkpoint(cap_mgr)
-        runner = AgentRunner(gate, cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         await runner.run(agent, checkpoint)
 
         assert context_seen is None
@@ -506,7 +508,7 @@ class TestResumeContext:
 class TestProportionalBudget:
     """Proportional budget charges actual tokens consumed on cancellation."""
 
-    async def test_proportional_budget_on_cancel(self, registry, gate, cap_mgr):
+    async def test_proportional_budget_on_cancel(self, registry, gate, budget_mgr):
         """After streaming cancellation, budget charged for actual tokens only."""
         started = asyncio.Event()
 
@@ -529,10 +531,10 @@ class TestProportionalBudget:
         async def agent(proxy: SyscallProxy) -> str:
             return await llm.infer(proxy, model="test", prompt="count")
 
-        checkpoint = _make_checkpoint(cap_mgr, budget=10.0)
+        checkpoint = _make_checkpoint(budget_mgr, budget=10.0)
         initial_usage = checkpoint.capabilities["api_usd"].current_usage
 
-        runner = AgentRunner(gate, cap_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         task = await runner.run_as_task(agent, checkpoint)
         await started.wait()
 
@@ -548,7 +550,7 @@ class TestProportionalBudget:
         actual_usage = checkpoint.capabilities["api_usd"].current_usage
         assert actual_usage == pytest.approx(initial_usage + 0.3)
 
-    async def test_full_completion_uses_cost_per_use(self, registry, gate, cap_mgr):
+    async def test_full_completion_uses_cost_per_use(self, registry, gate, budget_mgr):
         """Normal completion charges full cost_per_use, not per-token."""
 
         async def fast_stream(model: str, prompt: str):
@@ -566,10 +568,10 @@ class TestProportionalBudget:
         async def agent(proxy: SyscallProxy) -> str:
             return await llm.infer(proxy, model="test", prompt="done")
 
-        checkpoint = _make_checkpoint(cap_mgr, budget=10.0)
+        checkpoint = _make_checkpoint(budget_mgr, budget=10.0)
         initial_usage = checkpoint.capabilities["api_usd"].current_usage
 
-        runner = AgentRunner(gate, cap_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         await runner.run(agent, checkpoint)
 
         # Normal path: cost_per_use=1.0 deducted, no refund
@@ -577,7 +579,7 @@ class TestProportionalBudget:
         assert actual_usage == pytest.approx(initial_usage + 1.0)
 
     async def test_cancel_without_cost_per_token_full_refund(
-        self, registry, gate, cap_mgr
+        self, registry, gate, budget_mgr
     ):
         """Without cost_per_token, cancellation still does full refund."""
         started = asyncio.Event()
@@ -599,10 +601,10 @@ class TestProportionalBudget:
         async def agent(proxy: SyscallProxy) -> str:
             return await llm.infer(proxy, model="test", prompt="cancel")
 
-        checkpoint = _make_checkpoint(cap_mgr, budget=10.0)
+        checkpoint = _make_checkpoint(budget_mgr, budget=10.0)
         initial_usage = checkpoint.capabilities["api_usd"].current_usage
 
-        runner = AgentRunner(gate, cap_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         task = await runner.run_as_task(agent, checkpoint)
         await started.wait()
 
@@ -615,7 +617,9 @@ class TestProportionalBudget:
         actual_usage = checkpoint.capabilities["api_usd"].current_usage
         assert actual_usage == pytest.approx(initial_usage)
 
-    async def test_cost_per_token_capped_at_cost_per_use(self, registry, gate, cap_mgr):
+    async def test_cost_per_token_capped_at_cost_per_use(
+        self, registry, gate, budget_mgr
+    ):
         """Proportional cost never exceeds cost_per_use."""
         started = asyncio.Event()
 
@@ -637,10 +641,10 @@ class TestProportionalBudget:
         async def agent(proxy: SyscallProxy) -> str:
             return await llm.infer(proxy, model="test", prompt="many")
 
-        checkpoint = _make_checkpoint(cap_mgr, budget=10.0)
+        checkpoint = _make_checkpoint(budget_mgr, budget=10.0)
         initial_usage = checkpoint.capabilities["api_usd"].current_usage
 
-        runner = AgentRunner(gate, cap_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         task = await runner.run_as_task(agent, checkpoint)
         await started.wait()
 
@@ -660,7 +664,7 @@ class TestProportionalBudget:
 class TestBackwardCompatibility:
     """Existing LLMSyscall (non-streaming) still works identically."""
 
-    async def test_llmsyscall_unchanged(self, registry, gate, cap_mgr):
+    async def test_llmsyscall_unchanged(self, registry, gate, budget_mgr):
         called = False
 
         async def fake_llm(model: str, prompt: str) -> str:
@@ -678,8 +682,8 @@ class TestBackwardCompatibility:
         async def agent(proxy: SyscallProxy) -> str:
             return await llm.infer(proxy, model="gpt-4", prompt="hello")
 
-        checkpoint = _make_checkpoint(cap_mgr)
-        runner = AgentRunner(gate, cap_mgr)
+        checkpoint = _make_checkpoint(budget_mgr)
+        runner = AgentRunner(gate, budget_mgr)
         await runner.run(agent, checkpoint)
 
         assert checkpoint.status == "COMPLETED"

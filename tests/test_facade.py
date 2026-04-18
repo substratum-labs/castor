@@ -4,7 +4,7 @@ import pytest
 
 from castor import (
     AgentCheckpoint,
-    CapabilityManager,
+    BudgetManager,
     SyscallGate,
     SyscallProxy,
     castor_tool,
@@ -36,13 +36,13 @@ def gate(registry):
 
 
 @pytest.fixture()
-def cap_mgr():
-    return CapabilityManager()
+def budget_mgr():
+    return BudgetManager()
 
 
 @pytest.fixture()
-def checkpoint(cap_mgr):
-    caps = cap_mgr.create_capabilities({"api": 100.0})
+def checkpoint(budget_mgr):
+    caps = budget_mgr.create_budgets({"api": 100.0})
     return AgentCheckpoint(
         pid="test-001",
         status="RUNNING",
@@ -52,8 +52,8 @@ def checkpoint(cap_mgr):
 
 
 @pytest.fixture()
-def proxy(checkpoint, gate, cap_mgr):
-    return SyscallProxy(checkpoint, gate, cap_mgr)
+def proxy(checkpoint, gate, budget_mgr):
+    return SyscallProxy(checkpoint, gate, budget_mgr)
 
 
 # ── Task 1: syscall kwargs ──

@@ -2,7 +2,7 @@
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
@@ -28,17 +28,17 @@ def gate(registry):
 
 
 @pytest.fixture()
-def cap_mgr():
-    return CapabilityManager()
+def budget_mgr():
+    return BudgetManager()
 
 
 @pytest.fixture()
-def runner(gate, cap_mgr):
-    return AgentRunner(gate, cap_mgr)
+def runner(gate, budget_mgr):
+    return AgentRunner(gate, budget_mgr)
 
 
 @pytest.mark.asyncio()
-async def test_legacy_agent_with_proxy_param(runner, cap_mgr):
+async def test_legacy_agent_with_proxy_param(runner, budget_mgr):
     """Legacy agent (1 param) still works."""
 
     async def my_agent(proxy):
@@ -49,7 +49,7 @@ async def test_legacy_agent_with_proxy_param(runner, cap_mgr):
         pid="sig-legacy",
         status="RUNNING",
         agent_function_name="my_agent",
-        capabilities=cap_mgr.create_capabilities({"api": 10.0}),
+        capabilities=budget_mgr.create_budgets({"api": 10.0}),
     )
     cp = await runner.run(my_agent, cp)
     assert cp.status == "COMPLETED"
@@ -57,7 +57,7 @@ async def test_legacy_agent_with_proxy_param(runner, cap_mgr):
 
 
 @pytest.mark.asyncio()
-async def test_new_style_agent_no_params(runner, cap_mgr):
+async def test_new_style_agent_no_params(runner, budget_mgr):
     """New-style agent (0 params) uses castor.lib via ContextVar."""
     from castor.lib import tool
 
@@ -68,7 +68,7 @@ async def test_new_style_agent_no_params(runner, cap_mgr):
         pid="sig-new",
         status="RUNNING",
         agent_function_name="my_agent",
-        capabilities=cap_mgr.create_capabilities({"api": 10.0}),
+        capabilities=budget_mgr.create_budgets({"api": 10.0}),
     )
     cp = await runner.run(my_agent, cp)
     assert cp.status == "COMPLETED"
@@ -76,7 +76,7 @@ async def test_new_style_agent_no_params(runner, cap_mgr):
 
 
 @pytest.mark.asyncio()
-async def test_contextvar_set_for_legacy_agent(runner, cap_mgr):
+async def test_contextvar_set_for_legacy_agent(runner, budget_mgr):
     """ContextVar is set even for legacy agents — enables gradual migration."""
     from castor.lib import budget
 
@@ -88,7 +88,7 @@ async def test_contextvar_set_for_legacy_agent(runner, cap_mgr):
         pid="sig-mixed",
         status="RUNNING",
         agent_function_name="my_agent",
-        capabilities=cap_mgr.create_capabilities({"api": 10.0}),
+        capabilities=budget_mgr.create_budgets({"api": 10.0}),
     )
     cp = await runner.run(my_agent, cp)
     assert cp.status == "COMPLETED"

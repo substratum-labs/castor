@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
@@ -40,17 +40,17 @@ def gate(registry):
 
 
 @pytest.fixture
-def cap_mgr():
-    return CapabilityManager()
+def budget_mgr():
+    return BudgetManager()
 
 
 @pytest.fixture
-def runner(gate, cap_mgr):
-    return AgentRunner(gate, cap_mgr)
+def runner(gate, budget_mgr):
+    return AgentRunner(gate, budget_mgr)
 
 
-def make_checkpoint(cap_mgr):
-    caps = cap_mgr.create_capabilities({"test": 100.0})
+def make_checkpoint(budget_mgr):
+    caps = budget_mgr.create_budgets({"test": 100.0})
     return AgentCheckpoint(
         pid="test-001",
         status="RUNNING",
@@ -60,36 +60,36 @@ def make_checkpoint(cap_mgr):
 
 
 class TestNormalCompletion:
-    async def test_agent_completes(self, runner, cap_mgr):
+    async def test_agent_completes(self, runner, budget_mgr):
         async def simple_agent(proxy: SyscallProxy) -> str:
             result = await proxy.syscall("search", {"query": "hello"})
             return f"done: {result}"
 
-        checkpoint = make_checkpoint(cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
         result = await runner.run(simple_agent, checkpoint)
         assert result.status == "COMPLETED"
         assert len(result.syscall_log) == 1
 
-    async def test_agent_multiple_syscalls(self, runner, cap_mgr):
+    async def test_agent_multiple_syscalls(self, runner, budget_mgr):
         async def multi_agent(proxy: SyscallProxy) -> str:
             r1 = await proxy.syscall("search", {"query": "a"})
             r2 = await proxy.syscall("search", {"query": "b"})
             return f"{r1} + {r2}"
 
-        checkpoint = make_checkpoint(cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
         result = await runner.run(multi_agent, checkpoint)
         assert result.status == "COMPLETED"
         assert len(result.syscall_log) == 2
 
 
 class TestSuspension:
-    async def test_hitl_suspension(self, runner, cap_mgr):
+    async def test_hitl_suspension(self, runner, budget_mgr):
         async def destructive_agent(proxy: SyscallProxy) -> str:
             await proxy.syscall("search", {"query": "files"})
             await proxy.syscall("delete_files", {"paths": ["/tmp/a"]})
             return "done"
 
-        checkpoint = make_checkpoint(cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
         result = await runner.run(destructive_agent, checkpoint)
         assert result.status == "SUSPENDED_FOR_HITL"
         assert result.pending_hitl is not None
@@ -99,7 +99,7 @@ class TestSuspension:
 
 
 class TestPreemption:
-    async def test_preemption_via_task_cancel(self, runner, cap_mgr):
+    async def test_preemption_via_task_cancel(self, runner, budget_mgr):
         started = asyncio.Event()
 
         async def slow_agent(proxy: SyscallProxy) -> str:
@@ -110,7 +110,7 @@ class TestPreemption:
             await proxy.syscall("search", {"query": "never_reached"})
             return "done"
 
-        checkpoint = make_checkpoint(cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
         task = await runner.run_as_task(slow_agent, checkpoint)
 
         # Wait for agent to start
@@ -128,7 +128,7 @@ class TestPreemption:
         # Only first syscall was completed
         assert len(checkpoint.syscall_log) == 1
 
-    async def test_preemption_sets_context(self, runner, cap_mgr):
+    async def test_preemption_sets_context(self, runner, budget_mgr):
         started = asyncio.Event()
 
         async def agent(proxy: SyscallProxy) -> str:
@@ -136,7 +136,7 @@ class TestPreemption:
             await asyncio.sleep(10)
             return "done"
 
-        checkpoint = make_checkpoint(cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
         task = await runner.run_as_task(agent, checkpoint)
         await started.wait()
 
@@ -149,12 +149,12 @@ class TestPreemption:
 
 
 class TestCheckpointConsistency:
-    async def test_checkpoint_serializable_after_completion(self, runner, cap_mgr):
+    async def test_checkpoint_serializable_after_completion(self, runner, budget_mgr):
         async def agent(proxy: SyscallProxy) -> str:
             await proxy.syscall("search", {"query": "test"})
             return "done"
 
-        checkpoint = make_checkpoint(cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
         await runner.run(agent, checkpoint)
         # Should serialize without error
         json_str = checkpoint.model_dump_json()
@@ -162,12 +162,12 @@ class TestCheckpointConsistency:
         assert loaded.status == "COMPLETED"
         assert len(loaded.syscall_log) == 1
 
-    async def test_checkpoint_serializable_after_suspension(self, runner, cap_mgr):
+    async def test_checkpoint_serializable_after_suspension(self, runner, budget_mgr):
         async def agent(proxy: SyscallProxy) -> str:
             await proxy.syscall("delete_files", {"paths": ["/tmp/x"]})
             return "done"
 
-        checkpoint = make_checkpoint(cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
         await runner.run(agent, checkpoint)
         json_str = checkpoint.model_dump_json()
         loaded = AgentCheckpoint.model_validate_json(json_str)

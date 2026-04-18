@@ -2,7 +2,7 @@
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
@@ -13,7 +13,7 @@ from castor.scheduler.proxy import SyscallProxy
 
 @pytest.mark.asyncio()
 async def test_run_task_basic():
-    cap_mgr = CapabilityManager()
+    budget_mgr = BudgetManager()
     reg = ToolRegistry()
 
     @castor_tool(consumes="api", cost_per_use=1.0)
@@ -39,9 +39,9 @@ async def test_run_task_basic():
         pid="test-runtask-1",
         status="RUNNING",
         agent_function_name="test",
-        capabilities=cap_mgr.create_capabilities({"api": 100.0}),
+        capabilities=budget_mgr.create_budgets({"api": 100.0}),
     )
-    p = SyscallProxy(cp, gate, cap_mgr)
+    p = SyscallProxy(cp, gate, budget_mgr)
     set_proxy(p)
 
     from castor.lib.run_task import run_task
@@ -53,7 +53,7 @@ async def test_run_task_basic():
 @pytest.mark.asyncio()
 async def test_run_task_auto_discovers_tools():
     """run_task with tools=None discovers all non-LLM tools."""
-    cap_mgr = CapabilityManager()
+    budget_mgr = BudgetManager()
     reg = ToolRegistry()
 
     @castor_tool(consumes="api", cost_per_use=1.0)
@@ -79,9 +79,9 @@ async def test_run_task_auto_discovers_tools():
         pid="test-runtask-auto",
         status="RUNNING",
         agent_function_name="test",
-        capabilities=cap_mgr.create_capabilities({"api": 100.0}),
+        capabilities=budget_mgr.create_budgets({"api": 100.0}),
     )
-    p = SyscallProxy(cp, gate, cap_mgr)
+    p = SyscallProxy(cp, gate, budget_mgr)
     set_proxy(p)
 
     from castor.lib.run_task import run_task

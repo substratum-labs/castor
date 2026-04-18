@@ -33,7 +33,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from castor.models.capability import Capability
+from castor.models.budget import Budget
 
 
 class SyscallPurpose(StrEnum):
@@ -180,7 +180,7 @@ class AgentCheckpoint(BaseModel):
     agent_function_name: str
     """Registered name of the agent function to execute."""
 
-    capabilities: dict[str, Capability]
+    capabilities: dict[str, Budget]
     """Budget authority. The kernel *enforces* these limits — they are
     not advisory. Delegated from parent on spawn, reclaimed on join."""
 

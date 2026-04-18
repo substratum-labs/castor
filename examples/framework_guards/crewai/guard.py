@@ -29,7 +29,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 
 
 class ToolRejectedError(Exception):
@@ -57,8 +57,8 @@ def castor_guard_hook(
     Returns:
         A hook function to pass to ``register_before_tool_call_hook()``.
     """
-    cap_mgr = CapabilityManager()
-    capabilities = cap_mgr.create_capabilities(budgets)
+    budget_mgr = BudgetManager()
+    capabilities = budget_mgr.create_budgets(budgets)
     audit_log: list[dict[str, Any]] = []
 
     def guard(context) -> bool | None:
@@ -69,9 +69,9 @@ def castor_guard_hook(
         resource = policy.get("resource")
         cost = policy.get("cost", 0.0)
 
-        # 1. Budget deduction (raises CapabilityExhaustedError if over budget)
+        # 1. Budget deduction (raises BudgetExhaustedError if over budget)
         if resource:
-            cap_mgr.deduct(capabilities, resource, cost)
+            budget_mgr.deduct(capabilities, resource, cost)
 
         # 2. HITL gate for destructive tools
         if policy.get("destructive", False):
@@ -87,7 +87,7 @@ def castor_guard_hook(
     # Attach state for external access
     guard.capabilities = capabilities  # type: ignore[attr-defined]
     guard.audit_log = audit_log  # type: ignore[attr-defined]
-    guard.cap_mgr = cap_mgr  # type: ignore[attr-defined]
+    guard.budget_mgr = budget_mgr  # type: ignore[attr-defined]
     return guard
 
 

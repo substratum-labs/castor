@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from pydantic import ValidationError
 
     from castor.gate.registry import ToolMetadata
-    from castor.models.capability import Capability, SyscallResponse
+    from castor.models.budget import Budget, SyscallResponse
     from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
 
 
@@ -53,39 +53,39 @@ class GateProtocol(Protocol):
 class BudgetProtocol(Protocol):
     """Interface for capability budget tracking and delegation."""
 
-    def create_capabilities(self, specs: dict[str, float]) -> dict[str, Capability]: ...
+    def create_budgets(self, specs: dict[str, float]) -> dict[str, Budget]: ...
 
     def check(
         self,
-        capabilities: dict[str, Capability],
+        capabilities: dict[str, Budget],
         resource_type: str,
         cost: float,
     ) -> bool: ...
 
     def deduct(
         self,
-        capabilities: dict[str, Capability],
+        capabilities: dict[str, Budget],
         resource_type: str,
         cost: float,
     ) -> None: ...
 
     def refund(
         self,
-        capabilities: dict[str, Capability],
+        capabilities: dict[str, Budget],
         resource_type: str,
         cost: float,
     ) -> None: ...
 
     def delegate(
         self,
-        parent_caps: dict[str, Capability],
+        parent_budgets: dict[str, Budget],
         requested: dict[str, float],
-    ) -> dict[str, Capability]: ...
+    ) -> dict[str, Budget]: ...
 
     def reclaim(
         self,
-        parent_caps: dict[str, Capability],
-        child_caps: dict[str, Capability],
+        parent_budgets: dict[str, Budget],
+        child_budgets: dict[str, Budget],
     ) -> None: ...
 
 

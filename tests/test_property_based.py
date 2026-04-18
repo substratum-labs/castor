@@ -3,7 +3,7 @@
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
@@ -35,10 +35,10 @@ class TestBudgetConservation:
         """deduct then refund returns to original usage."""
         if cost > initial:
             return  # skip impossible cases
-        cap_mgr = CapabilityManager()
-        caps = cap_mgr.create_capabilities({"res": initial})
-        cap_mgr.deduct(caps, "res", cost)
-        cap_mgr.refund(caps, "res", cost)
+        budget_mgr = BudgetManager()
+        caps = budget_mgr.create_budgets({"res": initial})
+        budget_mgr.deduct(caps, "res", cost)
+        budget_mgr.refund(caps, "res", cost)
         assert abs(caps["res"].current_usage) < 1e-9
 
     @given(
@@ -65,13 +65,13 @@ class TestBudgetConservation:
         """delegate + child usage + reclaim = parent deducted by child_usage only."""
         if child_budget > parent_budget or child_usage > child_budget:
             return
-        cap_mgr = CapabilityManager()
-        parent_caps = cap_mgr.create_capabilities({"res": parent_budget})
-        child_caps = cap_mgr.delegate(parent_caps, {"res": child_budget})
-        child_caps["res"].current_usage = child_usage
-        cap_mgr.reclaim(parent_caps, child_caps)
+        budget_mgr = BudgetManager()
+        parent_budgets = budget_mgr.create_budgets({"res": parent_budget})
+        child_budgets = budget_mgr.delegate(parent_budgets, {"res": child_budget})
+        child_budgets["res"].current_usage = child_usage
+        budget_mgr.reclaim(parent_budgets, child_budgets)
         # Parent should have lost exactly child_usage
-        assert abs(parent_caps["res"].current_usage - child_usage) < 1e-9
+        assert abs(parent_budgets["res"].current_usage - child_usage) < 1e-9
 
     @given(
         budget=budget_amount,
@@ -79,13 +79,13 @@ class TestBudgetConservation:
     )
     def test_sequential_deduct_totals(self, budget, costs):
         """Sum of deductions equals total current_usage."""
-        cap_mgr = CapabilityManager()
-        caps = cap_mgr.create_capabilities({"res": budget})
+        budget_mgr = BudgetManager()
+        caps = budget_mgr.create_budgets({"res": budget})
         total_deducted = 0.0
         for cost in costs:
             if total_deducted + cost > budget:
                 break
-            cap_mgr.deduct(caps, "res", cost)
+            budget_mgr.deduct(caps, "res", cost)
             total_deducted += cost
         assert abs(caps["res"].current_usage - total_deducted) < 1e-6
 
@@ -105,7 +105,7 @@ class TestReplayIdentity:
             return f"echo:{value}"
 
         gate = SyscallGate(registry)
-        cap_mgr = CapabilityManager()
+        budget_mgr = BudgetManager()
 
         # Build a syscall log
         log = []
@@ -118,7 +118,7 @@ class TestReplayIdentity:
             )
 
         # Replay from the log
-        caps = cap_mgr.create_capabilities({"test": 1000.0})
+        caps = budget_mgr.create_budgets({"test": 1000.0})
         cp = AgentCheckpoint(
             pid="prop-test",
             status="RUNNING",
@@ -126,7 +126,7 @@ class TestReplayIdentity:
             capabilities=caps,
             syscall_log=log,
         )
-        proxy = SyscallProxy(cp, gate, cap_mgr)
+        proxy = SyscallProxy(cp, gate, budget_mgr)
 
         for i in range(num_syscalls):
             result = await proxy.syscall("echo", {"value": f"msg-{i}"})
@@ -147,8 +147,8 @@ class TestHITLModifyInvariant:
         """HITL modify logs original request unmodified."""
         from castor.scheduler.hitl import HITLHandler
 
-        cap_mgr = CapabilityManager()
-        caps = cap_mgr.create_capabilities({"test": 100.0})
+        budget_mgr = BudgetManager()
+        caps = budget_mgr.create_budgets({"test": 100.0})
         cp = AgentCheckpoint(
             pid="hitl-test",
             status="SUSPENDED_FOR_HITL",

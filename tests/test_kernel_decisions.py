@@ -14,7 +14,7 @@ from castor.kernel.decisions import (
     decide_syscall,
 )
 from castor.kernel.journal import InMemoryJournal
-from castor.models.capability import Capability
+from castor.models.budget import Budget
 from castor.models.checkpoint import SyscallRecord
 
 
@@ -36,10 +36,8 @@ def _meta(
     )
 
 
-def _caps(budget: float = 100.0, usage: float = 0.0) -> dict[str, Capability]:
-    return {
-        "api": Capability(resource_type="api", max_budget=budget, current_usage=usage)
-    }
+def _caps(budget: float = 100.0, usage: float = 0.0) -> dict[str, Budget]:
+    return {"api": Budget(resource_type="api", max_budget=budget, current_usage=usage)}
 
 
 def _request(tool: str = "test_tool", args: dict | None = None) -> dict:

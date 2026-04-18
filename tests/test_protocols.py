@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.registry import ToolMetadata, ToolRegistry
 from castor.gate.validator import SyscallGate
 from castor.mmu.cold_storage import InMemoryColdStorage
@@ -60,7 +60,7 @@ class TestGateProtocolConformance:
 
 class TestBudgetProtocolConformance:
     def test_capability_manager_is_budget_protocol(self):
-        assert isinstance(CapabilityManager(), BudgetProtocol)
+        assert isinstance(BudgetManager(), BudgetProtocol)
 
 
 class TestCheckpointStoreProtocolConformance:
@@ -116,7 +116,7 @@ class TestMockSubstitution:
                 return "mock_result"
 
             def format_validation_error(self, tool_name, error):
-                from castor.models.capability import SyscallResponse
+                from castor.models.budget import SyscallResponse
 
                 return SyscallResponse(status="ERROR", feedback_message="err")
 
@@ -128,7 +128,7 @@ class TestMockSubstitution:
 
         # Minimal mock Budget
         class MockBudget:
-            def create_capabilities(self, specs):
+            def create_budgets(self, specs):
                 return {}
 
             def check(self, capabilities, resource_type, cost):
@@ -140,10 +140,10 @@ class TestMockSubstitution:
             def refund(self, capabilities, resource_type, cost):
                 pass
 
-            def delegate(self, parent_caps, requested):
+            def delegate(self, parent_budgets, requested):
                 return {}
 
-            def reclaim(self, parent_caps, child_caps):
+            def reclaim(self, parent_budgets, child_budgets):
                 pass
 
         gate = MockGate()

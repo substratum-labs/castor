@@ -33,8 +33,8 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
-from castor.capability.manager import CapabilityManager
-from castor.models.capability import Capability
+from castor.budget.manager import BudgetManager
+from castor.models.budget import Capability
 
 
 class ToolRejectedError(Exception):
@@ -59,15 +59,15 @@ class CastorGuardedToolset(WrapperToolset[Any]):
     hitl_policy: Callable[[str, dict[str, Any]], bool] | None = None
 
     # Computed fields — not passed by caller
-    cap_mgr: CapabilityManager = field(init=False, repr=False)
+    budget_mgr: BudgetManager = field(init=False, repr=False)
     capabilities: dict[str, Capability] = field(init=False, repr=False)
     audit_log: list[dict[str, Any]] = field(
         init=False, default_factory=list, repr=False
     )
 
     def __post_init__(self) -> None:
-        self.cap_mgr = CapabilityManager()
-        self.capabilities = self.cap_mgr.create_capabilities(self.budgets)
+        self.budget_mgr = BudgetManager()
+        self.capabilities = self.budget_mgr.create_budgets(self.budgets)
 
     async def call_tool(
         self,
@@ -80,9 +80,9 @@ class CastorGuardedToolset(WrapperToolset[Any]):
         resource = policy.get("resource")
         cost = policy.get("cost", 0.0)
 
-        # 1. Budget deduction — hard cap (raises CapabilityExhaustedError)
+        # 1. Budget deduction — hard cap (raises BudgetExhaustedError)
         if resource:
-            self.cap_mgr.deduct(self.capabilities, resource, cost)
+            self.budget_mgr.deduct(self.capabilities, resource, cost)
 
         # 2. HITL gate — destructive tools require approval
         if policy.get("destructive", False):
@@ -125,7 +125,7 @@ class CastorGuardedToolset(WrapperToolset[Any]):
         """
         new_wrapped = self.wrapped.visit_and_replace(visitor)
         result = replace(self, wrapped=new_wrapped)
-        result.cap_mgr = self.cap_mgr
+        result.budget_mgr = self.budget_mgr
         result.capabilities = self.capabilities
         result.audit_log = self.audit_log
         return result

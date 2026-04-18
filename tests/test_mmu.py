@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.registry import ToolRegistry
 from castor.mmu.cold_storage import InMemoryColdStorage
 from castor.mmu.core import MEM_EVICT, MEM_PIN, MEM_RECALL, MEM_STORE, MMU
@@ -66,8 +66,8 @@ def _make_mmu(watermark: int = 100) -> tuple[MMU, InMemoryColdStorage, ToolRegis
 def _make_checkpoint(
     messages: list[CastorMessage] | None = None,
 ) -> AgentCheckpoint:
-    cap_mgr = CapabilityManager()
-    caps = cap_mgr.create_capabilities({"system": 100.0})
+    budget_mgr = BudgetManager()
+    caps = budget_mgr.create_budgets({"system": 100.0})
     cp = AgentCheckpoint(
         pid="mmu-test-001",
         status="RUNNING",

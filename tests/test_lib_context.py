@@ -2,7 +2,7 @@
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
 from castor.lib._context import get_proxy, set_proxy
@@ -19,8 +19,8 @@ def gate(registry):
 
 
 @pytest.fixture
-def cap_mgr():
-    return CapabilityManager()
+def budget_mgr():
+    return BudgetManager()
 
 
 def test_get_proxy_outside_run_raises():
@@ -29,7 +29,7 @@ def test_get_proxy_outside_run_raises():
         get_proxy()
 
 
-def test_set_and_get_proxy(gate, cap_mgr):
+def test_set_and_get_proxy(gate, budget_mgr):
     """set_proxy() makes the proxy available via get_proxy()."""
     from castor.models.checkpoint import AgentCheckpoint
     from castor.scheduler.proxy import SyscallProxy
@@ -38,8 +38,8 @@ def test_set_and_get_proxy(gate, cap_mgr):
         pid="test-ctx-1",
         status="RUNNING",
         agent_function_name="test",
-        capabilities=cap_mgr.create_capabilities({"test": 100.0}),
+        capabilities=budget_mgr.create_budgets({"test": 100.0}),
     )
-    proxy = SyscallProxy(cp, gate, cap_mgr)
+    proxy = SyscallProxy(cp, gate, budget_mgr)
     set_proxy(proxy)
     assert get_proxy() is proxy

@@ -35,7 +35,7 @@ from autogen_core import CancellationToken
 from autogen_core.tools import Workbench
 from autogen_core.tools._base import ToolResult, ToolSchema
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 
 
 class ToolRejectedError(Exception):
@@ -66,8 +66,8 @@ class CastorGuardedWorkbench(Workbench):
         hitl_policy: Callable[[str, dict[str, Any]], bool] | None = None,
     ) -> None:
         self._inner = inner
-        self.cap_mgr = CapabilityManager()
-        self.capabilities = self.cap_mgr.create_capabilities(budgets)
+        self.budget_mgr = BudgetManager()
+        self.capabilities = self.budget_mgr.create_budgets(budgets)
         self.tool_policies = tool_policies
         self._hitl_policy = hitl_policy
         self.audit_log: list[dict[str, Any]] = []
@@ -87,7 +87,7 @@ class CastorGuardedWorkbench(Workbench):
 
         # 1. Budget deduction
         if resource:
-            self.cap_mgr.deduct(self.capabilities, resource, cost)
+            self.budget_mgr.deduct(self.capabilities, resource, cost)
 
         # 2. HITL gate
         if policy.get("destructive", False):

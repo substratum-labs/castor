@@ -37,7 +37,7 @@ from typing import Any
 from agents import FunctionTool
 from agents.tool_context import ToolContext
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 
 
 class ToolRejectedError(Exception):
@@ -69,8 +69,8 @@ def guard_tools(
     Returns:
         The same tool list with on_invoke_tool wrapped in-place.
     """
-    cap_mgr = CapabilityManager()
-    capabilities = cap_mgr.create_capabilities(budgets)
+    budget_mgr = BudgetManager()
+    capabilities = budget_mgr.create_budgets(budgets)
     audit_log: list[dict[str, Any]] = []
 
     for tool in tools:
@@ -92,7 +92,7 @@ def guard_tools(
 
             # 1. Budget deduction
             if resource:
-                cap_mgr.deduct(capabilities, resource, cost)
+                budget_mgr.deduct(capabilities, resource, cost)
 
             # 2. HITL gate
             if _policy.get("destructive", False):

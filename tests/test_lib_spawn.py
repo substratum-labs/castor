@@ -2,7 +2,7 @@
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
@@ -30,8 +30,8 @@ def gate(registry):
 
 
 @pytest.fixture()
-def cap_mgr():
-    return CapabilityManager()
+def budget_mgr():
+    return BudgetManager()
 
 
 @pytest.fixture()
@@ -40,14 +40,14 @@ def agent_reg():
 
 
 @pytest.fixture()
-def proxy(gate, cap_mgr, agent_reg):
+def proxy(gate, budget_mgr, agent_reg):
     cp = AgentCheckpoint(
         pid="test-spawn-1",
         status="RUNNING",
         agent_function_name="parent",
-        capabilities=cap_mgr.create_capabilities({"api": 10.0}),
+        capabilities=budget_mgr.create_budgets({"api": 10.0}),
     )
-    p = SyscallProxy(cp, gate, cap_mgr, agent_registry=agent_reg)
+    p = SyscallProxy(cp, gate, budget_mgr, agent_registry=agent_reg)
     set_proxy(p)
     return p
 

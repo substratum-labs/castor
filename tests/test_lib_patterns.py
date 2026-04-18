@@ -2,7 +2,7 @@
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
@@ -34,19 +34,19 @@ def gate(registry):
 
 
 @pytest.fixture()
-def cap_mgr():
-    return CapabilityManager()
+def budget_mgr():
+    return BudgetManager()
 
 
 @pytest.fixture()
-def proxy(gate, cap_mgr):
+def proxy(gate, budget_mgr):
     cp = AgentCheckpoint(
         pid="test-patterns-1",
         status="RUNNING",
         agent_function_name="test",
-        capabilities=cap_mgr.create_capabilities({"api": 100.0}),
+        capabilities=budget_mgr.create_budgets({"api": 100.0}),
     )
-    p = SyscallProxy(cp, gate, cap_mgr)
+    p = SyscallProxy(cp, gate, budget_mgr)
     set_proxy(p)
     return p
 
@@ -109,15 +109,15 @@ def registry_with_llm():
 
 
 @pytest.fixture()
-def proxy_with_llm(registry_with_llm, cap_mgr):
+def proxy_with_llm(registry_with_llm, budget_mgr):
     gate = SyscallGate(registry_with_llm)
     cp = AgentCheckpoint(
         pid="test-react-1",
         status="RUNNING",
         agent_function_name="test",
-        capabilities=cap_mgr.create_capabilities({"api": 100.0}),
+        capabilities=budget_mgr.create_budgets({"api": 100.0}),
     )
-    p = SyscallProxy(cp, gate, cap_mgr)
+    p = SyscallProxy(cp, gate, budget_mgr)
     set_proxy(p)
     return p
 
@@ -131,7 +131,7 @@ async def test_react_basic(proxy_with_llm):
 
 
 @pytest.mark.asyncio()
-async def test_react_max_steps_exceeded(cap_mgr):
+async def test_react_max_steps_exceeded(budget_mgr):
     """react() raises RuntimeError when max_steps exceeded without FINISH."""
     reg = ToolRegistry()
 
@@ -150,9 +150,9 @@ async def test_react_max_steps_exceeded(cap_mgr):
         pid="test-react-max",
         status="RUNNING",
         agent_function_name="test",
-        capabilities=cap_mgr.create_capabilities({"api": 100.0}),
+        capabilities=budget_mgr.create_budgets({"api": 100.0}),
     )
-    p = SyscallProxy(cp, gate, cap_mgr)
+    p = SyscallProxy(cp, gate, budget_mgr)
     set_proxy(p)
 
     from castor.lib.patterns import react
@@ -184,7 +184,7 @@ async def test_map_reduce(proxy):
 
 
 @pytest.mark.asyncio()
-async def test_plan_execute(cap_mgr):
+async def test_plan_execute(budget_mgr):
     """plan_execute: LLM generates a plan, then executor runs each step."""
     reg = ToolRegistry()
 
@@ -219,9 +219,9 @@ async def test_plan_execute(cap_mgr):
         pid="test-planexec-1",
         status="RUNNING",
         agent_function_name="test",
-        capabilities=cap_mgr.create_capabilities({"api": 100.0}),
+        capabilities=budget_mgr.create_budgets({"api": 100.0}),
     )
-    p = SyscallProxy(cp, gate, cap_mgr)
+    p = SyscallProxy(cp, gate, budget_mgr)
     set_proxy(p)
 
     from castor.lib.patterns import plan_execute
@@ -237,7 +237,7 @@ async def test_plan_execute(cap_mgr):
 
 
 @pytest.mark.asyncio()
-async def test_conversation(cap_mgr):
+async def test_conversation(budget_mgr):
     """conversation: multi-turn user_input -> LLM loop."""
     reg = ToolRegistry()
 
@@ -261,9 +261,9 @@ async def test_conversation(cap_mgr):
         pid="test-convo-1",
         status="RUNNING",
         agent_function_name="test",
-        capabilities=cap_mgr.create_capabilities({"api": 100.0}),
+        capabilities=budget_mgr.create_budgets({"api": 100.0}),
     )
-    p = SyscallProxy(cp, gate, cap_mgr)
+    p = SyscallProxy(cp, gate, budget_mgr)
     set_proxy(p)
 
     from castor.lib.patterns import conversation
@@ -280,7 +280,7 @@ async def test_conversation(cap_mgr):
 
 
 @pytest.mark.asyncio()
-async def test_supervisor(cap_mgr):
+async def test_supervisor(budget_mgr):
     """supervisor: LLM picks agent, spawn/join, repeat until FINISH."""
     from castor.scheduler.agent_registry import AgentRegistry
 
@@ -316,9 +316,9 @@ async def test_supervisor(cap_mgr):
         pid="test-supervisor-1",
         status="RUNNING",
         agent_function_name="test",
-        capabilities=cap_mgr.create_capabilities({"api": 100.0}),
+        capabilities=budget_mgr.create_budgets({"api": 100.0}),
     )
-    p = SyscallProxy(cp, gate, cap_mgr, agent_registry=agent_reg)
+    p = SyscallProxy(cp, gate, budget_mgr, agent_registry=agent_reg)
     set_proxy(p)
 
     from castor.lib.patterns import supervisor

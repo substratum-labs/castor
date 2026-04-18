@@ -1,11 +1,11 @@
-"""Capability and Syscall data models."""
+"""Budget and Syscall data models."""
 
 from typing import Any, Literal
 
 from pydantic import BaseModel
 
 
-class Capability(BaseModel):
+class Budget(BaseModel):
     resource_type: str
     max_budget: float
     current_usage: float = 0.0

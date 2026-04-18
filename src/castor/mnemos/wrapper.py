@@ -41,7 +41,7 @@ class MnemosLLMSyscall:
     max_tokens:
         Maximum context size for Mnemos contexts (default 4096).
     consumes:
-        Capability resource type deducted per call.
+        Budget resource type deducted per call.
     cost_per_use:
         Numeric cost deducted from the capability budget per invocation.
     tool_name:

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from castor.gate.registry import ToolMetadata
-from castor.models.capability import Capability
+from castor.models.budget import Budget
 
 if TYPE_CHECKING:
     from castor.protocols import JournalProtocol
@@ -82,7 +82,7 @@ def decide_syscall(
     journal: JournalProtocol,
     replay_index: int,
     kernel_tool_names: set[str],
-    capabilities: dict[str, Capability],
+    capabilities: dict[str, Budget],
     request: dict[str, Any],
     tool_meta: ToolMetadata,
     validated_args: dict[str, Any] | None,
@@ -152,7 +152,7 @@ def decide_syscall(
                 response={
                     "status": "INSUFFICIENT_CAPABILITY",
                     "feedback_message": (
-                        f"Capability exhausted: {tool_meta.consumes!r} — "
+                        f"Budget exhausted: {tool_meta.consumes!r} — "
                         f"requested {cost}, remaining "
                         f"{_budget_remaining(capabilities, tool_meta.consumes)}"
                     ),
@@ -185,7 +185,7 @@ def decide_syscall(
 
 
 def _budget_sufficient(
-    capabilities: dict[str, Capability], resource_type: str, cost: float
+    capabilities: dict[str, Budget], resource_type: str, cost: float
 ) -> bool:
     """Check if budget covers the cost. Missing resource = unlimited."""
     cap = capabilities.get(resource_type)
@@ -194,7 +194,7 @@ def _budget_sufficient(
     return (cap.max_budget - cap.current_usage) >= cost
 
 
-def _budget_remaining(capabilities: dict[str, Capability], resource_type: str) -> float:
+def _budget_remaining(capabilities: dict[str, Budget], resource_type: str) -> float:
     """Return remaining budget for a resource type."""
     cap = capabilities.get(resource_type)
     if cap is None:

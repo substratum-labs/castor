@@ -37,8 +37,8 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
-from castor.capability.manager import CapabilityManager
-from castor.models.capability import Capability
+from castor.budget.manager import BudgetManager
+from castor.models.budget import Capability
 from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
 from castor.scheduler.persistence import CheckpointStore
 
@@ -217,7 +217,7 @@ class CastorResilientToolset(WrapperToolset[Any]):
     pid: str = "pydantic-agent-001"
 
     # Computed fields
-    cap_mgr: CapabilityManager = field(init=False, repr=False)
+    budget_mgr: BudgetManager = field(init=False, repr=False)
     capabilities: dict[str, Capability] = field(init=False, repr=False)
     audit_log: list[dict[str, Any]] = field(
         init=False, default_factory=list, repr=False
@@ -225,7 +225,7 @@ class CastorResilientToolset(WrapperToolset[Any]):
     journal: SyscallJournal = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self.cap_mgr = CapabilityManager()
+        self.budget_mgr = BudgetManager()
 
         if self.checkpoint is not None:
             cp = self.checkpoint
@@ -235,7 +235,7 @@ class CastorResilientToolset(WrapperToolset[Any]):
                 cap.current_usage = 0.0
             self.capabilities = cp.capabilities
         else:
-            self.capabilities = self.cap_mgr.create_capabilities(self.budgets)
+            self.capabilities = self.budget_mgr.create_budgets(self.budgets)
             cp = AgentCheckpoint(
                 pid=self.pid,
                 status="RUNNING",
@@ -251,7 +251,7 @@ class CastorResilientToolset(WrapperToolset[Any]):
         resource = policy.get("resource")
         cost = policy.get("cost", 0.0)
         if resource:
-            self.cap_mgr.deduct(self.capabilities, resource, cost)
+            self.budget_mgr.deduct(self.capabilities, resource, cost)
 
     async def call_tool(
         self,
@@ -276,7 +276,7 @@ class CastorResilientToolset(WrapperToolset[Any]):
 
         # 1. Budget deduction
         if resource:
-            self.cap_mgr.deduct(self.capabilities, resource, cost)
+            self.budget_mgr.deduct(self.capabilities, resource, cost)
 
         # 2. HITL gate — suspend, don't block
         if policy.get("destructive", False):
@@ -306,7 +306,7 @@ class CastorResilientToolset(WrapperToolset[Any]):
         new_wrapped = self.wrapped.visit_and_replace(visitor)
         result = replace(self, wrapped=new_wrapped)
         # Share mutable references — journal, capabilities, audit_log
-        result.cap_mgr = self.cap_mgr
+        result.budget_mgr = self.budget_mgr
         result.capabilities = self.capabilities
         result.audit_log = self.audit_log
         result.journal = self.journal

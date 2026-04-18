@@ -36,7 +36,7 @@ class TestAPIStatusExports:
         from castor import (
             AgentCheckpoint,
             AgentRunner,
-            CapabilityManager,
+            BudgetManager,
             CheckpointStore,
             HITLHandler,
             SyscallGate,
@@ -46,7 +46,7 @@ class TestAPIStatusExports:
 
         assert getattr(SyscallProxy, "__api_status__", None) == "stable"
         assert getattr(AgentCheckpoint, "__api_status__", None) == "stable"
-        assert getattr(CapabilityManager, "__api_status__", None) == "stable"
+        assert getattr(BudgetManager, "__api_status__", None) == "stable"
         assert getattr(SyscallGate, "__api_status__", None) == "stable"
         assert getattr(HITLHandler, "__api_status__", None) == "stable"
         assert getattr(AgentRunner, "__api_status__", None) == "stable"

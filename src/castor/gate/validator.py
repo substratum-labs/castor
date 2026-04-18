@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import ValidationError, create_model
 
 from castor.gate.registry import ToolMetadata, ToolRegistry
-from castor.models.capability import SyscallResponse
+from castor.models.budget import SyscallResponse
 
 
 class SyscallGate:

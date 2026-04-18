@@ -22,7 +22,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 
-from castor.capability.manager import CapabilityExhaustedError
+from castor.budget.manager import BudgetExhaustedError
 from examples.framework_guards.pydantic_ai.guard import CastorGuardedToolset, ToolRejectedError
 from examples.framework_guards.pydantic_ai.tools import (
     analyze_risk,
@@ -178,7 +178,7 @@ async def act3_exhaustion() -> None:
     try:
         result = await agent.run("Get prices for all tech stocks")
         print(f"  Result: {result.output}")
-    except CapabilityExhaustedError as e:
+    except BudgetExhaustedError as e:
         print(f"  [EXHAUSTED] {e}")
 
     print("\n  Budget summary:")

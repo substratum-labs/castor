@@ -2,7 +2,7 @@
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
 from castor.scheduler.persistence import CheckpointNotFoundError, CheckpointStore
 
@@ -14,12 +14,12 @@ def store(tmp_path):
 
 
 @pytest.fixture
-def cap_mgr():
-    return CapabilityManager()
+def budget_mgr():
+    return BudgetManager()
 
 
-def make_checkpoint(cap_mgr, pid="test-001"):
-    caps = cap_mgr.create_capabilities({"test": 100.0})
+def make_checkpoint(budget_mgr, pid="test-001"):
+    caps = budget_mgr.create_budgets({"test": 100.0})
     return AgentCheckpoint(
         pid=pid,
         status="RUNNING",
@@ -29,8 +29,8 @@ def make_checkpoint(cap_mgr, pid="test-001"):
 
 
 class TestSaveAndLoad:
-    def test_save_and_load_roundtrip(self, store, cap_mgr):
-        checkpoint = make_checkpoint(cap_mgr)
+    def test_save_and_load_roundtrip(self, store, budget_mgr):
+        checkpoint = make_checkpoint(budget_mgr)
         store.save(checkpoint)
         loaded = store.load("test-001")
         assert loaded.pid == "test-001"
@@ -38,8 +38,8 @@ class TestSaveAndLoad:
         assert loaded.agent_function_name == "test_agent"
         assert loaded.capabilities["test"].max_budget == 100.0
 
-    def test_save_with_syscall_log(self, store, cap_mgr):
-        checkpoint = make_checkpoint(cap_mgr)
+    def test_save_with_syscall_log(self, store, budget_mgr):
+        checkpoint = make_checkpoint(budget_mgr)
         checkpoint.syscall_log = [
             SyscallRecord(
                 request={"tool_name": "search", "arguments": {"q": "hello"}},
@@ -57,8 +57,8 @@ class TestSaveAndLoad:
         assert loaded.syscall_log[0].response == ["result"]
         assert loaded.syscall_log[1].was_hitl is True
 
-    def test_save_with_preemption_context(self, store, cap_mgr):
-        checkpoint = make_checkpoint(cap_mgr)
+    def test_save_with_preemption_context(self, store, budget_mgr):
+        checkpoint = make_checkpoint(budget_mgr)
         checkpoint.status = "PREEMPTED"
         checkpoint.preemption_reason = "HUMAN_ABORT"
         checkpoint.preemption_payload = {"instruction": "stop"}
@@ -67,16 +67,16 @@ class TestSaveAndLoad:
         assert loaded.preemption_reason == "HUMAN_ABORT"
         assert loaded.preemption_payload == {"instruction": "stop"}
 
-    def test_save_with_nested_checkpoint(self, store, cap_mgr):
-        child_caps = cap_mgr.create_capabilities({"test": 20.0})
+    def test_save_with_nested_checkpoint(self, store, budget_mgr):
+        child_budgets = budget_mgr.create_budgets({"test": 20.0})
         child = AgentCheckpoint(
             pid="child-001",
             parent_pid="test-001",
             status="COMPLETED",
             agent_function_name="child_agent",
-            capabilities=child_caps,
+            capabilities=child_budgets,
         )
-        parent = make_checkpoint(cap_mgr)
+        parent = make_checkpoint(budget_mgr)
         parent.syscall_log = [
             SyscallRecord(
                 request={"tool_name": "spawn_agent", "arguments": {"role": "child"}},
@@ -89,8 +89,8 @@ class TestSaveAndLoad:
         assert loaded.syscall_log[0].child_checkpoint is not None
         assert loaded.syscall_log[0].child_checkpoint.pid == "child-001"
 
-    def test_upsert_overwrites(self, store, cap_mgr):
-        checkpoint = make_checkpoint(cap_mgr)
+    def test_upsert_overwrites(self, store, budget_mgr):
+        checkpoint = make_checkpoint(budget_mgr)
         store.save(checkpoint)
         checkpoint.status = "COMPLETED"
         store.save(checkpoint)
@@ -105,8 +105,8 @@ class TestLoadMissing:
 
 
 class TestDelete:
-    def test_delete_removes_checkpoint(self, store, cap_mgr):
-        checkpoint = make_checkpoint(cap_mgr)
+    def test_delete_removes_checkpoint(self, store, budget_mgr):
+        checkpoint = make_checkpoint(budget_mgr)
         store.save(checkpoint)
         store.delete("test-001")
         with pytest.raises(CheckpointNotFoundError):
@@ -120,17 +120,17 @@ class TestListPids:
     def test_list_empty(self, store):
         assert store.list_pids() == []
 
-    def test_list_multiple(self, store, cap_mgr):
+    def test_list_multiple(self, store, budget_mgr):
         for pid in ["a", "b", "c"]:
-            store.save(make_checkpoint(cap_mgr, pid=pid))
+            store.save(make_checkpoint(budget_mgr, pid=pid))
         pids = store.list_pids()
         assert set(pids) == {"a", "b", "c"}
 
 
 class TestParentPidQuery:
-    def test_list_by_parent(self, store, cap_mgr):
+    def test_list_by_parent(self, store, budget_mgr):
         """List all checkpoints with a given parent_pid."""
-        parent = make_checkpoint(cap_mgr, pid="parent-001")
+        parent = make_checkpoint(budget_mgr, pid="parent-001")
         store.save(parent)
 
         child1 = AgentCheckpoint(
@@ -138,14 +138,14 @@ class TestParentPidQuery:
             parent_pid="parent-001",
             status="RUNNING",
             agent_function_name="child",
-            capabilities=cap_mgr.create_capabilities({"test": 10.0}),
+            capabilities=budget_mgr.create_budgets({"test": 10.0}),
         )
         child2 = AgentCheckpoint(
             pid="parent-001::child-1",
             parent_pid="parent-001",
             status="COMPLETED",
             agent_function_name="child",
-            capabilities=cap_mgr.create_capabilities({"test": 10.0}),
+            capabilities=budget_mgr.create_budgets({"test": 10.0}),
         )
         store.save(child1)
         store.save(child2)
@@ -161,9 +161,9 @@ class TestParentPidQuery:
 
 
 class TestGCOrphans:
-    def test_gc_marks_orphaned_children(self, store, cap_mgr):
+    def test_gc_marks_orphaned_children(self, store, budget_mgr):
         """Children of completed parents with RUNNING status become FAILED."""
-        parent = make_checkpoint(cap_mgr, pid="parent-001")
+        parent = make_checkpoint(budget_mgr, pid="parent-001")
         parent.status = "COMPLETED"
         store.save(parent)
 
@@ -172,7 +172,7 @@ class TestGCOrphans:
             parent_pid="parent-001",
             status="RUNNING",
             agent_function_name="child",
-            capabilities=cap_mgr.create_capabilities({"test": 10.0}),
+            capabilities=budget_mgr.create_budgets({"test": 10.0}),
         )
         store.save(child)
 
@@ -185,7 +185,7 @@ class TestGCOrphans:
 
 
 class TestWAL:
-    def test_write_wal_entry(self, store, cap_mgr):
+    def test_write_wal_entry(self, store, budget_mgr):
         """WAL entry can be written and read back."""
         store.write_wal(
             pid="test-001",
@@ -199,7 +199,7 @@ class TestWAL:
         assert entries[0]["pid"] == "test-001"
         assert entries[0]["status"] == "PENDING"
 
-    def test_complete_wal_entry(self, store, cap_mgr):
+    def test_complete_wal_entry(self, store, budget_mgr):
         """Completing a WAL entry marks it COMPLETED with result."""
         store.write_wal(
             pid="test-001",
@@ -212,9 +212,9 @@ class TestWAL:
         entries = store.list_pending_wal()
         assert len(entries) == 0
 
-    def test_recover_refunds_pending_wal(self, store, cap_mgr):
+    def test_recover_refunds_pending_wal(self, store, budget_mgr):
         """Recovery refunds budget for PENDING WAL entries and marks ABANDONED."""
-        checkpoint = make_checkpoint(cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
         checkpoint.capabilities["test"].current_usage = 1.0
         store.save(checkpoint)
         store.write_wal(
@@ -228,13 +228,13 @@ class TestWAL:
         assert recovered is not None
         assert recovered.capabilities["test"].current_usage == 0.0
 
-    def test_recover_no_pending_returns_none(self, store, cap_mgr):
+    def test_recover_no_pending_returns_none(self, store, budget_mgr):
         """Recovery returns None when no PENDING WAL entries exist."""
-        checkpoint = make_checkpoint(cap_mgr)
+        checkpoint = make_checkpoint(budget_mgr)
         store.save(checkpoint)
         assert store.recover("test-001") is None
 
-    def test_gc_completed_wal(self, store, cap_mgr):
+    def test_gc_completed_wal(self, store, budget_mgr):
         """GC removes COMPLETED and ABANDONED WAL entries."""
         store.write_wal(
             pid="test-001",

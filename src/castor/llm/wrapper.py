@@ -94,7 +94,7 @@ class LLMSyscall:
         An ``async def(model: str, prompt: str) -> str`` (or equivalent)
         that performs the actual LLM API call.
     consumes:
-        Capability resource type deducted per call (e.g. ``"api_usd"``).
+        Budget resource type deducted per call (e.g. ``"api_usd"``).
     cost_per_use:
         Numeric cost deducted from the capability budget per invocation.
     tool_name:
@@ -172,7 +172,7 @@ class StreamingLLMSyscall:
         An async generator ``async def(model, prompt, ...) -> AsyncIterator[str]``
         that yields string chunks from the LLM API.
     consumes:
-        Capability resource type deducted per call (e.g. ``"api_usd"``).
+        Budget resource type deducted per call (e.g. ``"api_usd"``).
     cost_per_use:
         Flat cost deducted before execution (same as ``LLMSyscall``).
     cost_per_token:

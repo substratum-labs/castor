@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
@@ -59,12 +59,12 @@ def gate(registry):
 
 
 @pytest.fixture
-def cap_mgr():
-    return CapabilityManager()
+def budget_mgr():
+    return BudgetManager()
 
 
-def _make_checkpoint(cap_mgr, messages=None):
-    caps = cap_mgr.create_capabilities({"network": 100.0, "system": 100.0})
+def _make_checkpoint(budget_mgr, messages=None):
+    caps = budget_mgr.create_budgets({"network": 100.0, "system": 100.0})
     cp = AgentCheckpoint(
         pid="lodge-integ-001",
         status="RUNNING",
@@ -78,15 +78,17 @@ def _make_checkpoint(cap_mgr, messages=None):
 
 class TestMemStoreSyscall:
     @pytest.mark.asyncio
-    async def test_mem_store_through_syscall(self, gate, cap_mgr, lodge, cold_storage):
+    async def test_mem_store_through_syscall(
+        self, gate, budget_mgr, lodge, cold_storage
+    ):
         async def agent(proxy: SyscallProxy):
             return await proxy.syscall(
                 MEM_STORE,
                 {"content": "important fact", "metadata": {"tag": "test"}},
             )
 
-        cp = _make_checkpoint(cap_mgr)
-        runner = AgentRunner(gate, cap_mgr, lodge=lodge)
+        cp = _make_checkpoint(budget_mgr)
+        runner = AgentRunner(gate, budget_mgr, lodge=lodge)
         result_cp = await runner.run(agent, cp)
         assert result_cp.status == "COMPLETED"
 
@@ -104,16 +106,16 @@ class TestMemStoreSyscall:
 
 class TestMemPinSyscall:
     @pytest.mark.asyncio
-    async def test_mem_pin_through_syscall(self, gate, cap_mgr, lodge):
+    async def test_mem_pin_through_syscall(self, gate, budget_mgr, lodge):
         async def agent(proxy: SyscallProxy):
             await proxy.syscall(MEM_PIN, {"index": 0})
             return "done"
 
         cp = _make_checkpoint(
-            cap_mgr,
+            budget_mgr,
             [CastorMessage(role="user", content="pin me")],
         )
-        runner = AgentRunner(gate, cap_mgr, lodge=lodge)
+        runner = AgentRunner(gate, budget_mgr, lodge=lodge)
         result_cp = await runner.run(agent, cp)
         assert result_cp.status == "COMPLETED"
         assert result_cp.context_history[0].pinned is True
@@ -121,7 +123,9 @@ class TestMemPinSyscall:
 
 class TestMemRecallSyscall:
     @pytest.mark.asyncio
-    async def test_mem_recall_through_syscall(self, gate, cap_mgr, lodge, cold_storage):
+    async def test_mem_recall_through_syscall(
+        self, gate, budget_mgr, lodge, cold_storage
+    ):
         await cold_storage.store_explicit("integ-agent", "recalled fact about tables")
 
         async def agent(proxy: SyscallProxy):
@@ -130,10 +134,10 @@ class TestMemRecallSyscall:
             )
 
         cp = _make_checkpoint(
-            cap_mgr,
+            budget_mgr,
             [CastorMessage(role="user", content="what tables?")],
         )
-        runner = AgentRunner(gate, cap_mgr, lodge=lodge)
+        runner = AgentRunner(gate, budget_mgr, lodge=lodge)
         result_cp = await runner.run(agent, cp)
         assert result_cp.status == "COMPLETED"
 
@@ -145,7 +149,7 @@ class TestMemRecallSyscall:
 
 class TestCrossSessionRecall:
     @pytest.mark.asyncio
-    async def test_recall_not_filtered_by_session(self, gate, cap_mgr, cold_storage):
+    async def test_recall_not_filtered_by_session(self, gate, budget_mgr, cold_storage):
         registry = ToolRegistry()
         mmu = MMU(
             registry,
@@ -165,8 +169,8 @@ class TestCrossSessionRecall:
             )
 
         gate_b = SyscallGate(registry)
-        cp_b = _make_checkpoint(cap_mgr)
-        runner = AgentRunner(gate_b, cap_mgr, lodge=mmu)
+        cp_b = _make_checkpoint(budget_mgr)
+        runner = AgentRunner(gate_b, budget_mgr, lodge=mmu)
         result_cp = await runner.run(agent_b, cp_b)
 
         response = result_cp.result
@@ -178,13 +182,13 @@ class TestCrossSessionRecall:
 
 class TestPauseAutoEvict:
     @pytest.mark.asyncio
-    async def test_manual_evict_works_when_paused(self, gate, cap_mgr, lodge):
+    async def test_manual_evict_works_when_paused(self, gate, budget_mgr, lodge):
         async def agent(proxy: SyscallProxy):
             await proxy.syscall(MEM_EVICT, {"indices": [0], "summary": None})
             return "done"
 
         cp = _make_checkpoint(
-            cap_mgr,
+            budget_mgr,
             [
                 CastorMessage(role="user", content="to evict"),
                 CastorMessage(role="user", content="to keep"),
@@ -192,7 +196,7 @@ class TestPauseAutoEvict:
         )
 
         lodge.pause_auto_evict()
-        runner = AgentRunner(gate, cap_mgr, lodge=lodge)
+        runner = AgentRunner(gate, budget_mgr, lodge=lodge)
         result_cp = await runner.run(agent, cp)
 
         assert len(result_cp.context_history) == 1

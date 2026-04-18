@@ -1,6 +1,6 @@
 """Castor data models."""
 
-from castor.models.capability import Capability, SyscallRequest, SyscallResponse
+from castor.models.budget import Budget, SyscallRequest, SyscallResponse
 from castor.models.checkpoint import (
     AgentCheckpoint,
     SuspendInterrupt,
@@ -9,7 +9,7 @@ from castor.models.checkpoint import (
 
 __all__ = [
     "AgentCheckpoint",
-    "Capability",
+    "Budget",
     "SuspendInterrupt",
     "SyscallRecord",
     "SyscallRequest",

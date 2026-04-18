@@ -7,7 +7,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from castor.capability.manager import CapabilityExhaustedError
+from castor.budget.manager import BudgetExhaustedError
 from examples.framework_guards.pydantic_ai.guard import CastorGuardedToolset, ToolRejectedError
 from examples.framework_guards.pydantic_ai.tools import (
     analyze_risk,
@@ -94,12 +94,12 @@ class TestBudgetDeduction:
         """Once budget is exhausted, further calls should raise."""
         guarded = _make_guarded()
         # Exhaust api_calls budget (max=3)
-        guarded.cap_mgr.deduct(guarded.capabilities, "api_calls", 3.0)
+        guarded.budget_mgr.deduct(guarded.capabilities, "api_calls", 3.0)
 
         model = _model_that_calls("fetch_price", {"ticker": "AAPL"})
         agent = Agent(model, toolsets=[guarded])
 
-        with pytest.raises(CapabilityExhaustedError):
+        with pytest.raises(BudgetExhaustedError):
             await agent.run("What is AAPL's price?")
 
         # Tool should NOT have executed

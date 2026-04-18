@@ -12,7 +12,7 @@ from typing import Any
 from smolagents import ToolCallingAgent
 from smolagents.models import ChatMessage, Model
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.models.checkpoint import AgentCheckpoint, SyscallRecord
 from castor.scheduler.persistence import CheckpointStore
 
@@ -108,7 +108,7 @@ class CastorResilientAgent(ToolCallingAgent):
         **kwargs,
     ):
         # Create or restore checkpoint
-        self.cap_mgr = CapabilityManager()
+        self.budget_mgr = BudgetManager()
         if checkpoint is not None:
             self._checkpoint = checkpoint
             # Reset capability usage — replay will re-deduct each recorded
@@ -119,7 +119,7 @@ class CastorResilientAgent(ToolCallingAgent):
                 cap.current_usage = 0.0
             self.capabilities = checkpoint.capabilities
         else:
-            self.capabilities = self.cap_mgr.create_capabilities(budgets)
+            self.capabilities = self.budget_mgr.create_budgets(budgets)
             self._checkpoint = AgentCheckpoint(
                 pid=pid,
                 status="RUNNING",
@@ -171,7 +171,7 @@ class CastorResilientAgent(ToolCallingAgent):
         resource = policy.get("resource")
         cost = policy.get("cost", 0.0)
         if resource:
-            self.cap_mgr.deduct(self.capabilities, resource, cost)
+            self.budget_mgr.deduct(self.capabilities, resource, cost)
 
     def execute_tool_call(self, tool_name: str, arguments: dict[str, str] | str) -> Any:
         request = {"tool_name": tool_name, "arguments": arguments}
@@ -190,7 +190,7 @@ class CastorResilientAgent(ToolCallingAgent):
 
         # 1. Budget deduction
         if resource:
-            self.cap_mgr.deduct(self.capabilities, resource, cost)
+            self.budget_mgr.deduct(self.capabilities, resource, cost)
 
         # 2. HITL gate — suspend, don't block
         if policy.get("destructive", False):

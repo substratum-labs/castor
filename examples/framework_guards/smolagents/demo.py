@@ -21,7 +21,7 @@ if _project_root not in sys.path:
 from smolagents import ChatMessage  # noqa: E402
 from smolagents.models import Model  # noqa: E402
 
-from castor.capability.manager import CapabilityExhaustedError  # noqa: E402
+from castor.budget.manager import BudgetExhaustedError  # noqa: E402
 from examples.framework_guards.smolagents.guard import (  # noqa: E402
     CastorGuardedAgent,
     ToolRejectedError,
@@ -78,7 +78,7 @@ def call(agent, tool_name: str, arguments: dict) -> str | None:
     except ToolRejectedError as exc:
         print(f"  {tool_name}(...) -> REJECTED: {exc}")
         return None
-    except CapabilityExhaustedError as exc:
+    except BudgetExhaustedError as exc:
         print(f"  {tool_name}(...) -> BLOCKED: {exc}")
         return None
 

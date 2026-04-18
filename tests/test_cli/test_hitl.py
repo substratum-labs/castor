@@ -2,7 +2,7 @@
 
 import pytest
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.models.checkpoint import AgentCheckpoint
 from castor.scheduler.persistence import CheckpointStore
 
@@ -14,17 +14,17 @@ def store(tmp_path):
 
 
 @pytest.fixture()
-def cap_mgr():
-    return CapabilityManager()
+def budget_mgr():
+    return BudgetManager()
 
 
 @pytest.fixture()
-def hitl_checkpoint(store, cap_mgr):
+def hitl_checkpoint(store, budget_mgr):
     cp = AgentCheckpoint(
         pid="agent-hitl-1",
         status="SUSPENDED_FOR_HITL",
         agent_function_name="test_agent",
-        capabilities=cap_mgr.create_capabilities({"api": 10.0}),
+        capabilities=budget_mgr.create_budgets({"api": 10.0}),
         pending_hitl={"tool_name": "dangerous_tool", "arguments": {"x": 1}},
     )
     store.save(cp)
@@ -43,7 +43,7 @@ def test_cmd_reject(store, hitl_checkpoint, capsys):
     assert cp.pending_hitl is None
 
 
-def test_cmd_reject_no_hitl(store, cap_mgr):
+def test_cmd_reject_no_hitl(store, budget_mgr):
     cp = AgentCheckpoint(
         pid="agent-no-hitl",
         status="COMPLETED",

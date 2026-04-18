@@ -5,7 +5,7 @@ __version__ = "0.5.1"
 # Core public API
 # -- API stability markers --
 from castor.api_status import experimental, stable
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.core import Castor, CastorTask
 from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolMetadata
@@ -17,7 +17,7 @@ from castor.llm.wrapper import LLMSyscall, StreamingLLMSyscall
 from castor.mmu.cold_storage import InMemoryColdStorage
 from castor.mmu.core import MMU
 from castor.mmu.policy import DefaultMemoryPolicy
-from castor.models.capability import Capability, SyscallRequest, SyscallResponse
+from castor.models.budget import Budget, SyscallRequest, SyscallResponse
 from castor.models.checkpoint import (
     AgentCheckpoint,
     CastorMessage,
@@ -56,11 +56,11 @@ stable(Castor)
 stable(SyscallProxy)
 stable(AgentCheckpoint)
 stable(SyscallRecord)
-stable(Capability)
+stable(Budget)
 stable(SyscallRequest)
 stable(SyscallResponse)
 stable(SyscallGate)
-stable(CapabilityManager)
+stable(BudgetManager)
 stable(HITLHandler)
 stable(AgentRunner)
 stable(CheckpointStore)
@@ -98,8 +98,8 @@ __all__ = [
     "AgentRegistryProtocol",
     "AgentRunner",
     "BudgetProtocol",
-    "Capability",
-    "CapabilityManager",
+    "Budget",
+    "BudgetManager",
     "Castor",
     "ExecutionSummary",
     "SyscallGate",

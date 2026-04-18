@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from castor.capability.manager import CapabilityManager
+from castor.budget.manager import BudgetManager
 from castor.gate.registry import ToolMetadata, ToolRegistry, default_registry
 from castor.gate.validator import SyscallGate
 from castor.kernel.journal import InMemoryJournal
@@ -109,8 +109,8 @@ class Castor:
             self._gate = SyscallGate(default_registry)
             self._llm_syscall = None
 
-        # -- Capability Manager --
-        self._cap_mgr = capability_manager or CapabilityManager()
+        # -- Budget Manager --
+        self._budget_mgr = capability_manager or BudgetManager()
 
         # -- Optional subsystems --
         self._lodge = lodge
@@ -169,8 +169,8 @@ class Castor:
 
     @property
     def capability_manager(self) -> BudgetProtocol:
-        """The CapabilityManager (budget tracking)."""
-        return self._cap_mgr
+        """The BudgetManager (budget tracking)."""
+        return self._budget_mgr
 
     @property
     def store(self) -> Any | None:
@@ -218,7 +218,7 @@ class Castor:
         pid: str | None,
     ) -> AgentCheckpoint:
         effective = self._resolve_budgets(budgets)
-        caps = self._cap_mgr.create_capabilities(effective) if effective else {}
+        caps = self._budget_mgr.create_budgets(effective) if effective else {}
         if pid is None:
             pid = f"{agent_fn.__name__}-{uuid.uuid4().hex[:8]}"
         return AgentCheckpoint(
@@ -256,7 +256,7 @@ class Castor:
 
         runner = self._runner_factory(
             self._gate,
-            self._cap_mgr,
+            self._budget_mgr,
             lodge=self._lodge,
             agent_registry=self._agent_registry,
             structured_results=self._structured_results,
@@ -302,12 +302,12 @@ class Castor:
             await self._hitl.approve_child_hitl(
                 checkpoint,
                 self._gate,
-                self._cap_mgr,
+                self._budget_mgr,
                 self._agent_registry,
                 lodge=self._lodge,
             )
         else:
-            await self._hitl.approve(checkpoint, self._gate, self._cap_mgr)
+            await self._hitl.approve(checkpoint, self._gate, self._budget_mgr)
         self._auto_save(checkpoint, from_store)
 
     def reject(self, checkpoint: AgentCheckpoint | str, reason: str) -> None:
@@ -422,7 +422,7 @@ class Castor:
 
         runner = self._runner_factory(
             self._gate,
-            self._cap_mgr,
+            self._budget_mgr,
             lodge=self._lodge,
             agent_registry=self._agent_registry,
             structured_results=self._structured_results,
