@@ -37,6 +37,9 @@ class Castor:
         llm_cost: float = 1.0,
         llm_resource: str = "api",
         lodge: Any | None = None,
+        cold_storage: Any | None = None,
+        memory_policy: Any | None = None,
+        agent_id: str | None = None,
         agent_registry: Any | None = None,
         store: str | Any | None = None,
         gate: GateProtocol | None = None,
@@ -113,6 +116,20 @@ class Castor:
         self._budget_mgr = capability_manager or BudgetManager()
 
         # -- Optional subsystems --
+        # Auto-construct MMU when caller provides ColdStorage / MemoryPolicy
+        # without a pre-built lodge. This is the ergonomic path for
+        # consumers (Tiphys, castor-server) that have backends but don't
+        # want to assemble the registry+MMU themselves.
+        if lodge is None and (cold_storage is not None or memory_policy is not None):
+            from castor.mmu.core import MMU
+
+            registry = self._gate.registry  # share Castor's registry with MMU
+            lodge = MMU(
+                registry,
+                cold_storage=cold_storage,
+                policy=memory_policy,
+                agent_id=agent_id or "default",
+            )
         self._lodge = lodge
         if agent_registry is not None:
             self._agent_registry = agent_registry
