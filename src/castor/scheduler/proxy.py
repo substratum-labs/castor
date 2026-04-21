@@ -21,6 +21,7 @@ from castor.kernel.decisions import (
 from castor.kernel.journal import InMemoryJournal
 from castor.models.checkpoint import (
     AgentCheckpoint,
+    CastorMessage,
     SuspendInterrupt,
     SyscallPurpose,
     SyscallRecord,
@@ -45,7 +46,18 @@ _spawn_counter = _meter.create_counter("castor_spawns_total")
 
 # Memory syscall names — used to tag SyscallRecord.purpose and trigger
 # post-syscall effects (eviction application, cold storage persistence).
-_MEMORY_SYSCALL_NAMES = frozenset({"mem_evict", "mem_recall", "mem_pin", "mem_store"})
+# AISA §2.2 memory syscall names.
+_MEMORY_SYSCALL_NAMES = frozenset(
+    {
+        "mem_write",
+        "mem_read",
+        "mem_search",
+        "mem_delete",
+        "mem_evict",
+        "mem_promote",
+        "mem_protect",
+    }
+)
 
 
 class SyscallProxy:
@@ -642,34 +654,68 @@ class SyscallProxy:
     ) -> None:
         """Apply post-syscall side effects for memory operations.
 
-        These run AFTER the journal record is appended, so the effect
-        is committed. The checkpoint is mutated in place.
+        AISA §2.2 shape — 7 syscalls, ID-based addressing.
         """
-        from castor.mmu.core import MEM_EVICT, MEM_PIN, MEM_RECALL, MMU
+        from castor.mmu.core import (
+            MEM_DELETE,
+            MEM_EVICT,
+            MEM_PROMOTE,
+            MEM_PROTECT,
+            MEM_WRITE,
+            MMU,
+        )
 
         mmu = self._lodge
         if not isinstance(mmu, MMU):
             return
 
+        r = result if isinstance(result, dict) else {}
+
         if tool_name == MEM_EVICT:
-            indices = arguments.get("indices") or (
-                result.get("indices", []) if isinstance(result, dict) else []
+            mid = arguments.get("memory_id", "")
+            if mid:
+                removed = mmu.apply_eviction(self.checkpoint, mid)
+                if removed:
+                    await mmu.persist_evicted(removed)
+
+        elif tool_name == MEM_PROMOTE:
+            if r.get("promoted"):
+                msg = CastorMessage(
+                    id=r.get("memory_id", ""),
+                    role=r.get("role", "system"),
+                    content=r.get("content", ""),
+                )
+                mmu.apply_promote(self.checkpoint, msg)
+
+        elif tool_name == MEM_PROTECT:
+            mid = arguments.get("memory_id", "")
+            protect = arguments.get("protect", True)
+            mmu.apply_protect(self.checkpoint, mid, protect)
+
+        elif tool_name == MEM_DELETE:
+            mid = arguments.get("memory_id", "")
+            mmu.apply_delete(self.checkpoint, mid)
+            # cold_storage.delete already called by the tool handler
+
+        elif tool_name == MEM_WRITE:
+            content = r.get("content", "")
+            pin = r.get("pin", False)
+            mid = mmu.next_memory_id(self.checkpoint.pid, "memory", content)
+            msg = CastorMessage(id=mid, role="memory", content=content, pinned=pin)
+            mmu.apply_write(self.checkpoint, msg)
+            # Also persist to cold for durability
+            await mmu._cold.store_explicit(
+                mmu._agent_id,
+                content,
+                metadata=r.get("metadata"),
+                memory_id=mid,
             )
-            summary = arguments.get("summary")
-            if indices:
-                removed = mmu.apply_eviction(self.checkpoint, indices)
-                await mmu.persist_evicted(removed, summary)
+            # Patch the result dict so the caller sees the ID
+            if isinstance(result, dict):
+                result["memory_id"] = mid
 
-        elif tool_name == MEM_RECALL:
-            messages = result.get("messages", []) if isinstance(result, dict) else []
-            mmu.apply_recall(self.checkpoint, messages)
-
-        elif tool_name == MEM_PIN:
-            index = arguments.get("index", 0)
-            mmu.apply_pin(self.checkpoint, index)
-
-        # mem_store has no post-syscall effect — the tool handler
-        # already called cold_storage.store_explicit().
+        # mem_read and mem_search have no post-syscall effects —
+        # they're pure queries.
 
     def _make_invocation_id(self, request: dict[str, Any]) -> str:
         """Compute a deterministic invocation_id for the next journal entry.

@@ -159,7 +159,7 @@ class MemoryPolicyProtocol(Protocol):
     The kernel calls these methods but does NOT depend on a specific
     implementation. Tiphys provides a semantic + episodic policy;
     castor-server provides a simple FIFO. The kernel only uses the
-    returned decisions to issue mem_evict / mem_recall syscalls.
+    returned decisions to issue mem_evict / mem_promote syscalls.
 
     This is the "page replacement algorithm" in OS terms — it lives
     above the kernel primitives but its decisions are executed through
@@ -170,11 +170,11 @@ class MemoryPolicyProtocol(Protocol):
         self,
         context_history: list[Any],
         token_budget: int,
-    ) -> list[int] | None:
-        """Return message indices to evict, or ``None`` if no eviction needed.
+    ) -> list[str] | None:
+        """Return memory_ids to evict, or ``None`` if no eviction needed.
 
         Called by the MMU when the soft watermark is approached. The
-        returned indices will be passed to ``mem_evict``. Returning
+        returned IDs will each trigger a ``mem_evict`` syscall. Returning
         ``None`` skips voluntary eviction (the hard watermark may still
         trigger FIFO eviction as a safety net).
         """
@@ -202,7 +202,7 @@ class MemoryPolicyProtocol(Protocol):
         """Return a recall query if cold storage should be searched.
 
         Called before each LLM turn. If a non-``None`` string is
-        returned, the MMU issues a ``mem_recall`` syscall to fetch
+        returned, the MMU issues a ``mem_promote`` syscall to fetch
         relevant messages from cold storage and insert them into
         ``context_history``.
         """
@@ -229,16 +229,13 @@ class MemoryPolicyProtocol(Protocol):
 
 @runtime_checkable
 class ColdStorageProtocol(Protocol):
-    """Backend for persisting evicted messages and explicit mem_store data.
+    """Backend for persisting evicted messages and explicit mem_write data.
 
-    Separate from the agent's application-level memory (e.g. Tiphys's
-    ScopedMemoryStore or Evolution Ledger). The two are queried
-    through a unified retrieval interface but stored independently
-    (Decision 3 → B: separate storage, unified retrieval).
+    AISA §2.2 shape — messages carry their own ``id`` (CastorMessage.id)
+    and are addressed by that ID in all operations.
 
     Namespace by ``agent_id`` (not session_id) so evicted context is
-    shared across sessions of the same agent (Tiphys requirement:
-    cross-session ColdStorage sharing).
+    shared across sessions of the same agent.
     """
 
     async def store(
@@ -248,10 +245,10 @@ class ColdStorageProtocol(Protocol):
         summary: str | None = None,
         source: str = "eviction",
     ) -> None:
-        """Persist messages (and optional summary) to cold storage.
+        """Persist messages to cold storage.
 
-        ``source`` distinguishes eviction-driven storage from explicit
-        ``mem_store`` calls so retrieval can filter by provenance.
+        Messages carry their own ``id`` field. ``source`` distinguishes
+        eviction-driven storage from explicit ``mem_write`` calls.
         """
         ...
 
@@ -259,14 +256,31 @@ class ColdStorageProtocol(Protocol):
         self,
         agent_id: str,
         query: str,
-        max_results: int = 5,
-        source_filter: str | None = None,
-    ) -> list[Any]:
+        limit: int = 5,
+        filter: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Retrieve relevant messages from cold storage.
 
-        ``source_filter`` optionally restricts to a specific provenance
-        (e.g. ``"eviction"``, ``"explicit"``, ``"episodic"``).
+        Returns ``[{memory_id, content, score, metadata}, ...]``.
+        ``filter`` is arbitrary metadata-key filter (e.g.
+        ``{"source": "eviction"}``).
         """
+        ...
+
+    async def read(
+        self,
+        agent_id: str,
+        memory_id: str,
+    ) -> Any | None:
+        """Read a specific message by ID. Return None if not found."""
+        ...
+
+    async def delete(
+        self,
+        agent_id: str,
+        memory_id: str,
+    ) -> bool:
+        """Permanently delete a message by ID. Return True if found."""
         ...
 
     async def store_explicit(
@@ -274,11 +288,11 @@ class ColdStorageProtocol(Protocol):
         agent_id: str,
         content: str,
         metadata: dict[str, Any] | None = None,
+        memory_id: str | None = None,
     ) -> None:
-        """Store an explicit memory entry (from ``mem_store`` syscall).
+        """Store an explicit memory entry (from ``mem_write`` syscall).
 
-        Unlike ``store()`` which receives evicted CastorMessages, this
-        stores arbitrary content the agent explicitly wanted to remember.
+        ``memory_id`` is the caller-assigned ID for this entry.
         """
         ...
 

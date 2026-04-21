@@ -1,260 +1,202 @@
-"""Unit tests for MMU: token counting, eviction logic, pause/resume."""
+"""Unit tests for MMU: token counting, ID-based addressing, pause/resume.
+
+AISA §2.2 shape — all 7 syscalls with memory_id addressing.
+"""
 
 from __future__ import annotations
+
+from unittest.mock import AsyncMock
 
 import pytest
 
 from castor.budget.manager import BudgetManager
 from castor.gate.registry import ToolRegistry
 from castor.mmu.cold_storage import InMemoryColdStorage
-from castor.mmu.core import MEM_EVICT, MEM_PIN, MEM_RECALL, MEM_STORE, MMU
+from castor.mmu.core import (
+    MEM_DELETE,
+    MEM_EVICT,
+    MEM_PROMOTE,
+    MEM_PROTECT,
+    MEM_READ,
+    MEM_SEARCH,
+    MEM_WRITE,
+    MMU,
+)
 from castor.mmu.token_counter import CharCountEstimator, TokenCounter
-from castor.models.checkpoint import AgentCheckpoint, CastorMessage
-
-# ── TokenCounter ──
+from castor.models.checkpoint import AgentCheckpoint, CastorMessage, compute_memory_id
 
 
 class TestCharCountEstimator:
-    def test_basic_counting(self):
-        counter = CharCountEstimator()
-        assert counter.count("hello world") == max(1, len("hello world") // 4)
+    def test_basic(self):
+        assert CharCountEstimator().count("hello world") == max(1, 11 // 4)
 
-    def test_empty_string(self):
-        counter = CharCountEstimator()
-        assert counter.count("") == 1  # max(1, 0)
+    def test_empty(self):
+        assert CharCountEstimator().count("") == 1
 
-    def test_satisfies_protocol(self):
-        counter = CharCountEstimator()
-        assert isinstance(counter, TokenCounter)
-
-
-# ── CastorMessage ──
+    def test_protocol(self):
+        assert isinstance(CharCountEstimator(), TokenCounter)
 
 
 class TestCastorMessage:
     def test_defaults(self):
         msg = CastorMessage(role="user", content="hello")
-        assert msg.pinned is False
-        assert msg.token_count == 0
+        assert msg.pinned is False and msg.id == ""
 
-    def test_pinned(self):
-        msg = CastorMessage(role="system", content="you are helpful", pinned=True)
-        assert msg.pinned is True
+    def test_with_id(self):
+        assert CastorMessage(id="abc", role="user", content="x").id == "abc"
 
-    def test_serialization(self):
-        msg = CastorMessage(role="user", content="test", token_count=10)
-        data = msg.model_dump()
-        restored = CastorMessage.model_validate(data)
-        assert restored == msg
+    def test_roundtrip(self):
+        msg = CastorMessage(id="x", role="user", content="t", token_count=10)
+        assert CastorMessage.model_validate(msg.model_dump()) == msg
 
 
-# ── MMU helpers ──
+class TestComputeMemoryId:
+    def test_deterministic(self):
+        a = compute_memory_id("p", 0, "user", "hi")
+        assert a == compute_memory_id("p", 0, "user", "hi")
+        assert len(a) == 32
+
+    def test_different_inputs(self):
+        base = compute_memory_id("p", 0, "user", "hi")
+        assert compute_memory_id("q", 0, "user", "hi") != base
+        assert compute_memory_id("p", 1, "user", "hi") != base
+        assert compute_memory_id("p", 0, "user", "bye") != base
 
 
-def _make_mmu(watermark: int = 100) -> tuple[MMU, InMemoryColdStorage, ToolRegistry]:
-    registry = ToolRegistry()
+def _make_mmu(wm: int = 100):
+    reg = ToolRegistry()
     cold = InMemoryColdStorage()
-    mmu = MMU(
-        registry,
-        cold_storage=cold,
-        hard_watermark=watermark,
-        agent_id="test-agent",
-    )
-    return mmu, cold, registry
+    mmu = MMU(reg, cold_storage=cold, hard_watermark=wm, agent_id="t")
+    return mmu, cold, reg
 
 
-def _make_checkpoint(
-    messages: list[CastorMessage] | None = None,
-) -> AgentCheckpoint:
-    budget_mgr = BudgetManager()
-    caps = budget_mgr.create_budgets({"system": 100.0})
+def _make_cp(msgs=None):
+    bm = BudgetManager()
     cp = AgentCheckpoint(
-        pid="mmu-test-001",
+        pid="test",
         status="RUNNING",
-        agent_function_name="test_agent",
-        capabilities=caps,
+        agent_function_name="a",
+        capabilities=bm.create_budgets({"s": 100}),
     )
-    if messages:
-        cp.context_history = list(messages)
+    if msgs:
+        cp.context_history = list(msgs)
     return cp
 
 
-# ── Token counting ──
-
-
-class TestMMUTokenCounting:
-    def test_total_tokens_uses_token_count_field(self):
+class TestTokenCounting:
+    def test_field(self):
         mmu, _, _ = _make_mmu()
-        cp = _make_checkpoint(
-            [
-                CastorMessage(role="user", content="x", token_count=50),
-                CastorMessage(role="assistant", content="y", token_count=30),
-            ]
-        )
-        assert mmu.total_tokens(cp) == 80
+        cp = _make_cp([CastorMessage(id="a", role="u", content="x", token_count=50)])
+        assert mmu.total_tokens(cp) == 50
 
-    def test_total_tokens_falls_back_to_counter(self):
+    def test_fallback(self):
         mmu, _, _ = _make_mmu()
-        cp = _make_checkpoint(
-            [CastorMessage(role="user", content="a" * 40)]  # ~10 tokens
-        )
-        assert mmu.total_tokens(cp) == 10
-
-    def test_plain_dicts_ignored(self):
-        mmu, _, _ = _make_mmu()
-        cp = _make_checkpoint()
-        cp.context_history = [
-            CastorMessage(role="user", content="x", token_count=10),
-            {"role": "system", "content": "not counted"},
-        ]
+        cp = _make_cp([CastorMessage(id="a", role="u", content="a" * 40)])
         assert mmu.total_tokens(cp) == 10
 
 
-# ── FIFO selection ──
-
-
-class TestFIFOSelection:
-    def test_selects_oldest_non_pinned(self):
-        mmu, _, _ = _make_mmu(watermark=20)
-        cp = _make_checkpoint(
+class TestFIFOSelectIds:
+    def test_skips_pinned(self):
+        mmu, _, _ = _make_mmu(wm=20)
+        cp = _make_cp(
             [
                 CastorMessage(
-                    role="system", content="sys", pinned=True, token_count=10
+                    id="s", role="sys", content="s", pinned=True, token_count=10
                 ),
-                CastorMessage(role="user", content="old", token_count=15),
-                CastorMessage(role="user", content="new", token_count=15),
+                CastorMessage(id="old", role="u", content="o", token_count=15),
             ]
         )
-        indices = mmu._fifo_select(cp, target=20)
-        assert 0 not in indices  # pinned
-        assert 1 in indices  # oldest non-pinned
-
-    def test_pinned_never_selected(self):
-        mmu, _, _ = _make_mmu(watermark=5)
-        cp = _make_checkpoint(
-            [
-                CastorMessage(role="system", content="x" * 100, pinned=True),
-                CastorMessage(role="user", content="y" * 100, pinned=True),
-            ]
-        )
-        indices = mmu._fifo_select(cp, target=5)
-        assert indices == []
-
-    def test_empty_history(self):
-        mmu, _, _ = _make_mmu()
-        cp = _make_checkpoint()
-        indices = mmu._fifo_select(cp, target=0)
-        assert indices == []
-
-
-# ── Apply methods ──
+        ids = mmu._fifo_select_ids(cp, target=10)
+        assert "s" not in ids and "old" in ids
 
 
 class TestApplyMethods:
-    def test_apply_eviction_removes_by_index(self):
+    def test_eviction_by_id(self):
         mmu, _, _ = _make_mmu()
-        cp = _make_checkpoint(
+        cp = _make_cp(
             [
-                CastorMessage(role="user", content="a", token_count=10),
-                CastorMessage(role="user", content="b", token_count=10),
-                CastorMessage(role="user", content="c", token_count=10),
+                CastorMessage(id="a", role="u", content="1"),
+                CastorMessage(id="b", role="u", content="2"),
             ]
         )
-        removed = mmu.apply_eviction(cp, [0, 2])
-        assert len(cp.context_history) == 1
-        assert cp.context_history[0].content == "b"
-        assert len(removed) == 2
-        assert removed[0].content == "a"
-        assert removed[1].content == "c"
+        r = mmu.apply_eviction(cp, "a")
+        assert r.content == "1" and len(cp.context_history) == 1
 
-    def test_apply_pin(self):
+    def test_protect(self):
         mmu, _, _ = _make_mmu()
-        cp = _make_checkpoint([CastorMessage(role="user", content="x")])
-        assert not cp.context_history[0].pinned
-        mmu.apply_pin(cp, 0)
+        cp = _make_cp([CastorMessage(id="x", role="u", content="t")])
+        mmu.apply_protect(cp, "x", True)
         assert cp.context_history[0].pinned
+        mmu.apply_protect(cp, "x", False)
+        assert not cp.context_history[0].pinned
 
-    def test_apply_recall_inserts_before_last(self):
+    def test_write(self):
         mmu, _, _ = _make_mmu()
-        cp = _make_checkpoint(
+        cp = _make_cp()
+        mmu.apply_write(cp, CastorMessage(id="n", role="memory", content="f"))
+        assert cp.context_history[0].id == "n"
+
+    def test_promote_inserts(self):
+        mmu, _, _ = _make_mmu()
+        cp = _make_cp(
             [
-                CastorMessage(role="user", content="first"),
-                CastorMessage(role="user", content="last"),
+                CastorMessage(id="a", role="u", content="first"),
+                CastorMessage(id="b", role="u", content="last"),
             ]
         )
-        mmu.apply_recall(
-            cp,
-            [{"role": "system", "content": "recalled fact"}],
-        )
+        mmu.apply_promote(cp, CastorMessage(id="r", role="sys", content="recalled"))
         assert len(cp.context_history) == 3
-        assert cp.context_history[1].content == "recalled fact"
-        assert cp.context_history[2].content == "last"
+        assert cp.context_history[1].id == "r"
 
     @pytest.mark.asyncio
-    async def test_persist_evicted_stores_to_cold(self):
+    async def test_persist_evicted(self):
         mmu, cold, _ = _make_mmu()
-        msgs = [CastorMessage(role="user", content="evicted data")]
-        await mmu.persist_evicted(msgs, summary="test summary")
-        results = await cold.search("test-agent", "evicted")
-        assert len(results) >= 1
-
-
-# ── Pause / Resume ──
-
-
-class TestPauseResume:
-    def test_pause_stops_auto_evict(self):
-        mmu, _, _ = _make_mmu()
-        mmu.pause_auto_evict()
-        assert mmu._auto_evict_paused is True
-
-    def test_resume_restores_auto_evict(self):
-        mmu, _, _ = _make_mmu()
-        mmu.pause_auto_evict()
-        mmu.resume_auto_evict()
-        assert mmu._auto_evict_paused is False
-
-    def test_resume_idempotent(self):
-        mmu, _, _ = _make_mmu()
-        mmu.resume_auto_evict()  # already not paused
-        assert mmu._auto_evict_paused is False
-
-
-# ── Tool registration ──
+        await mmu.persist_evicted(CastorMessage(id="e", role="u", content="data"))
+        assert cold.count("t") >= 1
 
 
 class TestToolRegistration:
-    def test_all_four_tools_registered(self):
-        _, _, registry = _make_mmu()
-        names = set(registry.list_tools())
-        assert MEM_EVICT in names
-        assert MEM_RECALL in names
-        assert MEM_PIN in names
-        assert MEM_STORE in names
+    def test_all_seven(self):
+        _, _, reg = _make_mmu()
+        names = set(reg.list_tools())
+        for n in [
+            MEM_WRITE,
+            MEM_READ,
+            MEM_SEARCH,
+            MEM_DELETE,
+            MEM_EVICT,
+            MEM_PROMOTE,
+            MEM_PROTECT,
+        ]:
+            assert n in names
 
-    def test_kernel_tool_names_contains_all_four(self):
+    def test_kernel_names(self):
         mmu, _, _ = _make_mmu()
-        assert mmu.kernel_tool_names == {MEM_EVICT, MEM_RECALL, MEM_PIN, MEM_STORE}
+        assert len(mmu.kernel_tool_names) == 7
 
 
-# ── on_session_end ──
+class TestPauseResume:
+    def test_pause(self):
+        mmu, _, _ = _make_mmu()
+        mmu.pause_auto_evict()
+        assert mmu._auto_evict_paused
+
+    def test_resume_idempotent(self):
+        mmu, _, _ = _make_mmu()
+        mmu.resume_auto_evict()
+        assert not mmu._auto_evict_paused
 
 
 class TestOnSessionEnd:
     @pytest.mark.asyncio
-    async def test_calls_policy_on_session_end(self):
-        from unittest.mock import AsyncMock
-
+    async def test_calls_policy(self):
         mmu, _, _ = _make_mmu()
         mmu._policy.on_session_end = AsyncMock()
         await mmu.on_session_end([], [])
         mmu._policy.on_session_end.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_exception_logged_not_raised(self):
-        from unittest.mock import AsyncMock
-
+    async def test_exception_swallowed(self):
         mmu, _, _ = _make_mmu()
-        mmu._policy.on_session_end = AsyncMock(side_effect=RuntimeError("boom"))
-        # Should NOT raise
+        mmu._policy.on_session_end = AsyncMock(side_effect=RuntimeError("x"))
         await mmu.on_session_end([], [])

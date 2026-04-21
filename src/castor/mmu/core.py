@@ -1,24 +1,18 @@
 """MMU: context window memory management controller.
 
-Routes memory operations through four canonical syscalls so they appear
-in the journal and are replay-safe:
+AISA §2.2 shape — routes memory operations through 7 syscalls with
+``memory_id``-based addressing:
 
-    mem_evict   — remove messages from context, persist to cold storage
-    mem_recall  — retrieve from cold storage, insert into context
-    mem_pin     — mark a message as non-evictable
-    mem_store   — agent explicitly stores something to cold storage
+    mem_write    — create a message in context (returns memory_id)
+    mem_read     — read by ID (context or cold)
+    mem_search   — search cold storage (returns ranked list with IDs)
+    mem_delete   — permanently remove from context + cold
+    mem_evict    — move from context → cold (single item)
+    mem_promote  — move from cold → context
+    mem_protect  — set/clear pinned flag
 
-The MMU does NOT decide WHAT to evict — that's the ``MemoryPolicyProtocol``
-(application layer). The MMU decides HOW to execute the policy's decisions
-through kernel syscalls.
-
-Auto-evict behaviour (Decision C):
-    - Hard watermark: if tokens exceed ``hard_watermark``, MMU auto-evicts
-      using FIFO as a safety net, even if the policy didn't request it.
-    - Soft watermark (= ``hard_watermark * 0.8`` by default): the MMU
-      consults the policy's ``should_evict()`` and executes its choices.
-    - ``pause_auto_evict()`` / ``resume_auto_evict()`` suppress the auto
-      check (Tiphys planning phase), but manual ``mem_evict`` still works.
+Auto-evict (Decision C): hard watermark safety net + soft watermark
+policy-driven + pause/resume for application control.
 """
 
 from __future__ import annotations
@@ -30,7 +24,11 @@ from castor.gate.registry import ToolMetadata, ToolRegistry
 from castor.mmu.cold_storage import InMemoryColdStorage
 from castor.mmu.policy import DefaultMemoryPolicy
 from castor.mmu.token_counter import CharCountEstimator, TokenCounter
-from castor.models.checkpoint import AgentCheckpoint, CastorMessage
+from castor.models.checkpoint import (
+    AgentCheckpoint,
+    CastorMessage,
+    compute_memory_id,
+)
 from castor.protocols import ColdStorageProtocol, MemoryPolicyProtocol
 
 if TYPE_CHECKING:
@@ -38,21 +36,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("castor.mmu")
 
-# Syscall names — must match what proxy dispatches / journal records.
+# Syscall names — AISA §2.2 canonical set.
+MEM_WRITE = "mem_write"
+MEM_READ = "mem_read"
+MEM_SEARCH = "mem_search"
+MEM_DELETE = "mem_delete"
 MEM_EVICT = "mem_evict"
-MEM_RECALL = "mem_recall"
-MEM_PIN = "mem_pin"
-MEM_STORE = "mem_store"
+MEM_PROMOTE = "mem_promote"
+MEM_PROTECT = "mem_protect"
 
-_KERNEL_TOOL_NAMES = frozenset({MEM_EVICT, MEM_RECALL, MEM_PIN, MEM_STORE})
+_KERNEL_TOOL_NAMES = frozenset(
+    {MEM_WRITE, MEM_READ, MEM_SEARCH, MEM_DELETE, MEM_EVICT, MEM_PROMOTE, MEM_PROTECT}
+)
 
 
 class MMU:
-    """Context window memory manager.
-
-    Monitors ``context_history`` token usage, consults the memory policy,
-    and dispatches eviction / recall through kernel syscalls.
-    """
+    """Context window memory manager (AISA §2.2 shape)."""
 
     def __init__(
         self,
@@ -72,302 +71,272 @@ class MMU:
         self._soft_watermark = int(hard_watermark * soft_watermark_ratio)
         self._agent_id = agent_id
         self._auto_evict_paused = False
+        self._msg_seq = 0
 
-        # Register the four memory syscall handlers as kernel-internal tools.
         self._register_tools(registry)
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    # ── Public API ──
 
     @property
     def kernel_tool_names(self) -> set[str]:
-        """Kernel-internal tools auto-skipped during replay."""
         return set(_KERNEL_TOOL_NAMES)
 
     def pause_auto_evict(self) -> None:
-        """Suppress automatic eviction checks.
-
-        Manual ``mem_evict`` syscalls still work. Call
-        ``resume_auto_evict()`` to restore.
-        """
         self._auto_evict_paused = True
-        logger.info("auto_evict_paused agent=%s", self._agent_id)
 
     def resume_auto_evict(self) -> None:
-        """Restore automatic eviction checks (idempotent)."""
         self._auto_evict_paused = False
-        logger.info("auto_evict_resumed agent=%s", self._agent_id)
 
     def total_tokens(self, checkpoint: AgentCheckpoint) -> int:
-        """Sum token counts of all CastorMessage entries."""
         total = 0
         for entry in checkpoint.context_history:
             if isinstance(entry, CastorMessage):
+                c = entry.content
                 total += (
                     entry.token_count
                     if entry.token_count > 0
-                    else self._counter.count(entry.content)
+                    else self._counter.count(c if isinstance(c, str) else str(c))
                 )
         return total
+
+    def next_memory_id(self, pid: str, role: str, content: str) -> str:
+        mid = compute_memory_id(pid, self._msg_seq, role, content)
+        self._msg_seq += 1
+        return mid
 
     async def check_and_evict(
         self, proxy: SyscallProxy, checkpoint: AgentCheckpoint
     ) -> None:
-        """Check token usage and evict if needed.
-
-        Called by the runner before each LLM turn. When auto-evict is
-        paused, this is a no-op. Otherwise:
-
-        1. If tokens > soft watermark → consult policy.should_evict()
-           and execute the policy's choices via mem_evict syscall.
-        2. If tokens STILL > hard watermark after policy eviction →
-           FIFO safety-net eviction (oldest non-pinned first).
-        """
         if self._auto_evict_paused:
             return
-
         total = self.total_tokens(checkpoint)
-
-        # Phase 1: policy-driven eviction at soft watermark
         if total > self._soft_watermark:
-            indices = await self._policy.should_evict(
+            ids = await self._policy.should_evict(
                 checkpoint.context_history, self._soft_watermark
             )
-            if indices:
-                await proxy.syscall(
-                    MEM_EVICT,
-                    {"indices": indices, "summary": None},
-                )
+            if ids:
+                for mid in ids:
+                    await proxy.syscall(MEM_EVICT, {"memory_id": mid})
                 total = self.total_tokens(checkpoint)
-
-        # Phase 2: hard-watermark safety net (FIFO)
         if total > self._hard_watermark:
-            fifo_indices = self._fifo_select(checkpoint, self._hard_watermark)
-            if fifo_indices:
-                await proxy.syscall(
-                    MEM_EVICT,
-                    {"indices": fifo_indices, "summary": None},
-                )
+            for mid in self._fifo_select_ids(checkpoint, self._hard_watermark):
+                await proxy.syscall(MEM_EVICT, {"memory_id": mid})
 
     async def on_session_end(
-        self,
-        context_history: list[Any],
-        syscall_log: list[Any],
+        self, context_history: list[Any], syscall_log: list[Any]
     ) -> None:
-        """Invoke the policy's session-end consolidation hook.
-
-        Called by the runner/facade AFTER the final checkpoint is saved.
-        Errors are logged but not raised — consolidation must not block
-        teardown.
-        """
         try:
             await self._policy.on_session_end(context_history, syscall_log)
         except Exception:
             logger.exception("on_session_end failed agent=%s", self._agent_id)
 
-    # ------------------------------------------------------------------
-    # Internal: FIFO safety net
-    # ------------------------------------------------------------------
+    # ── FIFO safety net ──
 
-    def _fifo_select(self, checkpoint: AgentCheckpoint, target: int) -> list[int]:
-        """Select oldest non-pinned message indices to get under target."""
+    def _fifo_select_ids(self, checkpoint: AgentCheckpoint, target: int) -> list[str]:
         total = self.total_tokens(checkpoint)
-        indices: list[int] = []
-        for i, entry in enumerate(checkpoint.context_history):
+        ids: list[str] = []
+        for entry in checkpoint.context_history:
             if total <= target:
                 break
-            if isinstance(entry, CastorMessage) and not entry.pinned:
+            if isinstance(entry, CastorMessage) and not entry.pinned and entry.id:
+                c = entry.content
                 tokens = (
                     entry.token_count
                     if entry.token_count > 0
-                    else self._counter.count(entry.content)
+                    else self._counter.count(c if isinstance(c, str) else str(c))
                 )
-                indices.append(i)
+                ids.append(entry.id)
                 total -= tokens
-        return indices
+        return ids
 
-    # ------------------------------------------------------------------
-    # Internal: tool registration
-    # ------------------------------------------------------------------
+    # ── Post-syscall effects ──
+
+    def find_by_id(
+        self, checkpoint: AgentCheckpoint, memory_id: str
+    ) -> CastorMessage | None:
+        for entry in checkpoint.context_history:
+            if isinstance(entry, CastorMessage) and entry.id == memory_id:
+                return entry
+        return None
+
+    def apply_eviction(
+        self, checkpoint: AgentCheckpoint, memory_id: str
+    ) -> CastorMessage | None:
+        for i, entry in enumerate(checkpoint.context_history):
+            if isinstance(entry, CastorMessage) and entry.id == memory_id:
+                return checkpoint.context_history.pop(i)
+        return None
+
+    def apply_protect(
+        self, checkpoint: AgentCheckpoint, memory_id: str, protect: bool
+    ) -> None:
+        msg = self.find_by_id(checkpoint, memory_id)
+        if msg:
+            msg.pinned = protect
+
+    def apply_delete(
+        self, checkpoint: AgentCheckpoint, memory_id: str
+    ) -> CastorMessage | None:
+        return self.apply_eviction(checkpoint, memory_id)
+
+    def apply_promote(self, checkpoint: AgentCheckpoint, msg: CastorMessage) -> None:
+        pos = max(0, len(checkpoint.context_history) - 1)
+        checkpoint.context_history.insert(pos, msg)
+
+    def apply_write(self, checkpoint: AgentCheckpoint, msg: CastorMessage) -> None:
+        checkpoint.context_history.append(msg)
+
+    async def persist_evicted(
+        self, msg: CastorMessage, summary: str | None = None
+    ) -> None:
+        if msg:
+            await self._cold.store(
+                self._agent_id, [msg], summary=summary, source="eviction"
+            )
+
+    # ── Tool registration ──
 
     def _register_tools(self, registry: ToolRegistry) -> None:
-        """Register the four memory syscall handlers."""
+        async def _mem_write(
+            content: str = "", metadata: dict | None = None, pin: bool = False
+        ) -> dict:
+            return {"content": content, "metadata": metadata, "pin": pin}
 
-        # ── mem_evict ──
-        async def _mem_evict(
-            indices: list[int] | None = None,
-            summary: str | None = None,
-        ) -> dict[str, Any]:
-            # Called from within proxy.syscall context — self has access
-            # to the checkpoint via the proxy. But since we're a tool
-            # function, we receive only our declared args. The actual
-            # context_history manipulation happens in _do_evict which
-            # the proxy calls after the tool returns.
-            return {"indices": indices or [], "summary": summary}
+        registry.register(
+            ToolMetadata(
+                tool_name=MEM_WRITE,
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string"},
+                        "metadata": {"type": "object"},
+                        "pin": {"type": "boolean"},
+                    },
+                    "required": ["content"],
+                },
+                func=_mem_write,
+                is_async=True,
+            )
+        )
+
+        async def _mem_read(memory_id: str = "") -> dict:
+            entry = await self._cold.read(self._agent_id, memory_id)
+            if entry:
+                return {
+                    "content": entry.get("content", ""),
+                    "metadata": entry.get("metadata", {}),
+                    "location": "COLD_STORAGE",
+                }
+            return {"content": "", "metadata": {}, "location": "NOT_FOUND"}
+
+        registry.register(
+            ToolMetadata(
+                tool_name=MEM_READ,
+                input_schema={
+                    "type": "object",
+                    "properties": {"memory_id": {"type": "string"}},
+                    "required": ["memory_id"],
+                },
+                func=_mem_read,
+                is_async=True,
+            )
+        )
+
+        async def _mem_search(
+            query: str = "", limit: int = 5, filter: dict | None = None
+        ) -> dict:
+            results = await self._cold.search(self._agent_id, query, limit, filter)
+            return {"results": results}
+
+        registry.register(
+            ToolMetadata(
+                tool_name=MEM_SEARCH,
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer"},
+                        "filter": {"type": "object"},
+                    },
+                    "required": ["query"],
+                },
+                func=_mem_search,
+                is_async=True,
+            )
+        )
+
+        async def _mem_delete(memory_id: str = "") -> dict:
+            deleted = await self._cold.delete(self._agent_id, memory_id)
+            return {"deleted": deleted}
+
+        registry.register(
+            ToolMetadata(
+                tool_name=MEM_DELETE,
+                input_schema={
+                    "type": "object",
+                    "properties": {"memory_id": {"type": "string"}},
+                    "required": ["memory_id"],
+                },
+                func=_mem_delete,
+                is_async=True,
+            )
+        )
+
+        async def _mem_evict(memory_id: str = "") -> dict:
+            return {"memory_id": memory_id, "evicted": True}
 
         registry.register(
             ToolMetadata(
                 tool_name=MEM_EVICT,
                 input_schema={
                     "type": "object",
-                    "properties": {
-                        "indices": {
-                            "type": "array",
-                            "items": {"type": "integer"},
-                        },
-                        "summary": {"type": "string"},
-                    },
-                    "required": [],
+                    "properties": {"memory_id": {"type": "string"}},
+                    "required": ["memory_id"],
                 },
                 func=_mem_evict,
                 is_async=True,
             )
         )
 
-        # ── mem_recall ──
-        async def _mem_recall(
-            query: str = "",
-            max_results: int = 5,
-            source_filter: str | None = None,
-        ) -> dict[str, Any]:
-            results = await self._cold.search(
-                self._agent_id, query, max_results, source_filter
-            )
-            return {"messages": results}
+        async def _mem_promote(memory_id: str = "") -> dict:
+            entry = await self._cold.read(self._agent_id, memory_id)
+            if entry is None:
+                return {"promoted": False}
+            return {
+                "promoted": True,
+                "memory_id": memory_id,
+                "content": entry.get("content", ""),
+                "role": entry.get("role", "system"),
+            }
 
         registry.register(
             ToolMetadata(
-                tool_name=MEM_RECALL,
+                tool_name=MEM_PROMOTE,
                 input_schema={
                     "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "max_results": {"type": "integer"},
-                        "source_filter": {"type": "string"},
-                    },
-                    "required": ["query"],
+                    "properties": {"memory_id": {"type": "string"}},
+                    "required": ["memory_id"],
                 },
-                func=_mem_recall,
+                func=_mem_promote,
                 is_async=True,
             )
         )
 
-        # ── mem_pin ──
-        async def _mem_pin(index: int = 0) -> dict[str, Any]:
-            return {"index": index, "pinned": True}
+        async def _mem_protect(memory_id: str = "", protect: bool = True) -> dict:
+            return {"memory_id": memory_id, "protected": protect}
 
         registry.register(
             ToolMetadata(
-                tool_name=MEM_PIN,
+                tool_name=MEM_PROTECT,
                 input_schema={
                     "type": "object",
                     "properties": {
-                        "index": {"type": "integer"},
+                        "memory_id": {"type": "string"},
+                        "protect": {"type": "boolean"},
                     },
-                    "required": ["index"],
+                    "required": ["memory_id"],
                 },
-                func=_mem_pin,
+                func=_mem_protect,
                 is_async=True,
             )
         )
-
-        # ── mem_store ──
-        async def _mem_store(
-            content: str = "",
-            metadata: dict[str, Any] | None = None,
-        ) -> dict[str, Any]:
-            await self._cold.store_explicit(self._agent_id, content, metadata)
-            return {"stored": True}
-
-        registry.register(
-            ToolMetadata(
-                tool_name=MEM_STORE,
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "content": {"type": "string"},
-                        "metadata": {"type": "object"},
-                    },
-                    "required": ["content"],
-                },
-                func=_mem_store,
-                is_async=True,
-            )
-        )
-
-    # ------------------------------------------------------------------
-    # Post-syscall hooks (called by proxy after journal record)
-    # ------------------------------------------------------------------
-
-    def apply_eviction(
-        self,
-        checkpoint: AgentCheckpoint,
-        indices: list[int],
-    ) -> list[CastorMessage]:
-        """Remove messages at the given indices from context_history.
-
-        Returns the removed messages (for cold storage persistence).
-        Indices are processed in reverse order so removal doesn't shift
-        positions of later indices.
-        """
-        removed: list[CastorMessage] = []
-        for idx in sorted(set(indices), reverse=True):
-            if 0 <= idx < len(checkpoint.context_history):
-                entry = checkpoint.context_history.pop(idx)
-                if isinstance(entry, CastorMessage):
-                    removed.append(entry)
-        removed.reverse()  # restore original order
-        return removed
-
-    def apply_pin(self, checkpoint: AgentCheckpoint, index: int) -> None:
-        """Mark a message as pinned (non-evictable)."""
-        if 0 <= index < len(checkpoint.context_history):
-            entry = checkpoint.context_history[index]
-            if isinstance(entry, CastorMessage):
-                entry.pinned = True
-
-    def apply_recall(
-        self,
-        checkpoint: AgentCheckpoint,
-        messages: list[Any],
-    ) -> None:
-        """Insert recalled messages into context_history.
-
-        Inserts before the last message (which is typically the current
-        user query) so the LLM sees the recalled context.
-        """
-        if not messages:
-            return
-        # Convert dicts to CastorMessage if possible
-        to_insert: list[CastorMessage | dict] = []
-        for msg in messages:
-            if isinstance(msg, CastorMessage):
-                to_insert.append(msg)
-            elif isinstance(msg, dict) and "content" in msg:
-                to_insert.append(
-                    CastorMessage(
-                        role=msg.get("role", "system"),
-                        content=str(msg["content"]),
-                        pinned=False,
-                    )
-                )
-        if to_insert:
-            # Insert before the last entry
-            pos = max(0, len(checkpoint.context_history) - 1)
-            for i, m in enumerate(to_insert):
-                checkpoint.context_history.insert(pos + i, m)
-
-    async def persist_evicted(
-        self,
-        messages: list[CastorMessage],
-        summary: str | None = None,
-    ) -> None:
-        """Send evicted messages to cold storage."""
-        if messages:
-            await self._cold.store(
-                self._agent_id,
-                messages,
-                summary=summary,
-                source="eviction",
-            )

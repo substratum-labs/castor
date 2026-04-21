@@ -25,6 +25,7 @@ from castor.models.checkpoint import (
     SyscallPurpose,
     SyscallRecord,
     compute_invocation_id,
+    compute_memory_id,
 )
 from castor.models.result import SyscallResult
 from castor.protocols import (
@@ -127,6 +128,7 @@ __all__ = [
     "SyscallResponse",
     "SyscallResult",
     "compute_invocation_id",
+    "compute_memory_id",
     "MemoryCheckpointStore",
     "ToolMetadata",
     "auto_approve",

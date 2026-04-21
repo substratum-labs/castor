@@ -61,10 +61,20 @@ class CastorMessage(BaseModel):
 
     Classification: **execution state** — part of the agent's working
     memory, managed by the MMU, and persisted in the checkpoint.
+
+    Every message carries a stable ``id`` (content-addressable hash)
+    that survives checkpoint/replay and serves as the addressing key
+    for all ``mem_*`` syscalls.
+    """
+
+    id: str = ""
+    """Stable, replay-safe identity. Computed at creation time via
+    ``compute_memory_id(pid, seq, role, content)``. Empty string for
+    messages created before this field was introduced (backwards compat).
     """
 
     role: str
-    content: str
+    content: Any
     pinned: bool = False  # Never evicted by MMU if True
     token_count: int = 0  # 0 = use estimator
 
@@ -146,6 +156,27 @@ def compute_invocation_id(
     """
     canonical = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
     payload = f"{pid}|{syscall_index}|{tool_name}|{canonical}"
+    return hashlib.sha256(payload.encode()).hexdigest()[:32]
+
+
+def compute_memory_id(
+    pid: str,
+    seq: int,
+    role: str,
+    content: str,
+) -> str:
+    """Compute a deterministic, content-addressable message identity.
+
+    Used as the ``CastorMessage.id`` for all ``mem_*`` syscall addressing.
+    The hash is over ``pid || seq || role || content`` so that:
+
+    - The same execution path always produces the same IDs (replay-stable).
+    - Different pids (e.g. after a fork) produce different IDs.
+    - Content changes produce different IDs (content-addressable).
+
+    ``seq`` is the message's position in context_history at creation time.
+    """
+    payload = f"{pid}|{seq}|{role}|{content}"
     return hashlib.sha256(payload.encode()).hexdigest()[:32]
 
 
