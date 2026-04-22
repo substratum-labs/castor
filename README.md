@@ -6,12 +6,12 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 <p align="center">
-  <img src="assets/security_levels.png" alt="Castor: Same agent, three security levels" width="900">
+  <img src="assets/security_levels.png" alt="Castor: same agent, three execution modes from kernel primitives" width="900">
 </p>
 
-**The secure execution layer for AI agents.** Three levels of protection — from human approval on every action, to full-speed speculative execution with post-hoc review, to time-travel rollback when things go wrong.
+**An OS kernel for AI agents.** Treats agent execution like Unix treats processes — with syscalls, journaling, fork, memory management, scheduling, and resource accounting as kernel primitives. Any agent framework (LangChain, CrewAI, AutoGen, your own) runs on top and inherits these properties.
 
-Your agent's code stays untouched. Castor wraps your existing tools, tracks every action, and enforces safety — without your agent knowing it's there.
+Castor is the kernel layer in the [Substratum Labs](https://substratumlabs.ai) ecosystem: kernel (this repo) + inference engine ([Mnemos](https://github.com/substratum-labs/mnemos)) + sandbox orchestrator ([Roche](https://github.com/substratum-labs/roche)) + platform ([castor-server](https://github.com/substratum-labs/castor-server)) + reference application ([Tiphys](https://github.com/substratum-labs/tiphys)). Sister kernel for real-time agents: [Pollux](https://github.com/substratum-labs/pollux).
 
 ---
 
@@ -43,14 +43,14 @@ async def my_agent():
 async def main():
     kernel = Castor(
         tools=[search, delete_file],
-        destructive=["delete_file"],       # mark dangerous tools
+        destructive=["delete_file"],       # gates require human approval
     )
 
-    # Option A: auto-approve (for testing / trusted environments)
+    # Auto-approve for testing / trusted environments
     cp = await kernel.run_until_complete(my_agent, on_hitl=auto_approve)
     print(cp.result)  # "Cleaned up"
 
-    # Option B: speculative — full speed, review after
+    # Speculative — full speed, review after
     cp = await kernel.run(my_agent, speculative=True)
     summary = kernel.scan(cp)
     print(f"{summary.total_steps} steps, {summary.flagged_count} need review")
@@ -58,55 +58,62 @@ async def main():
 asyncio.run(main())
 ```
 
-`search` runs immediately (safe tool). `delete_file` is destructive — in default mode Castor suspends for human approval. In speculative mode it runs but flags the step for post-hoc review. **The agent doesn't know either way.**
+`search` runs immediately. `delete_file` is gated — kernel inserts an HITL approval point, or flags for post-hoc review in speculative mode. **The agent doesn't know either way** — same code, different operator policy.
 
-## 🛡️ Three Levels of Protection
+## Kernel Primitives
 
-### Level 1: HITL — Human approves every dangerous action
+The capabilities Castor provides at the syscall layer. Build on them; don't rebuild them.
 
-```python
-cp = await kernel.run(my_agent, budgets={"api": 10})
-# → destructive tools pause for approval, safe tools run immediately
-```
+### Journal
 
-### Level 2: Speculative — Full speed, review after
+Every syscall (LLM call, tool invoke, memory op) is recorded in an append-only journal. The journal is the source of truth for replay, audit, and fork. Agent code cannot bypass it.
 
-```python
-cp = await kernel.run(my_agent, speculative=True)
-summary = kernel.scan(cp)
-# → 23 steps, 21 auto-verified, 2 flagged for review
-```
+### Fork
 
-Agent runs without interruption. Every destructive operation is flagged with `needs_review` — the kernel decides at execution time, not after. You review the flagged steps, approve or reject.
-
-### Level 3: Time-Travel — Rewind and fix mistakes
+Branch a session at any step. The prefix is shared (cached, no re-execution); the new branch diverges from there. Used for speculative execution, "what if I'd done it differently" debugging, A/B comparison of agent strategies.
 
 ```python
-# Agent finished but Step 5 was wrong
-forked = cp.fork(at_step=5)
+forked = checkpoint.fork(at_step=5)
 cp2 = await kernel.run(my_agent, checkpoint=forked)
-# → Steps 1-4 replay from cache (free). Steps 5+ re-execute.
+# Steps 1-4 replay from cache (free). Steps 5+ re-execute under new conditions.
 ```
 
-Don't re-run the whole thing. Rewind to the mistake, fix it, fork a new timeline. Cached steps cost nothing — no re-execution, no re-billing.
+### Memory management
 
-Run `uv run python examples/security_levels.py` to see all three levels on the same task.
+Per-agent context window with backing cold storage. The kernel's MMU evicts when watermarks are exceeded; agents can also explicitly write/recall/pin via syscalls. Cold storage is namespaced by `agent_id` so memory persists across sessions — true cross-session learning is a kernel primitive, not an application hack.
 
-## 💡 Philosophy
+### HITL gates + speculative execution
 
-Agent frameworks give LLMs tools. They don't control how those tools are used. Guardrails are advisory — the agent still owns execution.
+Tools can be marked `destructive`. The kernel inserts approval points before they execute, or in speculative mode runs them and flags for post-hoc review. Three operator policies — interactive approval, speculative + scan, full automation — selectable per session without changing agent code.
 
-Castor inverts this. **The agent doesn't call tools. It requests them.** Every side effect is a syscall that passes through a kernel. The kernel validates, budgets, gates, and logs before anything executes.
+### Resource budget
 
-| | OS Concept | Castor Analog |
-|:---:|---|---|
-| 🏗️ | User / Kernel space | Agent code / Castor kernel |
-| 📞 | System calls | `tool()` / `proxy.syscall()` |
-| 🎟️ | Capabilities | Depletable budget tokens |
-| ⏯️ | Process checkpointing | Fork, replay, time-travel |
-| 🧠 | Virtual memory | Context window MMU |
+Every syscall deducts from a budget (tokens, USD, custom resources). Budget exhaustion deterministically blocks the next syscall. Inheritable across spawn trees.
 
-Like Linux, your program (agent) uses libc (`castor.lib`) and never touches the kernel directly. The operator configures security policy. Three roles, fully separated:
+### Spawn / join
+
+Multi-agent execution. Parent spawns children with a subset of its budget; children run, return results, unused budget refunded. Spawn tree is journaled.
+
+### Checkpoint / replay
+
+Suspend and resume across process restarts. Replay uses the journal — completed syscalls return cached results, no re-execution, no double-billing. Deterministic byte-identical to the original run.
+
+Run `uv run python examples/security_levels.py` for HITL/Speculative/Time-Travel side-by-side, or `examples/features/09_fork_timeline.py` for the fork primitive in action.
+
+## OS Analogy
+
+| OS Concept | Castor Analog |
+|---|---|
+| User space / kernel space | Agent code / Castor kernel |
+| System calls | `tool()` / `proxy.syscall()` |
+| Process / fork / wait | Spawn / fork / join |
+| Virtual memory + paging | Context window MMU + cold storage |
+| Capabilities / cgroups | Depletable budget tokens |
+| WAL / replay log | Journal |
+| Signals / interrupts | HITL pause / preemption |
+| `init` / `systemd` | castor-server |
+
+Like Linux, your program (agent) uses libc (`castor.lib`) and never touches the kernel directly. The operator configures policy. Three roles, fully separated:
 
 ```
 Tool developer:  writes plain functions (no Castor knowledge)
@@ -114,7 +121,7 @@ Agent developer: uses castor.lib.tool() (no kernel imports)
 Operator:        Castor(tools=, destructive=, budgets=)
 ```
 
-## 🔧 CLI
+## CLI
 
 Run agents from the command line — like a shell for AI agents:
 
@@ -124,44 +131,48 @@ castor run agent.py:main \
     --tool tools.py:delete_file --destructive \
     --budget api=50 \
     --speculative
-```
 
-Agent and tool code have zero Castor knowledge. The operator configures everything via CLI flags.
-
-```bash
 castor ps                              # list agents
 castor inspect <pid>                   # view checkpoint
 castor approve <pid>                   # approve pending action
 castor reject <pid> --reason "..."     # reject with feedback
 ```
 
-## 🛡️ Guard Any Framework
+Agent and tool code have zero Castor knowledge. The operator configures everything via CLI flags.
 
-Already using an agent framework? Pass your tools through Castor. Your framework runs the agent loop, Castor guards the tool calls.
+## Run any agent framework on Castor
+
+Castor is a kernel, not a framework. LangChain, CrewAI, AutoGen, smolagents, pydantic-ai, openai-agents, google-adk — all run on top, all inherit kernel properties (journal, fork, memory, budget). Adapter extras ship with Castor:
+
+```bash
+pip install castor-kernel[langchain]   # or [crewai], [autogen], [smolagents], ...
+```
+
+Or write your own agent loop directly against `castor.lib.tool()`. See `examples/framework_guards/` for working integrations.
+
+The framework runs the agent loop — Castor records, gates, budgets, and lets you fork it.
 
 ```python
 from castor import Castor
 from castor.lib import tool
 
-# ── Your existing tools (unchanged) ──
-
+# Your existing tools (unchanged)
 async def web_search(query: str) -> str:
-    return f"Results for: {query}"          # your real search implementation
+    return f"Results for: {query}"
 
 async def delete_file(path: str) -> str:
-    os.remove(path)                         # your real file deletion
+    os.remove(path)
     return f"Deleted {path}"
 
-# ── Your existing agent logic (unchanged) ──
-
+# Your existing agent logic (unchanged) — could be a LangChain runnable, a CrewAI crew,
+# a custom asyncio loop, anything that calls tools through castor.lib.tool()
 async def my_agent():
     results = await tool("web_search", query="old temp files")
     for path in parse_paths(results):
         await tool("delete_file", path=path)
     return "Cleanup done"
 
-# ── Operator adds Castor (one place, no changes to above) ──
-
+# Operator adds Castor (one place, no changes to above)
 kernel = Castor(
     tools=[web_search, delete_file],
     destructive=["delete_file"],
@@ -173,22 +184,34 @@ summary = kernel.scan(cp)
 print(f"{summary.total_steps} steps, {summary.flagged_count} need review")
 ```
 
-This works with any framework — LangChain, CrewAI, smolagents, pydantic-ai, or your own code. The only requirement: tool calls go through `castor.lib.tool()`. The agent loop is yours.
+The only requirement: tool calls go through `castor.lib.tool()`. The agent loop is yours.
 
-## 🔒 Security Scope
+## Sister projects
 
-Castor provides **application-layer control**: it gates what the agent *intends* to do (tool calls, budgets, approval). It does **not** sandbox the process (filesystem, network). For defense in depth, run Castor inside a container or use [Roche](https://github.com/substratum-labs/roche), a sandbox orchestrator designed for AI agents. Castor controls intent; your infrastructure controls capability.
+Castor is one piece of an agent OS. The full stack:
 
-## 📚 Documentation
+| Project | Role |
+|---|---|
+| **[castor-server](https://github.com/substratum-labs/castor-server)** | HTTP/SSE platform — multi-tenant agent deployment, Anthropic + OpenAI SDK adapters |
+| **[Mnemos](https://github.com/substratum-labs/mnemos)** | Inference engine — GPU KV cache as a first-class OS resource |
+| **[Roche](https://github.com/substratum-labs/roche)** | Sandbox orchestrator — capability-scoped Docker / Firecracker isolation |
+| **[Pollux](https://github.com/substratum-labs/pollux)** | Real-time agent kernel — sister to Castor for soft + hard real-time workloads |
+| **[Tiphys](https://github.com/substratum-labs/tiphys)** | Reference application — research agent built on Castor |
 
-- **[API Reference](https://substratum-labs.github.io/castor/)**: All modules and classes
-- **[Architecture & Guides](https://substratum-labs.github.io/castor-docs/)**: Whitepaper, deep dives, getting started
+## Operator-layer security
 
-## 🤝 Contributing
+Castor provides **application-layer control**: it gates what the agent *intends* to do (tool calls, budgets, approval, audit). It does **not** sandbox the process (filesystem, network). For defense in depth, run Castor inside a container or use [Roche](https://github.com/substratum-labs/roche). Castor controls intent; your sandbox controls capability.
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+## Documentation
 
-## 🛠️ Development
+- **[API Reference](https://substratum-labs.github.io/castor/)** — modules and classes
+- **[Architecture & Guides](https://substratum-labs.github.io/castor-docs/)** — whitepaper, deep dives, getting started
+
+## Contributing
+
+Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Development
 
 ```bash
 git clone https://github.com/substratum-labs/castor.git
@@ -197,6 +220,6 @@ uv run pytest
 uv run ruff check src/
 ```
 
-## 📄 License
+## License
 
 Apache 2.0. See [LICENSE](LICENSE).
