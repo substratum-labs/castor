@@ -48,3 +48,4 @@ Thumbs.db
 .hypothesis/
 CLAUDE.md
 benchmarks/memory_perf_2026-04.md
+benchmarks/concurrent_spawn_2026-04.md
