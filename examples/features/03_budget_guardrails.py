@@ -1,45 +1,39 @@
-"""Demo 03 — Budget Guardrails: Your agent cannot overspend.
+"""Budget Guardrails
 
 Set a budget. The agent stops itself when it runs out. No surprise bills.
-Shows automatic cost enforcement with graceful degradation.
 
-Run:
+Usage:
     uv run python examples/features/03_budget_guardrails.py
 """
 
 import asyncio
 
 from castor import Castor, castor_tool
-from castor.lib import tool
-
-# ── Output helpers ──
-
-_BAR_WIDTH = 20
+from castor.budget.manager import BudgetExhaustedError
 
 
-def _h(text: str) -> None:
-    print(f"\n\033[1;36m=== {text} ===\033[0m")
+def _h(s: str) -> None:
+    print(f"\n\033[36m{'─' * 60}\n  {s}\n{'─' * 60}\033[0m")
 
 
 def _budget_bar(label: str, used: float, total: float) -> str:
-    ratio = min(used / total, 1.0) if total > 0 else 0
-    filled = int(ratio * _BAR_WIDTH)
-    bar = "#" * filled + "-" * (_BAR_WIDTH - filled)
-    color = "\033[32m" if ratio < 0.8 else ("\033[33m" if ratio < 1.0 else "\033[31m")
-    return f"{color}[{bar}]\033[0m {used:.1f}/{total:.1f}"
+    pct = used / total if total > 0 else 0
+    filled = int(pct * 20)
+    bar = "█" * filled + "░" * (20 - filled)
+    return f"  {label:6s} [{bar}] {used:.1f}/{total:.1f}"
 
 
 # ── 1. Define tools (with cost metadata for budget tracking) ──
 
 
 @castor_tool(consumes="api", cost_per_use=1.0)
-async def search(query: str) -> list[str]:
-    return [f"Result for '{query}'"]
+async def search(query: str) -> str:
+    return f"[Results for '{query}': ...paper1, paper2, paper3...]"
 
 
 @castor_tool(consumes="llm", cost_per_use=2.0)
 async def summarize(data: str) -> str:
-    return f"Summary of: {data[:40]}..."
+    return f"Summary of {data[:40]}..."
 
 
 # ── 2. Define a loop agent that may run out of budget ──
@@ -54,33 +48,27 @@ TOPICS = [
 
 
 async def research_loop() -> str:
-    from castor.lib import budget
+    from castor.lib import budget, tool
 
     completed: list[str] = []
 
     for topic in TOPICS:
         # Search (costs 1.0 api)
-        result = await tool("search", query=topic)
-        is_exhausted = (
-            isinstance(result, dict)
-            and result.get("status") == "INSUFFICIENT_CAPABILITY"
-        )
-        if is_exhausted:
-            print("    search    \033[31mINSUFFICIENT\033[0m")
+        try:
+            result = await tool("search", query=topic)
+        except BudgetExhaustedError:
+            print("    search    \033[31mBUDGET EXHAUSTED\033[0m")
             break
         api_remaining = budget("api")
         print(f"    search    api remaining: {api_remaining:.1f}")
 
         # Summarize (costs 2.0 llm)
-        result = await tool("summarize", data=str(result))
-        is_exhausted = (
-            isinstance(result, dict)
-            and result.get("status") == "INSUFFICIENT_CAPABILITY"
-        )
-        if is_exhausted:
+        try:
+            result = await tool("summarize", data=str(result))
+        except BudgetExhaustedError:
             llm_remaining = budget("llm")
             print(
-                f"    summarize \033[31mINSUFFICIENT "
+                f"    summarize \033[31mBUDGET EXHAUSTED "
                 f"(need 2.0, have {llm_remaining:.1f})\033[0m"
             )
             completed.append(f"{topic}: searched but NOT summarized")

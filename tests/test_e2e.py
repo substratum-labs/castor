@@ -323,23 +323,28 @@ class TestReplayDeterminism:
 
 class TestCapabilityExhaustion:
     async def test_budget_depletes_mid_run(self, gate, budget_mgr):
-        """Budget runs out during agent execution."""
+        """Budget runs out during agent execution.
+
+        §2: third call raises BudgetExhaustedError. Agent catches it.
+        """
+        from castor.budget.manager import BudgetExhaustedError
 
         async def greedy_agent(proxy: SyscallProxy) -> str:
-            # Each web_search costs 1.0, budget is 2.5
-            r1 = await proxy.syscall("web_search", {"query": "a"})
-            r2 = await proxy.syscall("web_search", {"query": "b"})
-            r3 = await proxy.syscall("web_search", {"query": "c"})  # over budget
-            return f"{r1} {r2} {r3}"
+            await proxy.syscall("web_search", {"query": "a"})
+            await proxy.syscall("web_search", {"query": "b"})
+            try:
+                await proxy.syscall("web_search", {"query": "c"})
+            except BudgetExhaustedError:
+                return "budget hit after 2 calls"
+            return "unexpected"
 
         checkpoint = make_checkpoint(budget_mgr, network=2.5, disk=50.0)
         runner = AgentRunner(gate, budget_mgr)
         result = await runner.run(greedy_agent, checkpoint)
 
         assert result.status == "COMPLETED"
+        assert result.result == "budget hit after 2 calls"
         assert len(result.syscall_log) == 3
-        # Third call should have INSUFFICIENT_CAPABILITY response
-        assert result.syscall_log[2].response["status"] == "INSUFFICIENT_CAPABILITY"
 
 
 # ── Test 8: Validation Error → Feedback ──

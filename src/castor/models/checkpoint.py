@@ -205,8 +205,14 @@ class AgentCheckpoint(BaseModel):
         "PREEMPTED",
         "COMPLETED",
         "FAILED",
+        "BUDGET_EXHAUSTED",
     ]
     """Lifecycle state. Transitions are enforced by the runner."""
+
+    priority: int = 5
+    """Scheduling priority (1=lowest, 10=highest). Inherited from spawn
+    args. Used by the scheduler to order child dispatch: higher priority
+    children are dispatched first, ties broken by creation order."""
 
     agent_function_name: str
     """Registered name of the agent function to execute."""

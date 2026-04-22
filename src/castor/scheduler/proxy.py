@@ -112,6 +112,12 @@ class SyscallProxy:
         self._async_tasks: dict[str, asyncio.Task[Any]] = {}
         self._async_checkpoints: dict[str, AgentCheckpoint] = {}
 
+        # Priority-ordered spawn queue for sequential dispatch.
+        # Entries: (-priority, creation_order, child_pid, agent_fn, child_cp)
+        # Negative priority so heapq (min-heap) pops highest priority first.
+        self._spawn_queue: list[tuple[int, int, str, Any, AgentCheckpoint]] = []
+        self._spawn_queue_seq = 0
+
     @property
     def is_replaying(self) -> bool:
         """True if the proxy is still serving cached responses."""
@@ -142,6 +148,16 @@ class SyscallProxy:
             )
         if arguments is None:
             arguments = kwargs
+
+        # ── Budget exhaustion gate ──
+        # If a previous syscall caused budget overshoot, all subsequent
+        # syscalls are blocked immediately. Deterministic: the journal
+        # already contains the overshooting syscall; this one never runs.
+        if self.checkpoint.status == "BUDGET_EXHAUSTED":
+            from castor.budget.manager import BudgetExhaustedError
+
+            raise BudgetExhaustedError("all", 0.0, 0.0)
+
         request = {"tool_name": tool_name, "arguments": arguments}
         start = time.perf_counter()
 
@@ -227,6 +243,23 @@ class SyscallProxy:
             self._append_record(
                 SyscallRecord(request=request, response=decision.response)
             )
+            # Budget-related denial → raise BudgetExhaustedError and lock
+            # the checkpoint so all subsequent syscalls are blocked
+            # immediately (§2: deterministic immediate preemption).
+            resp = decision.response
+            is_budget_deny = (
+                isinstance(resp, dict)
+                and resp.get("status") == "INSUFFICIENT_CAPABILITY"
+            )
+            if is_budget_deny:
+                self.checkpoint.status = "BUDGET_EXHAUSTED"
+                from castor.budget.manager import BudgetExhaustedError
+
+                raise BudgetExhaustedError(
+                    resp.get("resource_type", "unknown"),
+                    0.0,
+                    0.0,
+                )
             return self._wrap_if_needed(tool_name, decision.response)
 
         if isinstance(decision, Suspend):
@@ -352,6 +385,24 @@ class SyscallProxy:
                 tool_name, request.get("arguments", {}), result
             )
 
+        # ── Budget overshoot detection ──
+        # If the just-completed syscall pushed any budget negative, lock
+        # the checkpoint so the NEXT syscall bounces immediately. The
+        # current syscall's result is still returned (it already executed).
+        if decision.cost > 0 and not self.is_replaying:
+            cap = self.checkpoint.capabilities.get(decision.tool_meta.consumes)
+            if cap and cap.current_usage > cap.max_budget:
+                self.checkpoint.status = "BUDGET_EXHAUSTED"
+                _logger.warning(
+                    "budget_exhausted",
+                    extra={
+                        "pid": self.checkpoint.pid,
+                        "resource": decision.tool_meta.consumes,
+                        "usage": cap.current_usage,
+                        "max": cap.max_budget,
+                    },
+                )
+
         return self._wrap_if_needed(tool_name, result)
 
     async def _handle_spawn(
@@ -365,6 +416,7 @@ class SyscallProxy:
 
         agent_name: str = arguments["agent_name"]
         requested_caps: dict[str, float] = arguments.get("capabilities", {})
+        priority: int = arguments.get("priority", 5)
 
         # 1. Look up agent function
         agent_fn = self._agent_registry.get(agent_name)
@@ -385,6 +437,7 @@ class SyscallProxy:
             status="RUNNING",
             agent_function_name=agent_name,
             capabilities=child_budgets,
+            priority=priority,
         )
 
         # 5. Run child with its own proxy
@@ -440,7 +493,15 @@ class SyscallProxy:
         request: dict[str, Any],
         arguments: dict[str, Any],
     ) -> str:
-        """Handle spawn_agent_async: delegate caps, launch child task, return handle."""
+        """Handle spawn_agent_async: delegate caps, launch child task, return handle.
+
+        Children are launched immediately as asyncio tasks. Priority is
+        recorded on the child checkpoint for observability and future
+        scheduling improvements. In this implementation, all async
+        children run concurrently; priority determines join ordering
+        when the parent calls ``join_any`` (future) or is used by
+        application-level orchestration.
+        """
         if self._agent_registry is None:
             raise RuntimeError(
                 "spawn_agent_async requires an AgentRegistry on SyscallProxy"
@@ -448,6 +509,7 @@ class SyscallProxy:
 
         agent_name: str = arguments["agent_name"]
         requested_caps: dict[str, float] = arguments.get("capabilities", {})
+        priority: int = arguments.get("priority", 5)
 
         # 1. Look up agent function
         agent_fn = self._agent_registry.get(agent_name)
@@ -469,6 +531,7 @@ class SyscallProxy:
                 status="RUNNING",
                 agent_function_name=agent_name,
                 capabilities=child_budgets,
+                priority=priority,
             )
 
             # 5. Launch child as background task
@@ -797,16 +860,23 @@ class SyscallProxy:
         return await self.syscall(meta.tool_name, **kwargs)
 
     async def spawn(
-        self, agent_name: str, *, capabilities: dict[str, float] | None = None
+        self,
+        agent_name: str,
+        *,
+        capabilities: dict[str, float] | None = None,
+        priority: int = 5,
     ) -> str:
         """Spawn a child agent asynchronously and return a join handle.
 
         Sugar for ``proxy.syscall("spawn_agent_async", ...)``.
+        ``priority`` (1-10, default 5) determines dispatch order when
+        multiple children compete for resources.
         """
         return await self.syscall(
             "spawn_agent_async",
             agent_name=agent_name,
             capabilities=capabilities or {},
+            priority=priority,
         )
 
     async def join(self, handle: str) -> Any:
@@ -817,7 +887,11 @@ class SyscallProxy:
         return await self.syscall("join_agent", handle=handle)
 
     async def spawn_sync(
-        self, agent_name: str, *, capabilities: dict[str, float] | None = None
+        self,
+        agent_name: str,
+        *,
+        capabilities: dict[str, float] | None = None,
+        priority: int = 5,
     ) -> Any:
         """Spawn a child agent synchronously and wait for its result.
 
@@ -827,7 +901,48 @@ class SyscallProxy:
             "spawn_agent",
             agent_name=agent_name,
             capabilities=capabilities or {},
+            priority=priority,
         )
+
+    # ── Priority-based dispatch queue ──
+
+    def enqueue_spawn(
+        self,
+        child_pid: str,
+        agent_fn: Any,
+        child_cp: AgentCheckpoint,
+    ) -> None:
+        """Add a child to the priority dispatch queue.
+
+        Children are dispatched in priority order (highest first, then
+        FIFO among same-priority). Use ``dispatch_next()`` to pop and
+        run the next child.
+        """
+        import heapq
+
+        heapq.heappush(
+            self._spawn_queue,
+            (-child_cp.priority, self._spawn_queue_seq, child_pid, agent_fn, child_cp),
+        )
+        self._spawn_queue_seq += 1
+
+    def dispatch_next(self) -> tuple[str, Any, AgentCheckpoint] | None:
+        """Pop the highest-priority child from the queue.
+
+        Returns ``(child_pid, agent_fn, child_cp)`` or ``None`` if
+        queue is empty.
+        """
+        import heapq
+
+        if not self._spawn_queue:
+            return None
+        neg_pri, _seq, child_pid, agent_fn, child_cp = heapq.heappop(self._spawn_queue)
+        return (child_pid, agent_fn, child_cp)
+
+    @property
+    def spawn_queue_size(self) -> int:
+        """Number of children waiting in the dispatch queue."""
+        return len(self._spawn_queue)
 
     def __getattr__(self, name: str) -> Any:
         """Enable proxy.tool_name(...) style calls.

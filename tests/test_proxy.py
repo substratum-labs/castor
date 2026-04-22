@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from castor.budget.manager import BudgetManager
+from castor.budget.manager import BudgetExhaustedError, BudgetManager
 from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
@@ -154,9 +154,10 @@ class TestFastPath:
         checkpoint = make_checkpoint(budget_mgr, caps=caps)
         proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
-        result = await proxy.syscall("search", {"query": "test"})
-        assert result["status"] == "INSUFFICIENT_CAPABILITY"
+        with pytest.raises(BudgetExhaustedError):
+            await proxy.syscall("search", {"query": "test"})
         assert len(checkpoint.syscall_log) == 1
+        assert checkpoint.status == "BUDGET_EXHAUSTED"
 
 
 class TestSlowPath:
