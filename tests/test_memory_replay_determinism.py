@@ -174,3 +174,53 @@ async def test_mem_write_preserves_role():
     assert written[0].role == "user", (
         f"Expected role='user', got role='{written[0].role}'"
     )
+
+
+@pytest.mark.asyncio
+async def test_msg_seq_survives_restart():
+    """_msg_seq is reconstructed from checkpoint journal, not process state.
+
+    Simulates a server restart: create a new MMU instance and verify
+    that next_memory_id picks up from where the previous run left off.
+    """
+    from castor.gate.registry import ToolRegistry
+    from castor.mmu.cold_storage import InMemoryColdStorage
+    from castor.mmu.core import MMU
+    from castor.models.checkpoint import AgentCheckpoint, SyscallPurpose, SyscallRecord
+
+    cold = InMemoryColdStorage()
+
+    # Fake a checkpoint with 3 mem_write entries in the journal
+    from castor.budget.manager import BudgetManager
+
+    bm = BudgetManager()
+    cp = AgentCheckpoint(
+        pid="seq-test",
+        status="RUNNING",
+        agent_function_name="test",
+        capabilities=bm.create_budgets({}),
+        syscall_log=[
+            SyscallRecord(
+                request={"tool_name": "mem_write", "arguments": {"content": f"msg{i}"}},
+                response={"memory_id": f"id{i}"},
+                purpose=SyscallPurpose.MEMORY_MANAGEMENT,
+            )
+            for i in range(3)
+        ],
+    )
+
+    # Create a "restarted" MMU — seq starts at 0
+    reg = ToolRegistry()
+    mmu = MMU(reg, cold_storage=cold, agent_id="seq-test")
+    assert mmu._msg_seq == 0
+
+    # sync_seq rebuilds from journal
+    mmu.sync_seq(cp)
+    assert mmu._msg_seq == 3
+
+    # next_memory_id uses seq=3 (not 0)
+    mid = mmu.next_memory_id("seq-test", "user", "hello")
+    from castor.models.checkpoint import compute_memory_id
+
+    expected = compute_memory_id("seq-test", 3, "user", "hello")
+    assert mid == expected

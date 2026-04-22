@@ -71,9 +71,25 @@ class MMU:
         self._soft_watermark = int(hard_watermark * soft_watermark_ratio)
         self._agent_id = agent_id
         self._auto_evict_paused = False
-        self._msg_seq = 0
+        self._msg_seq = 0  # rebuilt from checkpoint in sync_seq()
 
         self._register_tools(registry)
+
+    def sync_seq(self, checkpoint: AgentCheckpoint) -> None:
+        """Rebuild ``_msg_seq`` from checkpoint state.
+
+        Called by the runner before each agent execution to ensure the
+        seq counter matches what was persisted. Without this, a server
+        restart would reset seq to 0, producing non-deterministic IDs
+        if two messages happen to share the same role + content.
+
+        Counts mem_write entries in the journal (each one incremented
+        seq once in the original run).
+        """
+        count = sum(
+            1 for r in checkpoint.syscall_log if r.request.get("tool_name") == MEM_WRITE
+        )
+        self._msg_seq = count
 
     # ── Public API ──
 
@@ -111,6 +127,9 @@ class MMU:
     async def check_and_evict(
         self, proxy: SyscallProxy, checkpoint: AgentCheckpoint
     ) -> None:
+        # Ensure seq counter is in sync with checkpoint (survives restart)
+        self.sync_seq(checkpoint)
+
         if self._auto_evict_paused:
             return
         total = self.total_tokens(checkpoint)
