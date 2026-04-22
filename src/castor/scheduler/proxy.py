@@ -732,6 +732,12 @@ class SyscallProxy:
         if not isinstance(mmu, MMU):
             return
 
+        # During replay, effects are already baked into the checkpoint
+        # from the original run. Re-applying them would duplicate entries
+        # in context_history and cold storage.
+        if self.is_replaying:
+            return
+
         r = result if isinstance(result, dict) else {}
 
         if tool_name == MEM_EVICT:
@@ -763,8 +769,9 @@ class SyscallProxy:
         elif tool_name == MEM_WRITE:
             content = r.get("content", "")
             pin = r.get("pin", False)
-            mid = mmu.next_memory_id(self.checkpoint.pid, "memory", content)
-            msg = CastorMessage(id=mid, role="memory", content=content, pinned=pin)
+            role = arguments.get("role", "memory")
+            mid = mmu.next_memory_id(self.checkpoint.pid, role, content)
+            msg = CastorMessage(id=mid, role=role, content=content, pinned=pin)
             mmu.apply_write(self.checkpoint, msg)
             # Also persist to cold for durability
             await mmu._cold.store_explicit(

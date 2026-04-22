@@ -172,7 +172,7 @@ class TestToolRegistration:
 
     def test_kernel_names(self):
         mmu, _, _ = _make_mmu()
-        assert len(mmu.kernel_tool_names) == 7
+        assert len(mmu.kernel_tool_names) == 0
 
 
 class TestPauseResume:

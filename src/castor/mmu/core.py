@@ -79,7 +79,11 @@ class MMU:
 
     @property
     def kernel_tool_names(self) -> set[str]:
-        return set(_KERNEL_TOOL_NAMES)
+        # Memory syscalls are agent-observable and replay from journal
+        # cache (ReplayHit). They are NOT kernel-internal — returning
+        # them here would cause decide_syscall to SKIP them during
+        # replay, leading to re-execution and duplicate side effects.
+        return set()
 
     def pause_auto_evict(self) -> None:
         self._auto_evict_paused = True
@@ -180,10 +184,20 @@ class MMU:
         return self.apply_eviction(checkpoint, memory_id)
 
     def apply_promote(self, checkpoint: AgentCheckpoint, msg: CastorMessage) -> None:
-        pos = max(0, len(checkpoint.context_history) - 1)
-        checkpoint.context_history.insert(pos, msg)
+        """Insert a promoted message into context.
+
+        For 0 or 1 items: append (so promoted goes AFTER system prompt).
+        For 2+ items: insert before the last entry (the latest user
+        query), so the LLM sees the recalled context in the right spot.
+        """
+        n = len(checkpoint.context_history)
+        if n <= 1:
+            checkpoint.context_history.append(msg)
+        else:
+            checkpoint.context_history.insert(n - 1, msg)
 
     def apply_write(self, checkpoint: AgentCheckpoint, msg: CastorMessage) -> None:
+        """Append a new message to the end of context_history."""
         checkpoint.context_history.append(msg)
 
     async def persist_evicted(
@@ -198,9 +212,12 @@ class MMU:
 
     def _register_tools(self, registry: ToolRegistry) -> None:
         async def _mem_write(
-            content: str = "", metadata: dict | None = None, pin: bool = False
+            content: str = "",
+            metadata: dict | None = None,
+            pin: bool = False,
+            role: str = "memory",
         ) -> dict:
-            return {"content": content, "metadata": metadata, "pin": pin}
+            return {"content": content, "metadata": metadata, "pin": pin, "role": role}
 
         registry.register(
             ToolMetadata(
@@ -211,6 +228,7 @@ class MMU:
                         "content": {"type": "string"},
                         "metadata": {"type": "object"},
                         "pin": {"type": "boolean"},
+                        "role": {"type": "string"},
                     },
                     "required": ["content"],
                 },
