@@ -13,6 +13,7 @@ from castor.budget.manager import BudgetExhaustedError, BudgetManager
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import AgentCheckpoint
+from castor.models.preemption import PreemptedError
 from castor.scheduler.runner import AgentRunner
 
 
@@ -43,7 +44,7 @@ async def test_budget_exhaustion_via_multiple_calls():
         # cost wasn't known upfront. Let me use a different approach.
         try:
             await proxy.syscall("medium_cost", {})
-        except BudgetExhaustedError:
+        except (BudgetExhaustedError, PreemptedError):
             return "blocked"
         return "not blocked"
 
@@ -80,7 +81,7 @@ async def test_status_locked_after_overshoot():
         # Next call: 20 < 80 → BudgetExhaustedError
         try:
             await proxy.syscall("heavy", {})
-        except BudgetExhaustedError:
+        except (BudgetExhaustedError, PreemptedError):
             pass
         return "finished"
 
@@ -118,7 +119,7 @@ async def test_budget_exhausted_status_blocks_all_subsequent():
             try:
                 await proxy.syscall("tracked", {})
                 results.append("ok")
-            except BudgetExhaustedError:
+            except (BudgetExhaustedError, PreemptedError):
                 results.append("blocked")
                 break
         return results
@@ -151,7 +152,7 @@ async def test_checkpoint_status_after_overshoot_via_facade():
         await proxy.syscall("costly", {})  # 100-60=40
         try:
             await proxy.syscall("costly", {})  # 40<60 → blocked
-        except BudgetExhaustedError:
+        except (BudgetExhaustedError, PreemptedError):
             return "budget hit"
         return "no hit"
 

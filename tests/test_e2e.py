@@ -328,13 +328,14 @@ class TestCapabilityExhaustion:
         §2: third call raises BudgetExhaustedError. Agent catches it.
         """
         from castor.budget.manager import BudgetExhaustedError
+        from castor.models.preemption import PreemptedError
 
         async def greedy_agent(proxy: SyscallProxy) -> str:
             await proxy.syscall("web_search", {"query": "a"})
             await proxy.syscall("web_search", {"query": "b"})
             try:
                 await proxy.syscall("web_search", {"query": "c"})
-            except BudgetExhaustedError:
+            except (BudgetExhaustedError, PreemptedError):
                 return "budget hit after 2 calls"
             return "unexpected"
 

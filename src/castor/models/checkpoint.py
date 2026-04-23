@@ -34,6 +34,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from castor.models.budget import Budget
+from castor.models.preemption import PreemptionReason
 
 
 class SyscallPurpose(StrEnum):
@@ -135,6 +136,24 @@ class SyscallRecord(BaseModel):
     """For spawn/join: the child agent's checkpoint at completion."""
 
 
+class PreemptionRecord(BaseModel):
+    """One preemption event in the agent's history.
+
+    Stored in ``AgentCheckpoint.preemption_log``. On replay, the runner
+    re-injects the preempt at the same syscall boundary so replays are
+    byte-identical.
+    """
+
+    syscall_index_after: int
+    """Preemption fires AFTER this syscall completes (before the next)."""
+
+    reason: PreemptionReason
+    timestamp: float
+    """Wall-clock for diagnostics; NOT used in replay logic."""
+
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 def compute_invocation_id(
     pid: str,
     syscall_index: int,
@@ -203,11 +222,17 @@ class AgentCheckpoint(BaseModel):
         "RUNNING",
         "SUSPENDED_FOR_HITL",
         "PREEMPTED",
+        "SUSPENDED",
+        "KILLED",
         "COMPLETED",
         "FAILED",
         "BUDGET_EXHAUSTED",
     ]
-    """Lifecycle state. Transitions are enforced by the runner."""
+    """Lifecycle state. Transitions enforced by the runner.
+
+    RUNNING → PREEMPTED → SUSPENDED → RUNNING (resume) or → KILLED.
+    BUDGET_EXHAUSTED is a legacy alias for PREEMPTED + reason=budget.
+    """
 
     priority: int = 5
     """Scheduling priority (1=lowest, 10=highest). Inherited from spawn
@@ -225,6 +250,11 @@ class AgentCheckpoint(BaseModel):
     """The syscall request that caused suspension. ``None`` when not
     suspended. Set by the kernel's Suspend decision, cleared by
     approve/reject/modify."""
+
+    preemption_log: list[PreemptionRecord] = Field(default_factory=list)
+    """Append-only log of preemption events. Each entry records
+    ``syscall_index_after`` so replay re-injects preempts at the
+    exact same point."""
 
     # ── Execution state ──
     # These fields capture *what happened*. They grow with agent work.

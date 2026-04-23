@@ -21,12 +21,14 @@ from castor.models.budget import Budget, SyscallRequest, SyscallResponse
 from castor.models.checkpoint import (
     AgentCheckpoint,
     CastorMessage,
+    PreemptionRecord,
     SuspendInterrupt,
     SyscallPurpose,
     SyscallRecord,
     compute_invocation_id,
     compute_memory_id,
 )
+from castor.models.preemption import PreemptedError, PreemptionReason
 from castor.models.result import SyscallResult
 from castor.protocols import (
     AgentRegistryProtocol,
@@ -52,6 +54,7 @@ from castor.scheduler.persistence import (
 )
 from castor.scheduler.proxy import SyscallProxy
 from castor.scheduler.runner import AgentRunner, default_runner_factory
+from castor.scheduler.scheduler import Scheduler
 
 stable(Castor)
 stable(SyscallProxy)
@@ -127,6 +130,10 @@ __all__ = [
     "SyscallRequest",
     "SyscallResponse",
     "SyscallResult",
+    "Scheduler",
+    "PreemptionRecord",
+    "PreemptionReason",
+    "PreemptedError",
     "compute_invocation_id",
     "compute_memory_id",
     "MemoryCheckpointStore",

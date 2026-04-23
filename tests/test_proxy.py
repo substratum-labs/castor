@@ -13,6 +13,7 @@ from castor.models.checkpoint import (
     SuspendInterrupt,
     SyscallRecord,
 )
+from castor.models.preemption import PreemptedError
 from castor.scheduler.proxy import ReplayDivergenceError, SyscallProxy
 
 
@@ -154,10 +155,10 @@ class TestFastPath:
         checkpoint = make_checkpoint(budget_mgr, caps=caps)
         proxy = SyscallProxy(checkpoint, gate, budget_mgr)
 
-        with pytest.raises(BudgetExhaustedError):
+        with pytest.raises((BudgetExhaustedError, PreemptedError)):
             await proxy.syscall("search", {"query": "test"})
         assert len(checkpoint.syscall_log) == 1
-        assert checkpoint.status == "BUDGET_EXHAUSTED"
+        assert checkpoint.status == "PREEMPTED"
 
 
 class TestSlowPath:

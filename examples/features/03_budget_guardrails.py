@@ -9,7 +9,7 @@ Usage:
 import asyncio
 
 from castor import Castor, castor_tool
-from castor.budget.manager import BudgetExhaustedError
+from castor.models.preemption import PreemptedError
 
 
 def _h(s: str) -> None:
@@ -56,7 +56,7 @@ async def research_loop() -> str:
         # Search (costs 1.0 api)
         try:
             result = await tool("search", query=topic)
-        except BudgetExhaustedError:
+        except PreemptedError:
             print("    search    \033[31mBUDGET EXHAUSTED\033[0m")
             break
         api_remaining = budget("api")
@@ -65,7 +65,7 @@ async def research_loop() -> str:
         # Summarize (costs 2.0 llm)
         try:
             result = await tool("summarize", data=str(result))
-        except BudgetExhaustedError:
+        except PreemptedError:
             llm_remaining = budget("llm")
             print(
                 f"    summarize \033[31mBUDGET EXHAUSTED "

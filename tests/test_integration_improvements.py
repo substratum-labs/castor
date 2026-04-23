@@ -17,6 +17,7 @@ from castor import (
 )
 from castor.budget.manager import BudgetExhaustedError, BudgetManager
 from castor.gate.registry import ToolRegistry
+from castor.models.preemption import PreemptedError
 from castor.scheduler.persistence import CheckpointNotFoundError
 
 # ── A1: Budget skip on missing resource ────────────────────────────────────
@@ -37,7 +38,7 @@ class TestBudgetSkipMissingResource:
         mgr.deduct(caps, "api", 3.0)
         assert caps["api"].current_usage == 3.0
         # Should still raise when budget is actually exhausted
-        with pytest.raises(BudgetExhaustedError):
+        with pytest.raises((BudgetExhaustedError, PreemptedError)):
             mgr.deduct(caps, "api", 3.0)
 
     def test_deduct_untracked_alongside_tracked(self):

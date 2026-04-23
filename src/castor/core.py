@@ -146,6 +146,11 @@ class Castor:
         self._runner_factory = runner_factory or default_runner_factory
         self._hitl = HITLHandler(runner_factory=self._runner_factory)
 
+        # -- Scheduler (Phase A preemptive scheduling) --
+        from castor.scheduler.scheduler import Scheduler
+
+        self._scheduler = Scheduler(budget_mgr=self._budget_mgr)
+
         # -- Persistence --
         self._store = None
         if store is not None:
@@ -278,6 +283,7 @@ class Castor:
             agent_registry=self._agent_registry,
             structured_results=self._structured_results,
             speculative=speculative,
+            scheduler=self._scheduler,
         )
         return await runner.run(agent_fn, checkpoint)
 
@@ -443,6 +449,7 @@ class Castor:
             lodge=self._lodge,
             agent_registry=self._agent_registry,
             structured_results=self._structured_results,
+            scheduler=self._scheduler,
         )
         task = await runner.run_as_task(agent_fn, checkpoint)
         return CastorTask(runner, task, checkpoint)

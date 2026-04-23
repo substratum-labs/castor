@@ -42,6 +42,7 @@ class AgentRunner:
         agent_registry: AgentRegistryProtocol | None = None,
         structured_results: bool = False,
         speculative: bool = False,
+        scheduler: Any | None = None,
     ) -> None:
         self._gate = gate
         self._budget_mgr = capability_manager
@@ -49,6 +50,7 @@ class AgentRunner:
         self._agent_registry = agent_registry
         self._structured_results = structured_results
         self._speculative = speculative
+        self._scheduler = scheduler
         self._task: asyncio.Task | None = None
         self._current_checkpoint: AgentCheckpoint | None = None
 
@@ -80,6 +82,7 @@ class AgentRunner:
             agent_registry=self._agent_registry,
             structured_results=self._structured_results,
             speculative=self._speculative,
+            scheduler=self._scheduler,
         )
 
         # Set ContextVar so castor.lib functions work (both new and legacy agents)
@@ -174,4 +177,5 @@ def default_runner_factory(
         agent_registry=agent_registry,
         structured_results=structured_results,
         speculative=speculative,
+        scheduler=kwargs.get("scheduler"),
     )

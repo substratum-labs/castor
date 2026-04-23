@@ -88,11 +88,13 @@ class SyscallProxy:
         checkpoint_store: CheckpointStoreProtocol | None = None,
         structured_results: bool = False,
         speculative: bool = False,
+        scheduler: Any | None = None,
     ) -> None:
         self.checkpoint = checkpoint
         self._gate = gate
         self._budget_mgr = capability_manager
         self._lodge = lodge
+        self._scheduler = scheduler
         self._llm_tool_names = llm_tool_names or {"llm_inference"}
         self._kernel_tool_names = kernel_tool_names or set()
         self._agent_registry = agent_registry
@@ -149,14 +151,51 @@ class SyscallProxy:
         if arguments is None:
             arguments = kwargs
 
-        # ── Budget exhaustion gate ──
-        # If a previous syscall caused budget overshoot, all subsequent
-        # syscalls are blocked immediately. Deterministic: the journal
-        # already contains the overshooting syscall; this one never runs.
-        if self.checkpoint.status == "BUDGET_EXHAUSTED":
-            from castor.budget.manager import BudgetExhaustedError
+        # ── Preemption check ──
+        # Scheduler inspects checkpoint state and decides whether to
+        # preempt. Runs BEFORE dispatch — if the agent should stop,
+        # it never reaches the tool. Deterministic: same checkpoint →
+        # same decision → replay reproduces exact preempt point.
+        if self.checkpoint.status in ("PREEMPTED", "BUDGET_EXHAUSTED"):
+            # Already preempted — all subsequent syscalls blocked.
+            from castor.models.preemption import PreemptedError, PreemptionReason
 
-            raise BudgetExhaustedError("all", 0.0, 0.0)
+            reason = PreemptionReason.BUDGET_EXHAUSTED
+            meta: dict[str, Any] = {}
+            if self.checkpoint.preemption_log:
+                last = self.checkpoint.preemption_log[-1]
+                reason = last.reason
+                meta = last.metadata
+            raise PreemptedError(reason, metadata=meta)
+
+        if self._scheduler is not None and not self.is_replaying:
+            preempt = self._scheduler.should_preempt(self.checkpoint)
+            if preempt is not None:
+                reason, metadata = preempt
+                from castor.models.checkpoint import PreemptionRecord
+                from castor.models.preemption import PreemptedError
+
+                record = PreemptionRecord(
+                    syscall_index_after=len(self.checkpoint.syscall_log),
+                    reason=reason,
+                    timestamp=time.time(),
+                    metadata=metadata,
+                )
+                self.checkpoint.preemption_log.append(record)
+                self.checkpoint.status = "PREEMPTED"
+                raise PreemptedError(reason=reason, metadata=metadata)
+
+        # ── Replay preemption re-injection ──
+        # During replay, check if a preempt was recorded at this syscall
+        # index. Re-inject it so replay is byte-identical.
+        if self.is_replaying and self.checkpoint.preemption_log:
+            current_idx = len(self.checkpoint.syscall_log)
+            for prec in self.checkpoint.preemption_log:
+                if prec.syscall_index_after == current_idx:
+                    from castor.models.preemption import PreemptedError
+
+                    self.checkpoint.status = "PREEMPTED"
+                    raise PreemptedError(reason=prec.reason, metadata=prec.metadata)
 
         request = {"tool_name": tool_name, "arguments": arguments}
         start = time.perf_counter()
@@ -252,13 +291,22 @@ class SyscallProxy:
                 and resp.get("status") == "INSUFFICIENT_CAPABILITY"
             )
             if is_budget_deny:
-                self.checkpoint.status = "BUDGET_EXHAUSTED"
-                from castor.budget.manager import BudgetExhaustedError
+                self.checkpoint.status = "PREEMPTED"
+                from castor.models.checkpoint import PreemptionRecord
+                from castor.models.preemption import PreemptedError, PreemptionReason
 
-                raise BudgetExhaustedError(
-                    resp.get("resource_type", "unknown"),
-                    0.0,
-                    0.0,
+                prec = PreemptionRecord(
+                    syscall_index_after=len(self.checkpoint.syscall_log),
+                    reason=PreemptionReason.BUDGET_EXHAUSTED,
+                    timestamp=time.time(),
+                    metadata={
+                        "feedback": resp.get("feedback_message", ""),
+                    },
+                )
+                self.checkpoint.preemption_log.append(prec)
+                raise PreemptedError(
+                    PreemptionReason.BUDGET_EXHAUSTED,
+                    metadata=prec.metadata,
                 )
             return self._wrap_if_needed(tool_name, decision.response)
 
