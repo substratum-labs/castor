@@ -185,18 +185,6 @@ class SyscallProxy:
                 self.checkpoint.status = "PREEMPTED"
                 raise PreemptedError(reason=reason, metadata=metadata)
 
-        # ── Replay preemption re-injection ──
-        # During replay, check if a preempt was recorded at this syscall
-        # index. Re-inject it so replay is byte-identical.
-        if self.is_replaying and self.checkpoint.preemption_log:
-            current_idx = len(self.checkpoint.syscall_log)
-            for prec in self.checkpoint.preemption_log:
-                if prec.syscall_index_after == current_idx:
-                    from castor.models.preemption import PreemptedError
-
-                    self.checkpoint.status = "PREEMPTED"
-                    raise PreemptedError(reason=prec.reason, metadata=prec.metadata)
-
         request = {"tool_name": tool_name, "arguments": arguments}
         start = time.perf_counter()
 
@@ -276,6 +264,18 @@ class SyscallProxy:
                     "index": decision.new_replay_index - 1,
                 },
             )
+            # Replay preemption re-injection: if the preemption_log says
+            # a preempt fires AFTER this replayed syscall, raise it now
+            # instead of returning the cached response. This reproduces
+            # the original behavior where the Deny path raised
+            # PreemptedError instead of returning.
+            if self.checkpoint.preemption_log:
+                from castor.models.preemption import PreemptedError
+
+                for prec in self.checkpoint.preemption_log:
+                    if prec.syscall_index_after == decision.new_replay_index:
+                        self.checkpoint.status = "PREEMPTED"
+                        raise PreemptedError(reason=prec.reason, metadata=prec.metadata)
             return self._wrap_if_needed(tool_name, decision.response)
 
         if isinstance(decision, Deny):

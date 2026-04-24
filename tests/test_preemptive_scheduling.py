@@ -296,3 +296,67 @@ def test_scheduler_priority_check_order():
     assert result is not None
     # Budget takes precedence over priority
     assert result[0] == PreemptionReason.BUDGET_EXHAUSTED
+
+
+# ── AC 11: Replay determinism with all 3 reasons ──
+
+
+@pytest.mark.asyncio
+async def test_replay_budget_preemption_deterministic():
+    """Budget preemption replays at the same syscall boundary."""
+
+    @castor_tool(consumes="api", cost_per_use=60.0)
+    async def costly() -> str:
+        return "ok"
+
+    kernel = Castor(tools=[costly], budgets={"api": 100.0})
+
+    async def agent(proxy):
+        await proxy.syscall("costly", {})  # 100-60=40
+        try:
+            await proxy.syscall("costly", {})  # preempt
+        except PreemptedError:
+            return "preempted"
+        return "not preempted"
+
+    # First run
+    cp1 = await kernel.run(agent, pid="replay-preempt-001")
+    assert cp1.result == "preempted"
+    assert len(cp1.preemption_log) >= 1
+
+    # Replay — fork keeping all entries
+    forked = cp1.fork(at_step=len(cp1.syscall_log))
+    cp2 = await kernel.run(agent, checkpoint=forked)
+    assert cp2.result == "preempted"
+
+    # Same preemption point
+    assert len(cp1.syscall_log) == len(cp2.syscall_log)
+    for i, (r1, r2) in enumerate(zip(cp1.syscall_log, cp2.syscall_log)):
+        assert r1.request == r2.request, f"request mismatch at {i}"
+
+
+@pytest.mark.asyncio
+async def test_preemption_record_in_journal():
+    """PreemptionRecord lands in preemption_log with correct metadata."""
+
+    @castor_tool(consumes="api", cost_per_use=60.0)
+    async def costly() -> str:
+        return "ok"
+
+    kernel = Castor(tools=[costly], budgets={"api": 100.0})
+
+    async def agent(proxy):
+        await proxy.syscall("costly", {})
+        try:
+            await proxy.syscall("costly", {})
+        except PreemptedError:
+            return "caught"
+        return "missed"
+
+    cp = await kernel.run(agent)
+    assert cp.result == "caught"
+    assert len(cp.preemption_log) >= 1
+    rec = cp.preemption_log[0]
+    assert rec.reason == PreemptionReason.BUDGET_EXHAUSTED
+    assert rec.syscall_index_after >= 0
+    assert rec.timestamp > 0
