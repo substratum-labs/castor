@@ -287,6 +287,104 @@ class Castor:
         )
         return await runner.run(agent_fn, checkpoint)
 
+    async def replay_with_overrides(
+        self,
+        base_checkpoint: AgentCheckpoint,
+        agent_fn: Any,
+        overrides: dict[int | str, Any],
+        mode: str = "live_from_divergence",
+        inherit_budget: bool = False,
+        budgets: dict[str, float] | None = None,
+    ) -> Any:
+        """Run a counterfactual replay of a recorded session.
+
+        Forks the base checkpoint, replays up to the earliest override,
+        injects the override(s), then continues per ``mode``.
+
+        Returns the CounterfactualResult (also persisted).
+        """
+        from castor.models.counterfactual import (
+            CounterfactualResult,
+        )
+        from castor.scheduler.counterfactual import validate_overrides
+
+        # Validate overrides
+        resolved = validate_overrides(overrides, base_checkpoint.syscall_log)
+
+        # Find earliest divergence point
+        earliest_idx = min(idx for idx, _ in resolved.values())
+
+        # Fork at the divergence point (keep steps 0..earliest-1)
+        cf_checkpoint = base_checkpoint.fork(at_step=earliest_idx)
+        cf_checkpoint.parent_session_id = base_checkpoint.pid
+
+        # Budget: inherit or fresh
+        if not inherit_budget and budgets:
+            cf_checkpoint.capabilities = self._budget_mgr.create_budgets(budgets)
+        elif not inherit_budget and self._default_budgets:
+            cf_checkpoint.capabilities = self._budget_mgr.create_budgets(
+                self._default_budgets
+            )
+
+        # Build runner with CF overrides
+        kernel_tools = self._lodge.kernel_tool_names if self._lodge else set()
+        from castor.scheduler.proxy import SyscallProxy
+
+        proxy = SyscallProxy(
+            cf_checkpoint,
+            self._gate,
+            self._budget_mgr,
+            lodge=self._lodge,
+            kernel_tool_names=kernel_tools,
+            agent_registry=self._agent_registry,
+            structured_results=self._structured_results,
+            scheduler=self._scheduler,
+            cf_overrides=resolved,
+            cf_mode=mode,
+            cf_parent_log=list(base_checkpoint.syscall_log),
+        )
+
+        from castor.lib._context import set_proxy
+
+        set_proxy(proxy)
+
+        import inspect
+
+        sig = inspect.signature(agent_fn)
+        required = [
+            p
+            for p in sig.parameters.values()
+            if p.default is inspect.Parameter.empty
+            and p.kind
+            not in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            )
+        ]
+
+        try:
+            if len(required) == 0:
+                result = await agent_fn()
+            else:
+                result = await agent_fn(proxy)
+            cf_checkpoint.result = result
+            cf_checkpoint.status = "COMPLETED"
+        except Exception:
+            cf_checkpoint.status = "FAILED"
+
+        # Build result
+        return CounterfactualResult(
+            session_id=cf_checkpoint.pid,
+            parent_session_id=base_checkpoint.pid,
+            diverged_at_step=earliest_idx,
+            overrides_applied=cf_checkpoint.counterfactual_log,
+            final_status=cf_checkpoint.status,
+            total_cost=sum(
+                cap.current_usage for cap in cf_checkpoint.capabilities.values()
+            ),
+            total_steps=len(cf_checkpoint.syscall_log),
+        )
+
     def _resolve_checkpoint(
         self, ref: AgentCheckpoint | str
     ) -> tuple[AgentCheckpoint, bool]:

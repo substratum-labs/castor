@@ -256,6 +256,21 @@ class AgentCheckpoint(BaseModel):
     ``syscall_index_after`` so replay re-injects preempts at the
     exact same point."""
 
+    # ── Counterfactual replay ──
+
+    counterfactual_log: list[Any] = Field(default_factory=list)
+    """Overrides applied during a counterfactual replay. Each entry
+    is a ``CounterfactualRecord`` (imported as Any to avoid circular).
+    Replay of the CF session re-applies these at the same points."""
+
+    parent_session_id: str | None = None
+    """The session this was forked from for counterfactual replay.
+    ``None`` for non-CF sessions."""
+
+    diverged_at_step: int | None = None
+    """The syscall index where the counterfactual override was first
+    applied. ``None`` for non-CF sessions."""
+
     # ── Execution state ──
     # These fields capture *what happened*. They grow with agent work.
 

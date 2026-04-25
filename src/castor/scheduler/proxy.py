@@ -89,12 +89,32 @@ class SyscallProxy:
         structured_results: bool = False,
         speculative: bool = False,
         scheduler: Any | None = None,
+        cf_overrides: dict[str, Any] | None = None,
+        cf_mode: str | None = None,
+        cf_parent_log: list[Any] | None = None,
     ) -> None:
         self.checkpoint = checkpoint
         self._gate = gate
         self._budget_mgr = capability_manager
         self._lodge = lodge
         self._scheduler = scheduler
+        # Counterfactual replay state.
+        # If no explicit overrides are passed but the checkpoint has a
+        # counterfactual_log, reconstruct overrides from it so replaying
+        # a saved CF session reproduces the same overrides.
+        if not cf_overrides and checkpoint.counterfactual_log:
+            from castor.models.counterfactual import SyscallOverride
+
+            cf_overrides = {}
+            for rec in checkpoint.counterfactual_log:
+                cf_overrides[rec.invocation_id] = SyscallOverride(
+                    replacement_output=rec.replacement_output,
+                    note=rec.note,
+                )
+        self._cf_overrides = cf_overrides or {}
+        self._cf_mode = cf_mode
+        self._cf_parent_log = cf_parent_log or []
+        self._past_divergence = False
         self._llm_tool_names = llm_tool_names or {"llm_inference"}
         self._kernel_tool_names = kernel_tool_names or set()
         self._agent_registry = agent_registry
@@ -188,6 +208,63 @@ class SyscallProxy:
         request = {"tool_name": tool_name, "arguments": arguments}
         start = time.perf_counter()
 
+        # ── Counterfactual override (early check) ──
+        # If this syscall has a CF override, inject it immediately
+        # without going through replay/allow paths. Works whether or
+        # not the journal has a cached entry for this step.
+        if self._cf_overrides:
+            from castor.models.checkpoint import compute_invocation_id
+            from castor.scheduler.counterfactual import build_counterfactual_record
+
+            pre_inv_id = compute_invocation_id(
+                self.checkpoint.pid,
+                len(self._journal),
+                tool_name,
+                arguments if isinstance(arguments, dict) else {},
+            )
+            # Also check by the parent journal's invocation_id at this index
+            parent_idx = len(self._journal)
+            parent_inv_id = None
+            if parent_idx < len(self._cf_parent_log):
+                parent_rec = self._cf_parent_log[parent_idx]
+                parent_inv_id = (
+                    parent_rec.invocation_id
+                    if hasattr(parent_rec, "invocation_id")
+                    else None
+                )
+
+            for check_id in (pre_inv_id, parent_inv_id):
+                if check_id and check_id in self._cf_overrides:
+                    override_info = self._cf_overrides[check_id]
+                    if isinstance(override_info, tuple):
+                        _, override = override_info
+                    else:
+                        override = override_info
+
+                    # Find original output from parent log
+                    original_output = None
+                    if parent_idx < len(self._cf_parent_log):
+                        original_output = self._cf_parent_log[parent_idx].response
+
+                    cf_rec = build_counterfactual_record(
+                        check_id,
+                        parent_idx,
+                        original_output,
+                        override,
+                    )
+                    self.checkpoint.counterfactual_log.append(cf_rec)
+                    if self.checkpoint.diverged_at_step is None:
+                        self.checkpoint.diverged_at_step = parent_idx
+                    self._past_divergence = True
+
+                    self._append_record(
+                        SyscallRecord(
+                            request=request,
+                            response=override.replacement_output,
+                        )
+                    )
+                    return override.replacement_output
+
         # ── Lodge eviction hook: run before LLM tools (live execution only) ──
         if (
             self._lodge is not None
@@ -256,27 +333,103 @@ class SyscallProxy:
         # ── Scheduler executes the Kernel's decision ──
         if isinstance(decision, ReplayHit):
             self._replay_index = decision.new_replay_index
+            replayed_idx = decision.new_replay_index - 1
+            replayed_record = self._journal.get(replayed_idx)
+            inv_id = replayed_record.invocation_id or ""
+
             _logger.debug(
                 "replay_hit",
                 extra={
                     "pid": self.checkpoint.pid,
                     "tool": tool_name,
-                    "index": decision.new_replay_index - 1,
+                    "index": replayed_idx,
                 },
             )
-            # Replay preemption re-injection: if the preemption_log says
-            # a preempt fires AFTER this replayed syscall, raise it now
-            # instead of returning the cached response. This reproduces
-            # the original behavior where the Deny path raised
-            # PreemptedError instead of returning.
-            if self.checkpoint.preemption_log:
-                from castor.models.preemption import PreemptedError
 
-                for prec in self.checkpoint.preemption_log:
-                    if prec.syscall_index_after == decision.new_replay_index:
-                        self.checkpoint.status = "PREEMPTED"
-                        raise PreemptedError(reason=prec.reason, metadata=prec.metadata)
-            return self._wrap_if_needed(tool_name, decision.response)
+            # ── Counterfactual override check ──
+            # If this syscall has an override, inject it instead of the
+            # recorded response. Mark divergence so downstream dispatch
+            # follows the CF mode.
+            if inv_id and inv_id in self._cf_overrides:
+                from castor.scheduler.counterfactual import (
+                    build_counterfactual_record,
+                )
+
+                override_info = self._cf_overrides[inv_id]
+                if isinstance(override_info, tuple):
+                    _, override = override_info
+                else:
+                    override = override_info
+
+                cf_rec = build_counterfactual_record(
+                    inv_id,
+                    replayed_idx,
+                    replayed_record.response,
+                    override,
+                )
+                self.checkpoint.counterfactual_log.append(cf_rec)
+                if self.checkpoint.diverged_at_step is None:
+                    self.checkpoint.diverged_at_step = replayed_idx
+                self._past_divergence = True
+
+                # Record in syscall_log as well (with the override output)
+                self._append_record(
+                    SyscallRecord(
+                        request=request,
+                        response=override.replacement_output,
+                        purpose=replayed_record.purpose,
+                    )
+                )
+                return self._wrap_if_needed(tool_name, override.replacement_output)
+
+            # ── Post-divergence mode dispatch ──
+            if self._past_divergence and self._cf_mode:
+                from castor.models.counterfactual import ReplayMode
+
+                if self._cf_mode == ReplayMode.LIVE_FROM_DIVERGENCE:
+                    # Don't replay — fall through to live execution below
+                    self._replay_index = replayed_idx  # undo advance
+                    pass  # fall through
+                elif self._cf_mode == ReplayMode.REPLAY_ALL:
+                    # Fiction mode: return cached even if args differ
+                    return self._wrap_if_needed(tool_name, decision.response)
+                # REPLAY_WHEN_ARGS_MATCH: check if args match
+                elif self._cf_mode == ReplayMode.REPLAY_WHEN_ARGS_MATCH:
+                    if replayed_record.request == request:
+                        return self._wrap_if_needed(tool_name, decision.response)
+                    # Args differ → fall through to live
+                    self._replay_index = replayed_idx
+                    pass  # fall through
+                else:
+                    return self._wrap_if_needed(tool_name, decision.response)
+
+                # Fall-through means: go live (handled by Allow path below)
+                # Re-run decide_syscall without replay
+                decision = decide_syscall(
+                    journal=self._journal,
+                    replay_index=len(self._journal),  # past all cached
+                    kernel_tool_names=self._kernel_tool_names,
+                    capabilities=self.checkpoint.capabilities,
+                    request=request,
+                    tool_meta=tool_meta,
+                    validated_args=validated,
+                    validation_error_response=validation_error_response,
+                    speculative=self._speculative,
+                )
+            else:
+                # Not past divergence or no CF mode — normal replay
+                # Preemption re-injection
+                if self.checkpoint.preemption_log:
+                    from castor.models.preemption import PreemptedError
+
+                    for prec in self.checkpoint.preemption_log:
+                        if prec.syscall_index_after == decision.new_replay_index:
+                            self.checkpoint.status = "PREEMPTED"
+                            raise PreemptedError(
+                                reason=prec.reason,
+                                metadata=prec.metadata,
+                            )
+                return self._wrap_if_needed(tool_name, decision.response)
 
         if isinstance(decision, Deny):
             self._append_record(
