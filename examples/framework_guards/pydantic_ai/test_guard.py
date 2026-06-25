@@ -8,7 +8,10 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from castor.budget.manager import BudgetExhaustedError
-from examples.framework_guards.pydantic_ai.guard import CastorGuardedToolset, ToolRejectedError
+from examples.framework_guards.pydantic_ai.guard import (
+    CastorGuardedToolset,
+    ToolRejectedError,
+)
 from examples.framework_guards.pydantic_ai.tools import (
     analyze_risk,
     check_portfolio,

@@ -59,7 +59,7 @@ async def demo_without_castor():
         print(f"  ⚠️  read_file('{evil_path}')")
         for line in lines:
             print(f"     │ {line}")
-        print(f"     Agent read a system file! No boundary enforcement.")
+        print("     Agent read a system file! No boundary enforcement.")
     except Exception as e:
         print(f"  ❌ read_file failed: {e}")
     print()

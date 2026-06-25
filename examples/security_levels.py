@@ -16,9 +16,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import json
 import time
-from pathlib import Path
 
 # ── Simulated file system (so we don't touch real files) ──
 
@@ -127,14 +125,13 @@ def _print_fs_state(label: str):
         print(f"    {marker}{path}")
     important_exists = any("IMPORTANT" in v for v in _filesystem.values())
     if not important_exists:
-        print(f"    ❌ data.db.bak is GONE — production backup deleted!")
+        print("    ❌ data.db.bak is GONE — production backup deleted!")
     print()
 
 
 async def level1_hitl():
     """Level 1: HITL mode — every destructive op pauses for approval."""
     from castor import Castor
-    from castor.hitl_policies import auto_approve
 
     _reset_fs()
     _print_header("LEVEL 1: HITL — Every dangerous op needs approval")
@@ -160,12 +157,12 @@ async def level1_hitl():
 
         if tool == "delete_file" and "data.db.bak" in args.get("path", ""):
             print(f"  ⏸  HITL #{hitl_count}: {tool}({args})")
-            print(f"      → 🛑 REJECTED — this is a production backup!")
+            print("      → 🛑 REJECTED — this is a production backup!")
             decisions.append(("reject", f"#{hitl_count} {tool}: REJECTED"))
             return ("reject", "This file contains IMPORTANT data — do not delete")
         else:
             print(f"  ⏸  HITL #{hitl_count}: {tool}({args})")
-            print(f"      → ✅ approved")
+            print("      → ✅ approved")
             decisions.append(("approve", f"#{hitl_count} {tool}: approved"))
             return ("approve", None)
 
@@ -177,7 +174,7 @@ async def level1_hitl():
 
     _print_fs_state("Level 1")
 
-    print(f"  📊 Results:")
+    print("  📊 Results:")
     print(f"     Status: {cp.status}")
     print(f"     Steps: {len(cp.syscall_log)}")
     print(f"     HITL interruptions: {hitl_count}")
@@ -213,7 +210,7 @@ async def level2_speculative():
 
     _print_fs_state("Level 2")
 
-    print(f"  📊 Execution Summary:")
+    print("  📊 Execution Summary:")
     print(f"     Status: {cp.status}")
     print(f"     Steps: {summary.total_steps}")
     print(f"     Auto-verified: {summary.auto_verified} ✅")
@@ -228,10 +225,10 @@ async def level2_speculative():
     print(f"\n  🛡️  Production backup safe? {'YES ✅' if important_safe else 'NO ❌'}")
 
     if not important_safe:
-        print(f"\n  ⚠️  Problem: data.db.bak was deleted!")
-        print(f"     In production with sandbox: rollback would undo this.")
-        print(f"     Without sandbox: the damage is done — but we detected it.")
-        print(f"     → Proceed to Level 3: Time-Travel to see the fix.")
+        print("\n  ⚠️  Problem: data.db.bak was deleted!")
+        print("     In production with sandbox: rollback would undo this.")
+        print("     Without sandbox: the damage is done — but we detected it.")
+        print("     → Proceed to Level 3: Time-Travel to see the fix.")
 
     return cp, kernel
 
@@ -276,7 +273,7 @@ async def level3_timetravel(cp_from_level2, kernel):
                 del _filesystem[path]
 
     print(f"\n  ▶️  Re-running same agent from Step {bad_step}...")
-    print(f"     This time data.db.bak is protected (simulated sandbox).\n")
+    print("     This time data.db.bak is protected (simulated sandbox).\n")
 
     # Same agent, but we protect data.db.bak by making delete_file skip it
     original_delete = delete_file
@@ -309,7 +306,7 @@ async def level3_timetravel(cp_from_level2, kernel):
     b_steps = len(cp2.syscall_log)
     cached = len(forked.syscall_log)
 
-    print(f"  📊 Timeline Comparison:")
+    print("  📊 Timeline Comparison:")
     print(f"     Timeline A (original):  {a_steps} steps, data.db.bak deleted ❌")
     print(f"     Timeline B (fixed):     {b_steps} steps, data.db.bak preserved ✅")
     print(f"     Steps cached (free):    {cached}")

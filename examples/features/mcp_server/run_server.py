@@ -5,13 +5,14 @@ Usage:
     uv run python examples/mcp_server/run_server.py --transport sse
 """
 
-from castor.mcp.server import create_mcp_server
 from examples.mcp_server.demo_tools import (
     check_balance,
     delete_file,
     web_search,
     write_file,
 )
+
+from castor.mcp.server import create_mcp_server
 
 server = create_mcp_server(
     tools=[web_search, write_file, delete_file, check_balance],

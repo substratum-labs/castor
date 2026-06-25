@@ -10,10 +10,6 @@ Run:
 
 import asyncio
 
-from castor import Castor, auto_approve
-from castor.lib import tool
-
-
 # ═══════════════════════════════════════════════════════════════════
 #  Part 1: Goal Decomposition Failure — Fork Bomb Detection
 # ═══════════════════════════════════════════════════════════════════
@@ -85,15 +81,15 @@ async def demo_dedup():
 
     result = simple_dedup(TIPHYS_OPEN_QUESTIONS)
 
-    print(f"  Analysis:")
-    print(f"  ─────────")
+    print("  Analysis:")
+    print("  ─────────")
     print(f"  Total sub-tasks:  {result['total']}")
     print(f"  Unique:           {result['unique_count']}")
     print(f"  Duplicates:       {result['duplicate_count']}")
     print()
 
     if result["duplicates"]:
-        print(f"  Duplicates detected (same pattern, different target):")
+        print("  Duplicates detected (same pattern, different target):")
         for dup, orig in result["duplicates"]:
             short_dup = dup.split(" in ")[-1] if " in " in dup else dup
             print(f"    ⚠️  ...{short_dup}  (copy of first)")

@@ -11,7 +11,10 @@ from smolagents.models import ChatMessage, Model
 from castor.budget.manager import BudgetExhaustedError
 
 sys.path.insert(0, ".")
-from examples.framework_guards.smolagents.guard import CastorGuardedAgent, ToolRejectedError
+from examples.framework_guards.smolagents.guard import (
+    CastorGuardedAgent,
+    ToolRejectedError,
+)
 
 # -- Stub tools --
 

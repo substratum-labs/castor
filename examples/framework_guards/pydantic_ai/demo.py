@@ -23,7 +23,10 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 
 from castor.budget.manager import BudgetExhaustedError
-from examples.framework_guards.pydantic_ai.guard import CastorGuardedToolset, ToolRejectedError
+from examples.framework_guards.pydantic_ai.guard import (
+    CastorGuardedToolset,
+    ToolRejectedError,
+)
 from examples.framework_guards.pydantic_ai.tools import (
     analyze_risk,
     check_portfolio,

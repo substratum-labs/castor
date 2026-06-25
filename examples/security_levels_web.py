@@ -12,7 +12,6 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import html as html_mod
 import json
 import subprocess
 import sys
