@@ -10,6 +10,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from castor.budget.manager import BudgetExhaustedError
+from castor.gate.registry import prepare_execution_arguments
 from castor.kernel.decisions import (
     Allow,
     Deny,
@@ -205,6 +206,11 @@ class SyscallProxy:
                 self.checkpoint.status = "PREEMPTED"
                 raise PreemptedError(reason=reason, metadata=metadata)
 
+        # ``operation_id`` is a kernel-reserved argument.  Never accept an
+        # agent-supplied value: it would turn an idempotency key into prompt
+        # controlled data.  The kernel injects its own value at execution.
+        arguments = dict(arguments)
+        arguments.pop("operation_id", None)
         request = {"tool_name": tool_name, "arguments": arguments}
         start = time.perf_counter()
 
@@ -480,6 +486,8 @@ class SyscallProxy:
         assert isinstance(decision, Allow)
         tool_meta = decision.tool_meta
         validated = decision.validated_args
+        operation_id = self._make_invocation_id(request)
+        execution_arguments = {**validated, "operation_id": operation_id}
 
         if decision.cost > 0:
             self._budget_mgr.deduct(
@@ -502,7 +510,7 @@ class SyscallProxy:
                 pid=self.checkpoint.pid,
                 syscall_index=wal_syscall_index,
                 tool_name=tool_name,
-                arguments=validated,
+                arguments=execution_arguments,
                 budget_snapshot=budget_snapshot,
             )
 
@@ -515,7 +523,14 @@ class SyscallProxy:
                 pool = ThreadPoolExecutor(max_workers=1)
                 try:
                     result = await asyncio.wait_for(
-                        loop.run_in_executor(pool, lambda: tool_meta.func(**validated)),
+                        loop.run_in_executor(
+                            pool,
+                            lambda: tool_meta.func(
+                                **prepare_execution_arguments(
+                                    tool_meta, execution_arguments
+                                )
+                            ),
+                        ),
                         timeout=tool_meta.timeout_seconds,
                     )
                 finally:
@@ -523,11 +538,11 @@ class SyscallProxy:
             elif tool_meta.timeout_seconds is not None:
                 # Async tool with timeout
                 result = await asyncio.wait_for(
-                    self._gate.execute(tool_name, validated),
+                    self._gate.execute(tool_name, execution_arguments),
                     timeout=tool_meta.timeout_seconds,
                 )
             else:
-                result = await self._gate.execute(tool_name, validated)
+                result = await self._gate.execute(tool_name, execution_arguments)
         except BaseException:
             # Abandon WAL entry — tool did not complete successfully
             if self._store is not None:

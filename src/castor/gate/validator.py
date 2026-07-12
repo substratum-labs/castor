@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import ValidationError, create_model
 
-from castor.gate.registry import ToolMetadata, ToolRegistry
+from castor.gate.registry import ToolMetadata, ToolRegistry, prepare_execution_arguments
 from castor.models.budget import SyscallResponse
 
 
@@ -46,9 +46,9 @@ class SyscallGate:
             raise RuntimeError(f"Tool {tool_name!r} has no callable function")
 
         if meta.is_async:
-            return await meta.func(**validated_args)
+            return await meta.func(**prepare_execution_arguments(meta, validated_args))
         else:
-            return meta.func(**validated_args)
+            return meta.func(**prepare_execution_arguments(meta, validated_args))
 
     def format_validation_error(
         self, tool_name: str, error: ValidationError

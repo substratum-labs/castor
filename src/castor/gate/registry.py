@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable
 from typing import Any
 
@@ -92,3 +93,28 @@ class ToolRegistry:
 
 # Module-level default registry instance
 default_registry = ToolRegistry()
+
+
+def prepare_execution_arguments(
+    metadata: ToolMetadata, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    """Adapt kernel-reserved arguments to an individual Python callable.
+
+    The kernel injects ``operation_id`` for every registered invocation.  A
+    tool that declares ``operation_id`` (or ``**kwargs``) receives it; legacy
+    callables that cannot accept the reserved keyword remain callable while
+    the registry migrates to the explicit idempotency contract.
+    """
+    if "operation_id" not in arguments or metadata.func is None:
+        return arguments
+
+    parameters = inspect.signature(metadata.func).parameters.values()
+    accepts_operation_id = any(
+        parameter.name == "operation_id"
+        or parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )
+    if accepts_operation_id:
+        return arguments
+
+    return {name: value for name, value in arguments.items() if name != "operation_id"}

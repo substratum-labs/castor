@@ -62,14 +62,16 @@ class HITLHandler:
                 tool_meta.cost_per_use,
             )
 
-        result = await gate.execute(tool_name, validated)
-
         journal = InMemoryJournal(checkpoint.syscall_log)
         inv_id = compute_invocation_id(
             checkpoint.pid,
             len(journal),
             tool_name,
             arguments,
+        )
+        result = await gate.execute(
+            tool_name,
+            {**validated, "operation_id": inv_id},
         )
         journal.append(
             SyscallRecord(

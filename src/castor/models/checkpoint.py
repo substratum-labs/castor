@@ -27,7 +27,6 @@ data plane will be physically separated.
 from __future__ import annotations
 
 import hashlib
-import json
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -110,12 +109,11 @@ class SyscallRecord(BaseModel):
     """
 
     invocation_id: str | None = None
-    """Deterministic content-addressable identity for this invocation.
+    """Deterministic operation identity for this invocation.
 
-    Computed as ``sha256(pid || syscall_index || tool_name || canon(args))``
-    at dispatch time. Stable across replays of the same execution path.
-    Enables future at-most-once delivery, idempotent retry, and external
-    side-effect reconciliation.
+    Computed as ``sha256(pid || syscall_index)`` at dispatch time. Stable
+    across replay even when prompt-derived tool arguments vary. Enables
+    idempotent retry and external side-effect reconciliation.
 
     ``None`` for records created before this field was introduced
     (backwards compatible).
@@ -160,21 +158,20 @@ def compute_invocation_id(
     tool_name: str,
     arguments: dict[str, Any],
 ) -> str:
-    """Compute a deterministic, content-addressable invocation identity.
+    """Compute a deterministic operation identity from a journal position.
 
-    The hash is over ``pid || index || tool_name || canonical_args`` so
-    that:
-
-    - The same execution path always produces the same id (replay-stable).
-    - Different paths (e.g. after a fork) produce different ids.
-    - The id can serve as an idempotency key for external systems.
+    The identity is derived only from ``pid || syscall_index``.  ``tool_name``
+    and ``arguments`` remain accepted for source compatibility with the
+    original API, but are deliberately excluded: an LLM may change wording or
+    tool arguments while catch-up replay must retain the same external-effect
+    identity for the journaled operation.
 
     Returns a hex-encoded SHA-256 truncated to 32 characters for
     compactness. Collisions are astronomically unlikely at this length
     for the expected cardinality (millions of invocations, not billions).
     """
-    canonical = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
-    payload = f"{pid}|{syscall_index}|{tool_name}|{canonical}"
+    del tool_name, arguments
+    payload = f"{pid}|{syscall_index}"
     return hashlib.sha256(payload.encode()).hexdigest()[:32]
 
 

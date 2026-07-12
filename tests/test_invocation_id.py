@@ -39,22 +39,15 @@ def test_different_index():
     assert a != b
 
 
-def test_different_tool():
+def test_identity_is_derived_only_from_pid_and_journal_index():
     a = compute_invocation_id("pid_1", 0, "bash", {"command": "echo hi"})
     b = compute_invocation_id("pid_1", 0, "read", {"command": "echo hi"})
-    assert a != b
+    assert a == b
 
 
-def test_different_args():
+def test_tool_arguments_do_not_affect_operation_identity():
     a = compute_invocation_id("pid_1", 0, "bash", {"command": "echo hi"})
     b = compute_invocation_id("pid_1", 0, "bash", {"command": "echo bye"})
-    assert a != b
-
-
-def test_arg_order_independent():
-    """JSON canonicalization means key order doesn't matter."""
-    a = compute_invocation_id("pid_1", 0, "t", {"a": 1, "b": 2})
-    b = compute_invocation_id("pid_1", 0, "t", {"b": 2, "a": 1})
     assert a == b
 
 
@@ -82,6 +75,32 @@ async def test_invocation_id_attached_to_syscall_log():
     record = cp.syscall_log[0]
     assert record.invocation_id is not None
     assert len(record.invocation_id) == 32
+
+
+@pytest.mark.asyncio
+async def test_kernel_injects_operation_id_into_every_tool_execution():
+    """Tools receive the kernel-issued ID, never one supplied by the agent."""
+    received_operation_ids: list[str] = []
+
+    async def effect(
+        amount: int, operation_id: str = "agent-controlled-default"
+    ) -> str:
+        received_operation_ids.append(operation_id)
+        return "executed"
+
+    kernel = Castor(tools=[effect])
+
+    async def agent(proxy):
+        return await proxy.syscall(
+            "effect",
+            {"amount": 7, "operation_id": "forged-by-agent"},
+        )
+
+    cp = await kernel.run(agent)
+
+    assert cp.status == "COMPLETED"
+    assert received_operation_ids == [cp.syscall_log[0].invocation_id]
+    assert received_operation_ids != ["forged-by-agent"]
 
 
 @pytest.mark.asyncio
@@ -122,7 +141,10 @@ async def test_invocation_id_after_hitl_approve():
     """HITL-approved syscalls also get invocation_ids."""
     from castor import auto_approve
 
-    async def dangerous(x: int = 0) -> int:
+    received_operation_ids: list[str] = []
+
+    async def dangerous(x: int = 0, operation_id: str = "") -> int:
+        received_operation_ids.append(operation_id)
         return x
 
     kernel = Castor(tools=[dangerous], destructive=["dangerous"])
@@ -135,6 +157,7 @@ async def test_invocation_id_after_hitl_approve():
     assert len(cp.syscall_log) == 1
     assert cp.syscall_log[0].invocation_id is not None
     assert cp.syscall_log[0].was_hitl is True
+    assert received_operation_ids == [cp.syscall_log[0].invocation_id]
 
 
 @pytest.mark.asyncio
