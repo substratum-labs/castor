@@ -9,6 +9,7 @@ from pathlib import Path
 
 from castor import Castor
 from castor.evals.actuator_bench import ActuatorBench
+from castor.models.checkpoint import AgentCheckpoint
 from castor.scheduler.persistence import CheckpointNotFoundError, CheckpointStore
 from castor.scheduler.runner import AgentRunner
 
@@ -19,7 +20,7 @@ def _checkpoint_url(db_path: Path) -> str:
 
 def run_worker(
     *, checkpoint_db: Path, actuator_db: Path, pid: str, phase: str
-) -> None:
+) -> AgentCheckpoint:
     """Execute one payment attempt in a fresh process."""
     store = CheckpointStore(_checkpoint_url(checkpoint_db))
     actuator = ActuatorBench(actuator_db)
@@ -57,7 +58,7 @@ def run_worker(
             raise
         checkpoint = None
 
-    asyncio.run(
+    return asyncio.run(
         kernel.run(
             payment_agent,
             checkpoint=checkpoint,
@@ -75,12 +76,16 @@ def main() -> None:
     parser.add_argument("--pid", required=True)
     parser.add_argument("--phase", choices=("initial", "resume"), required=True)
     args = parser.parse_args()
-    run_worker(
+    checkpoint = run_worker(
         checkpoint_db=args.checkpoint_db,
         actuator_db=args.actuator_db,
         pid=args.pid,
         phase=args.phase,
     )
+    if args.phase == "resume" and checkpoint.status != "COMPLETED":
+        raise RuntimeError(
+            f"resumed worker did not complete: checkpoint status {checkpoint.status}"
+        )
 
 
 if __name__ == "__main__":

@@ -13,3 +13,4 @@ def test_kill_after_commit_recovers_without_duplicate_effect(tmp_path) -> None:
     assert result.dup_commits == 0
     assert result.missing_commits == 0
     assert result.resume_success is True
+    assert result.resumed_checkpoint_status == "COMPLETED"

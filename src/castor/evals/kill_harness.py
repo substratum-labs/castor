@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from castor.evals.actuator_bench import ActuatorBench
+from castor.scheduler.persistence import CheckpointStore
 
 _WORKER_MODULE = "castor.evals.worker"
 _COMMIT_MARKER = "ACTUATOR_COMMITTED"
@@ -26,6 +27,7 @@ class HarnessResult:
     dup_commits: int
     missing_commits: int
     resume_success: bool
+    resumed_checkpoint_status: str
 
 
 def run_kill_after_commit(tmp_path: Path) -> HarnessResult:
@@ -58,12 +60,21 @@ def run_kill_after_commit(tmp_path: Path) -> HarnessResult:
             f"stderr={resume_stderr!r}"
         )
 
+    resumed_checkpoint_status = (
+        CheckpointStore(_checkpoint_url(checkpoint_db)).load(pid).status
+    )
+    if resumed_checkpoint_status != "COMPLETED":
+        raise RuntimeError(
+            f"resumed checkpoint was not completed: status {resumed_checkpoint_status}"
+        )
+
     metrics = ActuatorBench(actuator_db).metrics(expected_effects=1)
     return HarnessResult(
         committed_effects=metrics.committed_effects,
         dup_commits=metrics.dup_commits,
         missing_commits=metrics.missing_effects,
         resume_success=True,
+        resumed_checkpoint_status=resumed_checkpoint_status,
     )
 
 
@@ -88,6 +99,10 @@ def _start_worker(
         stderr=subprocess.PIPE,
         text=True,
     )
+
+
+def _checkpoint_url(db_path: Path) -> str:
+    return f"sqlite:///{db_path}"
 
 
 def _wait_for_commit_marker(process: subprocess.Popen[str]) -> None:

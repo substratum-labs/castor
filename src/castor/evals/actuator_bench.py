@@ -26,7 +26,7 @@ class ActuatorBench:
         with self._connect() as connection:
             connection.execute(
                 """
-                CREATE TABLE IF NOT EXISTS effects (
+                CREATE TABLE IF NOT EXISTS commits (
                     operation_id TEXT PRIMARY KEY,
                     commit_id TEXT NOT NULL,
                     effect_name TEXT NOT NULL,
@@ -44,7 +44,7 @@ class ActuatorBench:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
-                INSERT INTO effects (operation_id, commit_id, effect_name, payload_json)
+                INSERT INTO commits (operation_id, commit_id, effect_name, payload_json)
                 VALUES (?, ?, ?, ?)
                 ON CONFLICT(operation_id) DO NOTHING
                 """,
@@ -56,16 +56,37 @@ class ActuatorBench:
                 ),
             )
             stored_commit_id = connection.execute(
-                "SELECT commit_id FROM effects WHERE operation_id = ?", (operation_id,)
+                "SELECT commit_id FROM commits WHERE operation_id = ?", (operation_id,)
             ).fetchone()[0]
 
         return {"operation_id": operation_id, "commit_id": stored_commit_id}
+
+    def list_commits(self) -> list[dict[str, str]]:
+        """Return the external commit records in insertion order."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT operation_id, commit_id, effect_name, payload_json
+                FROM commits
+                ORDER BY rowid
+                """
+            ).fetchall()
+
+        return [
+            {
+                "operation_id": operation_id,
+                "commit_id": commit_id,
+                "effect_name": effect_name,
+                "payload_json": payload_json,
+            }
+            for operation_id, commit_id, effect_name, payload_json in rows
+        ]
 
     def metrics(self, expected_effects: int) -> ActuatorMetrics:
         """Return effect-count metrics without consulting Castor persistence."""
         with self._connect() as connection:
             committed_effects = connection.execute(
-                "SELECT COUNT(*) FROM effects"
+                "SELECT COUNT(*) FROM commits"
             ).fetchone()[0]
 
         return ActuatorMetrics(
