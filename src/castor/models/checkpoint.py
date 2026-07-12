@@ -251,6 +251,16 @@ class AgentCheckpoint(BaseModel):
     suspended. Set by the kernel's Suspend decision, cleared by
     approve/reject/modify."""
 
+    pending_commit: tuple[str, int] | None = None
+    """Provisional ``(pid, syscall_index)`` for an unjournaled external effect.
+
+    A resumed runner queries its actuator before re-entering agent code. Formal
+    operation-ID injection and result reconciliation are deliberately deferred.
+    """
+
+    pending_commit_status: str | None = None
+    """Most recent actuator reconciliation result for ``pending_commit``."""
+
     preemption_log: list[PreemptionRecord] = Field(default_factory=list)
     """Append-only log of preemption events. Each entry records
     ``syscall_index_after`` so replay re-injects preempts at the
@@ -349,6 +359,8 @@ class AgentCheckpoint(BaseModel):
         forked.status = "RUNNING"
         forked.result = None
         forked.pending_hitl = None
+        forked.pending_commit = None
+        forked.pending_commit_status = None
         forked.preemption_reason = None
         forked.preemption_payload = None
         forked.partial_work = None

@@ -121,6 +121,18 @@ class CheckpointStoreProtocol(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Actuator — external effect reconciliation
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class ActuatorProtocol(Protocol):
+    """Lookup interface for an externally committed client operation."""
+
+    def query_status(self, client_op_id: tuple[str, int]) -> str: ...
+
+
+# ---------------------------------------------------------------------------
 # MMU — context window memory management
 # ---------------------------------------------------------------------------
 

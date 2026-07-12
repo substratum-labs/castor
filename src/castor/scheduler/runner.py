@@ -10,8 +10,10 @@ from typing import Any
 from castor.models.checkpoint import AgentCheckpoint, SuspendInterrupt
 from castor.observability import get_logger
 from castor.protocols import (
+    ActuatorProtocol,
     AgentRegistryProtocol,
     BudgetProtocol,
+    CheckpointStoreProtocol,
     GateProtocol,
     MMUProtocol,
 )
@@ -40,6 +42,8 @@ class AgentRunner:
         capability_manager: BudgetProtocol,
         lodge: MMUProtocol | None = None,
         agent_registry: AgentRegistryProtocol | None = None,
+        checkpoint_store: CheckpointStoreProtocol | None = None,
+        actuator: ActuatorProtocol | None = None,
         structured_results: bool = False,
         speculative: bool = False,
         scheduler: Any | None = None,
@@ -48,6 +52,8 @@ class AgentRunner:
         self._budget_mgr = capability_manager
         self._lodge = lodge
         self._agent_registry = agent_registry
+        self._checkpoint_store = checkpoint_store
+        self._actuator = actuator
         self._structured_results = structured_results
         self._speculative = speculative
         self._scheduler = scheduler
@@ -64,6 +70,21 @@ class AgentRunner:
         Returns the updated checkpoint after completion, suspension, or preemption.
         """
         self._current_checkpoint = checkpoint
+        if self._checkpoint_store is not None:
+            self._checkpoint_store.save(checkpoint)
+
+        if checkpoint.pending_commit is not None:
+            status = (
+                self._actuator.query_status(checkpoint.pending_commit)
+                if self._actuator is not None
+                else "UNKNOWN"
+            )
+            checkpoint.pending_commit_status = status
+            checkpoint.status = "SUSPENDED"
+            if self._checkpoint_store is not None:
+                self._checkpoint_store.save(checkpoint)
+            return checkpoint
+
         checkpoint.status = "RUNNING"
         _logger.info(
             "agent_start",
@@ -80,6 +101,7 @@ class AgentRunner:
             lodge=self._lodge,
             kernel_tool_names=kernel_tools,
             agent_registry=self._agent_registry,
+            checkpoint_store=self._checkpoint_store,
             structured_results=self._structured_results,
             speculative=self._speculative,
             scheduler=self._scheduler,
@@ -119,6 +141,10 @@ class AgentRunner:
             # checkpoint.syscall_log is consistent up to last completed syscall
             # preemption_reason/payload were set before cancel()
             raise
+
+        finally:
+            if self._checkpoint_store is not None:
+                self._checkpoint_store.save(checkpoint)
 
         _logger.info(
             "agent_complete",
@@ -175,6 +201,8 @@ def default_runner_factory(
         capability_manager,
         lodge=lodge,
         agent_registry=agent_registry,
+        checkpoint_store=kwargs.get("checkpoint_store"),
+        actuator=kwargs.get("actuator"),
         structured_results=structured_results,
         speculative=speculative,
         scheduler=kwargs.get("scheduler"),

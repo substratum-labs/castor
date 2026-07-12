@@ -9,6 +9,8 @@ from castor.gate.decorator import castor_tool
 from castor.gate.registry import ToolRegistry
 from castor.gate.validator import SyscallGate
 from castor.models.checkpoint import AgentCheckpoint
+from castor.scheduler.actuator import ActuatorStatus, InMemoryMockActuator
+from castor.scheduler.persistence import MemoryCheckpointStore
 from castor.scheduler.proxy import SyscallProxy
 from castor.scheduler.runner import AgentRunner
 
@@ -173,3 +175,33 @@ class TestCheckpointConsistency:
         loaded = AgentCheckpoint.model_validate_json(json_str)
         assert loaded.status == "SUSPENDED_FOR_HITL"
         assert loaded.pending_hitl is not None
+
+
+class TestPendingCommitReconciliation:
+    async def test_runner_queries_actuator_with_provisional_operation_id(
+        self, gate, budget_mgr
+    ):
+        """Reconcile an in-flight effect before re-entering agent code."""
+        checkpoint = make_checkpoint(budget_mgr)
+        checkpoint.pending_commit = (checkpoint.pid, 0)
+        store = MemoryCheckpointStore()
+        actuator = InMemoryMockActuator({(checkpoint.pid, 0): ActuatorStatus.COMMITTED})
+        runner = AgentRunner(
+            gate,
+            budget_mgr,
+            checkpoint_store=store,
+            actuator=actuator,
+        )
+
+        async def agent_must_not_run(proxy: SyscallProxy) -> str:
+            raise AssertionError("pending commit must be reconciled before replay")
+
+        result = await runner.run(agent_must_not_run, checkpoint)
+
+        assert actuator.queried_ids == [(checkpoint.pid, 0)]
+        assert result.status == "SUSPENDED"
+        assert result.pending_commit == (checkpoint.pid, 0)
+        assert result.pending_commit_status == ActuatorStatus.COMMITTED
+        assert (
+            store.load(checkpoint.pid).pending_commit_status == ActuatorStatus.COMMITTED
+        )
