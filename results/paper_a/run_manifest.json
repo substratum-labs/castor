@@ -1,0 +1,19 @@
+{
+  "command": "/private/tmp/castor-feat-codex-t-247/src/castor/evals/paper_a/matrix.py --out results/paper_a --label full-n3 --trials 3",
+  "faults": [
+    "kill_after_commit",
+    "kill_after_success"
+  ],
+  "generated_at_utc": "2026-07-13T19:31:29.192744+00:00",
+  "git_commit": "6218e244e16cedbef8872193d8a66a574120b20f",
+  "label": "full-n3",
+  "result_count": 30,
+  "systems": [
+    "c_full",
+    "c_no_op_id",
+    "c_no_dedup",
+    "b_naive",
+    "b_langgraph"
+  ],
+  "trials": 3
+}

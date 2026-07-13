@@ -1,0 +1,32 @@
+| system | fault | trial | committed | dups | missing | resume_ok | status | wall_ms | error |
+|---|---|---:|---:|---:|---:|:---:|---|---:|---|
+| c_full | kill_after_commit | 0 | 2 | 0 | 0 | yes | COMPLETED | 526.7 |  |
+| c_full | kill_after_commit | 1 | 2 | 0 | 0 | yes | COMPLETED | 505.8 |  |
+| c_full | kill_after_commit | 2 | 2 | 0 | 0 | yes | COMPLETED | 533.3 |  |
+| c_full | kill_after_success | 0 | 2 | 0 | 0 | yes | COMPLETED | 509.1 |  |
+| c_full | kill_after_success | 1 | 2 | 0 | 0 | yes | COMPLETED | 520.5 |  |
+| c_full | kill_after_success | 2 | 2 | 0 | 0 | yes | COMPLETED | 503.9 |  |
+| c_no_op_id | kill_after_commit | 0 | 3 | 1 | 0 | yes | COMPLETED | 522.4 |  |
+| c_no_op_id | kill_after_commit | 1 | 3 | 1 | 0 | yes | COMPLETED | 504.4 |  |
+| c_no_op_id | kill_after_commit | 2 | 3 | 1 | 0 | yes | COMPLETED | 541.8 |  |
+| c_no_op_id | kill_after_success | 0 | 2 | 0 | 0 | yes | COMPLETED | 534.8 |  |
+| c_no_op_id | kill_after_success | 1 | 2 | 0 | 0 | yes | COMPLETED | 530.2 |  |
+| c_no_op_id | kill_after_success | 2 | 2 | 0 | 0 | yes | COMPLETED | 557.5 |  |
+| c_no_dedup | kill_after_commit | 0 | 3 | 1 | 0 | yes | COMPLETED | 509.1 |  |
+| c_no_dedup | kill_after_commit | 1 | 3 | 1 | 0 | yes | COMPLETED | 516.3 |  |
+| c_no_dedup | kill_after_commit | 2 | 3 | 1 | 0 | yes | COMPLETED | 514.1 |  |
+| c_no_dedup | kill_after_success | 0 | 2 | 0 | 0 | yes | COMPLETED | 531.0 |  |
+| c_no_dedup | kill_after_success | 1 | 2 | 0 | 0 | yes | COMPLETED | 507.6 |  |
+| c_no_dedup | kill_after_success | 2 | 2 | 0 | 0 | yes | COMPLETED | 529.2 |  |
+| b_naive | kill_after_commit | 0 | 3 | 1 | 0 | yes | — | 492.5 |  |
+| b_naive | kill_after_commit | 1 | 3 | 1 | 0 | yes | — | 489.3 |  |
+| b_naive | kill_after_commit | 2 | 3 | 1 | 0 | yes | — | 471.7 |  |
+| b_naive | kill_after_success | 0 | 3 | 1 | 0 | yes | — | 498.0 |  |
+| b_naive | kill_after_success | 1 | 3 | 1 | 0 | yes | — | 498.6 |  |
+| b_naive | kill_after_success | 2 | 3 | 1 | 0 | yes | — | 499.6 |  |
+| b_langgraph | kill_after_commit | 0 | 3 | 1 | 0 | yes | — | 718.4 |  |
+| b_langgraph | kill_after_commit | 1 | 3 | 1 | 0 | yes | — | 733.5 |  |
+| b_langgraph | kill_after_commit | 2 | 3 | 1 | 0 | yes | — | 726.9 |  |
+| b_langgraph | kill_after_success | 0 | 2 | 0 | 0 | yes | — | 707.5 |  |
+| b_langgraph | kill_after_success | 1 | 2 | 0 | 0 | yes | — | 738.2 |  |
+| b_langgraph | kill_after_success | 2 | 2 | 0 | 0 | yes | — | 735.3 |  |

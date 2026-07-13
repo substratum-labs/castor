@@ -211,6 +211,20 @@ Castor provides **application-layer control**: it gates what the agent *intends*
 - **[API Reference](https://substratum-labs.github.io/castor/)** — modules and classes
 - **[Architecture & Guides](https://substratum-labs.github.io/castor-docs/)** — whitepaper, deep dives, getting started
 
+### Paper A frozen S-Pay results
+
+Regenerate the committed `full-n3` artifact (five systems × two faults × three
+trials) with:
+
+```bash
+uv sync --extra paper_a_eval && uv run python -m castor.evals.paper_a.matrix --out results/paper_a --label full-n3 --trials 3
+```
+
+`results.json` remains the row-level record; `run_manifest.json` identifies
+the evaluated configuration. These are controlled S-Pay fault-injection
+results, not claims about untested workloads or unconditional exactly-once
+delivery.
+
 ## Contributing
 
 Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
