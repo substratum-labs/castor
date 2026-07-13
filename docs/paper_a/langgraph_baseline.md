@@ -6,12 +6,14 @@ The Paper A `b_langgraph` row is a deliberately narrow baseline: **LangGraph 1.1
 
 ## Parity controls
 
-The `b_langgraph` and Castor rows run the same S-Pay graph, external SQLite
-actuator, effect payloads, expected completed-effect count (two), and
-parent-process SIGKILL controller.  They use the same two injected crash
+The `b_langgraph` and Castor rows run the same S-Pay graph, shared external
+SQLite actuator (`ActuatorBench`), effect payloads, expected completed-effect
+count (two), and parent-process SIGKILL controller.  They use the same parent
+fault synchronization marker (`COMMIT_MARKER`) and the same two injected crash
 boundaries: `kill_after_commit` and `kill_after_success`.  Thus, the comparison
-holds the workflow, actuator, payloads, expected count, kill parent, and fault
-locations constant while varying the durable execution mechanism.
+holds the workflow, actuator, payloads, expected count, kill parent, fault
+synchronization marker, and fault locations constant while varying the durable
+execution mechanism.
 
 ## Observed boundary
 
