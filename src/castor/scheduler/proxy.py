@@ -1023,11 +1023,17 @@ class SyscallProxy:
 
         If the record doesn't have an invocation_id, one is computed
         from its request and the current journal position.
+
+        When a durable ``checkpoint_store`` is configured, persist after each
+        committed record so crash recovery can catch up from the journal
+        (Paper A: kill-after-success / catch-up prefix determinism).
         """
         if record.invocation_id is None and record.request:
             record.invocation_id = self._make_invocation_id(record.request)
         self._journal.append(record)
         self._replay_index = len(self._journal)
+        if self._store is not None:
+            self._store.save(self.checkpoint)
 
     def _wrap_if_needed(self, tool_name: str, response: Any) -> Any:
         """Wrap response in SyscallResult for destructive/HITL tools."""

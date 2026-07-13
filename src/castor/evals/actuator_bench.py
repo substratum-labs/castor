@@ -19,45 +19,79 @@ class ActuatorMetrics:
 
 
 class ActuatorBench:
-    """A process-external, idempotent effect sink backed by SQLite."""
+    """A process-external effect sink backed by SQLite.
 
-    def __init__(self, db_path: Path) -> None:
+    When ``dedupe`` is true (default), ``operation_id`` is unique and retries
+    return the original commit id (models ``C_actuator_dedup``).  When false,
+    every ``commit`` inserts a new row so ablations can observe duplicates.
+    """
+
+    def __init__(self, db_path: Path, *, dedupe: bool = True) -> None:
         self._db_path = db_path
+        self._dedupe = dedupe
         with self._connect() as connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS commits (
-                    operation_id TEXT PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    operation_id TEXT NOT NULL,
                     commit_id TEXT NOT NULL,
                     effect_name TEXT NOT NULL,
                     payload_json TEXT NOT NULL
                 )
                 """
             )
+            if dedupe:
+                connection.execute(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_commits_operation_id
+                    ON commits(operation_id)
+                    """
+                )
+
+    @property
+    def dedupe(self) -> bool:
+        return self._dedupe
 
     def commit(
         self, effect_name: str, payload: dict[str, object], *, operation_id: str
     ) -> dict[str, str]:
-        """Persist an effect once and return its stable external commit id."""
+        """Persist an effect and return its external commit id."""
         commit_id = uuid.uuid4().hex
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                """
-                INSERT INTO commits (operation_id, commit_id, effect_name, payload_json)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(operation_id) DO NOTHING
-                """,
-                (
-                    operation_id,
-                    commit_id,
-                    effect_name,
-                    json.dumps(payload, sort_keys=True),
-                ),
-            )
-            stored_commit_id = connection.execute(
-                "SELECT commit_id FROM commits WHERE operation_id = ?", (operation_id,)
-            ).fetchone()[0]
+            if self._dedupe:
+                connection.execute(
+                    """
+                    INSERT INTO commits (operation_id, commit_id, effect_name, payload_json)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(operation_id) DO NOTHING
+                    """,
+                    (
+                        operation_id,
+                        commit_id,
+                        effect_name,
+                        json.dumps(payload, sort_keys=True),
+                    ),
+                )
+                stored_commit_id = connection.execute(
+                    "SELECT commit_id FROM commits WHERE operation_id = ?",
+                    (operation_id,),
+                ).fetchone()[0]
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO commits (operation_id, commit_id, effect_name, payload_json)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        operation_id,
+                        commit_id,
+                        effect_name,
+                        json.dumps(payload, sort_keys=True),
+                    ),
+                )
+                stored_commit_id = commit_id
 
         return {"operation_id": operation_id, "commit_id": stored_commit_id}
 
@@ -68,7 +102,7 @@ class ActuatorBench:
                 """
                 SELECT operation_id, commit_id, effect_name, payload_json
                 FROM commits
-                ORDER BY rowid
+                ORDER BY id
                 """
             ).fetchall()
 
