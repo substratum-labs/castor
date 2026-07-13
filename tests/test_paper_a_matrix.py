@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from castor.evals.actuator_bench import ActuatorBench
 from castor.evals.paper_a.harness import run_s_pay_kill_trial
-from castor.evals.paper_a.matrix import run_trial
+from castor.evals.paper_a.matrix import run_matrix, run_trial, write_results
 from castor.evals.paper_a.secondary_workloads import (
     run_s_hitl_workload,
     run_s_loop_workload,
@@ -127,6 +128,42 @@ def test_matrix_trial_records_c_full(tmp_path) -> None:
     assert trial.error is None
     assert trial.dup_commits == 0
     assert trial.resume_success is True
+
+
+def test_write_results_keeps_trial_rows_and_writes_manifest(tmp_path) -> None:
+    results = run_matrix(
+        tmp_path / "work",
+        systems=("c_full",),
+        faults=("kill_after_success",),
+        trials=1,
+    )
+    write_results(
+        tmp_path / "artifacts",
+        results,
+        manifest={
+            "label": "test-smoke",
+            "trials": 1,
+            "systems": ["c_full"],
+            "faults": ["kill_after_success"],
+            "result_count": 1,
+            "command": "python -m castor.evals.paper_a.matrix --label test-smoke",
+            "git_commit": "deadbeef",
+            "generated_at_utc": "2026-07-13T00:00:00+00:00",
+        },
+    )
+    assert isinstance(
+        json.loads((tmp_path / "artifacts/results.json").read_text()), list
+    )
+    assert json.loads((tmp_path / "artifacts/run_manifest.json").read_text()) == {
+        "faults": ["kill_after_success"],
+        "command": "python -m castor.evals.paper_a.matrix --label test-smoke",
+        "generated_at_utc": "2026-07-13T00:00:00+00:00",
+        "git_commit": "deadbeef",
+        "label": "test-smoke",
+        "result_count": 1,
+        "systems": ["c_full"],
+        "trials": 1,
+    }
 
 
 def test_s_hitl_approve_has_one_payment_and_no_duplicates(tmp_path) -> None:
