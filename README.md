@@ -64,6 +64,10 @@ asyncio.run(main())
 
 The capabilities Castor provides at the syscall layer. Build on them; don't rebuild them.
 
+### Paper A secondary workloads
+
+S-HITL (long suspend with approve/reject) and S-Loop (budget-runaway stop) are evaluation workloads that exercise the journal boundary. They are not separate Paper A contributions; the primary claims remain recoverable process state and effect safety.
+
 ### Journal
 
 Every syscall (LLM call, tool invoke, memory op) is recorded in an append-only journal. The journal is the source of truth for replay, audit, and fork. Agent code cannot bypass it.

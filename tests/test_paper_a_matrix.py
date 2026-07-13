@@ -5,7 +5,10 @@ from __future__ import annotations
 from castor.evals.actuator_bench import ActuatorBench
 from castor.evals.paper_a.harness import run_s_pay_kill_trial
 from castor.evals.paper_a.matrix import run_trial
-from castor.evals.paper_a.secondary_workloads import run_s_hitl_workload
+from castor.evals.paper_a.secondary_workloads import (
+    run_s_hitl_workload,
+    run_s_loop_workload,
+)
 
 
 def test_actuator_no_dedupe_allows_duplicate_operation_ids(tmp_path) -> None:
@@ -108,3 +111,10 @@ def test_s_hitl_reject_executes_no_payment(tmp_path) -> None:
     assert result.checkpoint_status == "COMPLETED"
     assert result.committed_effects == 0
     assert result.journal_statuses[-1] == "HITL_REJECTED"
+
+
+def test_s_loop_stops_at_budget_without_extra_effect() -> None:
+    result = run_s_loop_workload()
+    assert result.checkpoint_status == "COMPLETED"
+    assert result.committed_effects == 1
+    assert result.journal_statuses[-1] == "INSUFFICIENT_CAPABILITY"
