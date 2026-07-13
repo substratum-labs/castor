@@ -592,7 +592,7 @@ requires-dist = [
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.27" },
-    { name = "mnemos-engine", marker = "extra == 'mnemos'", editable = "../mnemos" },
+    { name = "mnemos-engine", marker = "extra == 'mnemos'", git = "https://github.com/substratum-labs/mnemos?rev=ed81ebe06208a1a7d0a8e13e0241f2a9cc6b2e03" },
     { name = "openai-agents", marker = "extra == 'openai-agents'", specifier = ">=0.1" },
     { name = "opentelemetry-api", marker = "extra == 'observability'", specifier = ">=1.20" },
     { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.20" },
@@ -3317,26 +3317,11 @@ wheels = [
 [[package]]
 name = "mnemos-engine"
 version = "0.1.0"
-source = { editable = "../mnemos" }
+source = { git = "https://github.com/substratum-labs/mnemos?rev=ed81ebe06208a1a7d0a8e13e0241f2a9cc6b2e03#ed81ebe06208a1a7d0a8e13e0241f2a9cc6b2e03" }
 dependencies = [
     { name = "grpcio" },
     { name = "protobuf", version = "6.33.6", source = { registry = "https://pypi.org/simple" } },
     { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "grpcio", specifier = ">=1.60.0" },
-    { name = "protobuf", specifier = ">=6.30.0,<7.0.0" },
-    { name = "pydantic", specifier = ">=2.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "grpcio-tools", specifier = ">=1.60.0" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.24" },
-    { name = "ruff", specifier = ">=0.8" },
 ]
 
 [[package]]
