@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from castor.evals.actuator_bench import ActuatorBench
 from castor.evals.paper_a.harness import run_s_pay_kill_trial
 from castor.evals.paper_a.matrix import run_trial
@@ -146,3 +148,16 @@ def test_matrix_records_langgraph_in_existing_result_schema(tmp_path) -> None:
         "error",
     }
     assert trial.dup_commits == 1
+
+
+def test_langgraph_comparison_note_states_the_fairness_boundary() -> None:
+    note = Path("docs/paper_a/langgraph_baseline.md").read_text(encoding="utf-8")
+    for required in (
+        "LangGraph 1.1.2",
+        "SQLite",
+        "tool cache: off",
+        "no stable external operation_id",
+        "kill_after_commit",
+        "not a universal claim",
+    ):
+        assert required in note

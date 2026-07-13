@@ -18,9 +18,7 @@ from castor.evals.actuator_bench import ActuatorBench
 from castor.evals.paper_a.s_pay_worker import COMMIT_MARKER
 from castor.scheduler.persistence import CheckpointStore
 
-SystemName = Literal[
-    "c_full", "c_no_op_id", "c_no_dedup", "b_naive", "b_langgraph"
-]
+SystemName = Literal["c_full", "c_no_op_id", "c_no_dedup", "b_naive", "b_langgraph"]
 FaultName = Literal["kill_after_commit", "kill_after_success"]
 
 _WORKER_MODULE = "castor.evals.paper_a.s_pay_worker"
@@ -91,9 +89,7 @@ def run_s_pay_kill_trial(
         system=system,
         fault=fault,
     )
-    resume_stdout, resume_stderr = resumed.communicate(
-        timeout=_PROCESS_TIMEOUT_SECONDS
-    )
+    resume_stdout, resume_stderr = resumed.communicate(timeout=_PROCESS_TIMEOUT_SECONDS)
     resume_ok = resumed.returncode == 0
 
     resumed_status: str | None = None
@@ -183,9 +179,7 @@ def _checkpoint_url(db_path: Path) -> str:
     return f"sqlite:///{db_path}"
 
 
-def _wait_for_langgraph_payment_checkpoint(
-    checkpoint_db: Path, thread_id: str
-) -> None:
+def _wait_for_langgraph_payment_checkpoint(checkpoint_db: Path, thread_id: str) -> None:
     """Wait until LangGraph durably schedules post-payment for ``thread_id``."""
     deadline = time.monotonic() + _MARKER_TIMEOUT_SECONDS
     last_channel_names: tuple[str, ...] = ()

@@ -15,9 +15,9 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
 
 from castor.evals.paper_a.harness import SPayHarnessResult, run_s_pay_kill_trial
 
@@ -128,7 +128,8 @@ def run_matrix(
 def results_to_markdown(results: Iterable[TrialResult]) -> str:
     """Render a GitHub-flavored markdown table for paper drafts."""
     lines = [
-        "| system | fault | trial | committed | dups | missing | resume_ok | status | wall_ms | error |",
+        "| system | fault | trial | committed | dups | missing | resume_ok | "
+        "status | wall_ms | error |",
         "|---|---|---:|---:|---:|---:|:---:|---|---:|---|",
     ]
     for r in results:
@@ -158,9 +159,7 @@ def write_results(out_dir: Path, results: list[TrialResult]) -> None:
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    (out_dir / "results.md").write_text(
-        results_to_markdown(results), encoding="utf-8"
-    )
+    (out_dir / "results.md").write_text(results_to_markdown(results), encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> None:

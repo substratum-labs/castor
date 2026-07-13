@@ -63,7 +63,9 @@ class ActuatorBench:
             if self._dedupe:
                 connection.execute(
                     """
-                    INSERT INTO commits (operation_id, commit_id, effect_name, payload_json)
+                    INSERT INTO commits (
+                        operation_id, commit_id, effect_name, payload_json
+                    )
                     VALUES (?, ?, ?, ?)
                     ON CONFLICT(operation_id) DO NOTHING
                     """,
@@ -81,7 +83,9 @@ class ActuatorBench:
             else:
                 connection.execute(
                     """
-                    INSERT INTO commits (operation_id, commit_id, effect_name, payload_json)
+                    INSERT INTO commits (
+                        operation_id, commit_id, effect_name, payload_json
+                    )
                     VALUES (?, ?, ?, ?)
                     """,
                     (
