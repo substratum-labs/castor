@@ -1,0 +1,19 @@
+{
+  "command": "python -m castor.evals.paper_a.matrix --out results/paper_a --label full-n3 --systems c_full c_no_op_id c_no_dedup b_naive b_langgraph --faults kill_after_commit kill_after_success --trials 3",
+  "faults": [
+    "kill_after_commit",
+    "kill_after_success"
+  ],
+  "generated_at_utc": "2026-07-13T19:45:28.499781+00:00",
+  "git_commit": "26f31f06bac39253635bbf7dfc3c5eda3c4c04f0",
+  "label": "full-n3",
+  "result_count": 30,
+  "systems": [
+    "c_full",
+    "c_no_op_id",
+    "c_no_dedup",
+    "b_naive",
+    "b_langgraph"
+  ],
+  "trials": 3
+}

@@ -1,0 +1,497 @@
+[
+  {
+    "commits": [
+      "payment",
+      "email"
+    ],
+    "committed_effects": 2,
+    "dup_commits": 0,
+    "error": null,
+    "fault": "kill_after_commit",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_full",
+    "trial": 0,
+    "wall_ms": 539.7540000267327
+  },
+  {
+    "commits": [
+      "payment",
+      "email"
+    ],
+    "committed_effects": 2,
+    "dup_commits": 0,
+    "error": null,
+    "fault": "kill_after_commit",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_full",
+    "trial": 1,
+    "wall_ms": 527.6693329797126
+  },
+  {
+    "commits": [
+      "payment",
+      "email"
+    ],
+    "committed_effects": 2,
+    "dup_commits": 0,
+    "error": null,
+    "fault": "kill_after_commit",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_full",
+    "trial": 2,
+    "wall_ms": 510.10866701835766
+  },
+  {
+    "commits": [
+      "payment",
+      "email"
+    ],
+    "committed_effects": 2,
+    "dup_commits": 0,
+    "error": null,
+    "fault": "kill_after_success",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_full",
+    "trial": 0,
+    "wall_ms": 516.7542909621261
+  },
+  {
+    "commits": [
+      "payment",
+      "email"
+    ],
+    "committed_effects": 2,
+    "dup_commits": 0,
+    "error": null,
+    "fault": "kill_after_success",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_full",
+    "trial": 1,
+    "wall_ms": 504.8419999657199
+  },
+  {
+    "commits": [
+      "payment",
+      "email"
+    ],
+    "committed_effects": 2,
+    "dup_commits": 0,
+    "error": null,
+    "fault": "kill_after_success",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_full",
+    "trial": 2,
+    "wall_ms": 513.0610410124063
+  },
+  {
+    "commits": [
+      "payment",
+      "payment",
+      "email"
+    ],
+    "committed_effects": 3,
+    "dup_commits": 1,
+    "error": null,
+    "fault": "kill_after_commit",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_no_op_id",
+    "trial": 0,
+    "wall_ms": 504.306250018999
+  },
+  {
+    "commits": [
+      "payment",
+      "payment",
+      "email"
+    ],
+    "committed_effects": 3,
+    "dup_commits": 1,
+    "error": null,
+    "fault": "kill_after_commit",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_no_op_id",
+    "trial": 1,
+    "wall_ms": 537.3827089788392
+  },
+  {
+    "commits": [
+      "payment",
+      "payment",
+      "email"
+    ],
+    "committed_effects": 3,
+    "dup_commits": 1,
+    "error": null,
+    "fault": "kill_after_commit",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_no_op_id",
+    "trial": 2,
+    "wall_ms": 516.7205419857055
+  },
+  {
+    "commits": [
+      "payment",
+      "email"
+    ],
+    "committed_effects": 2,
+    "dup_commits": 0,
+    "error": null,
+    "fault": "kill_after_success",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_no_op_id",
+    "trial": 0,
+    "wall_ms": 518.5813750140369
+  },
+  {
+    "commits": [
+      "payment",
+      "email"
+    ],
+    "committed_effects": 2,
+    "dup_commits": 0,
+    "error": null,
+    "fault": "kill_after_success",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_no_op_id",
+    "trial": 1,
+    "wall_ms": 505.080959002953
+  },
+  {
+    "commits": [
+      "payment",
+      "email"
+    ],
+    "committed_effects": 2,
+    "dup_commits": 0,
+    "error": null,
+    "fault": "kill_after_success",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_no_op_id",
+    "trial": 2,
+    "wall_ms": 532.6245409669355
+  },
+  {
+    "commits": [
+      "payment",
+      "payment",
+      "email"
+    ],
+    "committed_effects": 3,
+    "dup_commits": 1,
+    "error": null,
+    "fault": "kill_after_commit",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_no_dedup",
+    "trial": 0,
+    "wall_ms": 503.92200000351295
+  },
+  {
+    "commits": [
+      "payment",
+      "payment",
+      "email"
+    ],
+    "committed_effects": 3,
+    "dup_commits": 1,
+    "error": null,
+    "fault": "kill_after_commit",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_no_dedup",
+    "trial": 1,
+    "wall_ms": 550.5790419992991
+  },
+  {
+    "commits": [
+      "payment",
+      "payment",
+      "email"
+    ],
+    "committed_effects": 3,
+    "dup_commits": 1,
+    "error": null,
+    "fault": "kill_after_commit",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_no_dedup",
+    "trial": 2,
+    "wall_ms": 521.5880839969032
+  },
+  {
+    "commits": [
+      "payment",
+      "email"
+    ],
+    "committed_effects": 2,
+    "dup_commits": 0,
+    "error": null,
+    "fault": "kill_after_success",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_no_dedup",
+    "trial": 0,
+    "wall_ms": 529.7862919978797
+  },
+  {
+    "commits": [
+      "payment",
+      "email"
+    ],
+    "committed_effects": 2,
+    "dup_commits": 0,
+    "error": null,
+    "fault": "kill_after_success",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_no_dedup",
+    "trial": 1,
+    "wall_ms": 514.6844579721801
+  },
+  {
+    "commits": [
+      "payment",
+      "email"
+    ],
+    "committed_effects": 2,
+    "dup_commits": 0,
+    "error": null,
+    "fault": "kill_after_success",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": "COMPLETED",
+    "system": "c_no_dedup",
+    "trial": 2,
+    "wall_ms": 515.9732089960016
+  },
+  {
+    "commits": [
+      "payment",
+      "payment",
+      "email"
+    ],
+    "committed_effects": 3,
+    "dup_commits": 1,
+    "error": null,
+    "fault": "kill_after_commit",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": null,
+    "system": "b_naive",
+    "trial": 0,
+    "wall_ms": 479.1842909762636
+  },
+  {
+    "commits": [
+      "payment",
+      "payment",
+      "email"
+    ],
+    "committed_effects": 3,
+    "dup_commits": 1,
+    "error": null,
+    "fault": "kill_after_commit",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": null,
+    "system": "b_naive",
+    "trial": 1,
+    "wall_ms": 488.2902500103228
+  },
+  {
+    "commits": [
+      "payment",
+      "payment",
+      "email"
+    ],
+    "committed_effects": 3,
+    "dup_commits": 1,
+    "error": null,
+    "fault": "kill_after_commit",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": null,
+    "system": "b_naive",
+    "trial": 2,
+    "wall_ms": 471.69425000902265
+  },
+  {
+    "commits": [
+      "payment",
+      "payment",
+      "email"
+    ],
+    "committed_effects": 3,
+    "dup_commits": 1,
+    "error": null,
+    "fault": "kill_after_success",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": null,
+    "system": "b_naive",
+    "trial": 0,
+    "wall_ms": 496.5280839824118
+  },
+  {
+    "commits": [
+      "payment",
+      "payment",
+      "email"
+    ],
+    "committed_effects": 3,
+    "dup_commits": 1,
+    "error": null,
+    "fault": "kill_after_success",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": null,
+    "system": "b_naive",
+    "trial": 1,
+    "wall_ms": 472.99587505403906
+  },
+  {
+    "commits": [
+      "payment",
+      "payment",
+      "email"
+    ],
+    "committed_effects": 3,
+    "dup_commits": 1,
+    "error": null,
+    "fault": "kill_after_success",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": null,
+    "system": "b_naive",
+    "trial": 2,
+    "wall_ms": 492.32625000877306
+  },
+  {
+    "commits": [
+      "payment",
+      "payment",
+      "email"
+    ],
+    "committed_effects": 3,
+    "dup_commits": 1,
+    "error": null,
+    "fault": "kill_after_commit",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": null,
+    "system": "b_langgraph",
+    "trial": 0,
+    "wall_ms": 778.8911670213565
+  },
+  {
+    "commits": [
+      "payment",
+      "payment",
+      "email"
+    ],
+    "committed_effects": 3,
+    "dup_commits": 1,
+    "error": null,
+    "fault": "kill_after_commit",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": null,
+    "system": "b_langgraph",
+    "trial": 1,
+    "wall_ms": 719.5106250001118
+  },
+  {
+    "commits": [
+      "payment",
+      "payment",
+      "email"
+    ],
+    "committed_effects": 3,
+    "dup_commits": 1,
+    "error": null,
+    "fault": "kill_after_commit",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": null,
+    "system": "b_langgraph",
+    "trial": 2,
+    "wall_ms": 728.1950410106219
+  },
+  {
+    "commits": [
+      "payment",
+      "email"
+    ],
+    "committed_effects": 2,
+    "dup_commits": 0,
+    "error": null,
+    "fault": "kill_after_success",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": null,
+    "system": "b_langgraph",
+    "trial": 0,
+    "wall_ms": 725.360875017941
+  },
+  {
+    "commits": [
+      "payment",
+      "email"
+    ],
+    "committed_effects": 2,
+    "dup_commits": 0,
+    "error": null,
+    "fault": "kill_after_success",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": null,
+    "system": "b_langgraph",
+    "trial": 1,
+    "wall_ms": 723.3876250102185
+  },
+  {
+    "commits": [
+      "payment",
+      "email"
+    ],
+    "committed_effects": 2,
+    "dup_commits": 0,
+    "error": null,
+    "fault": "kill_after_success",
+    "missing_commits": 0,
+    "resume_success": true,
+    "resumed_checkpoint_status": null,
+    "system": "b_langgraph",
+    "trial": 2,
+    "wall_ms": 758.7103329715319
+  }
+]

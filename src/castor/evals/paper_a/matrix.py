@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
+import subprocess
 import time
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from castor.evals.paper_a.harness import SPayHarnessResult, run_s_pay_kill_trial
@@ -29,6 +32,7 @@ DEFAULT_SYSTEMS = (
     "b_langgraph",
 )
 DEFAULT_FAULTS = ("kill_after_commit", "kill_after_success")
+MODULE_NAME = "castor.evals.paper_a.matrix"
 
 
 @dataclass(frozen=True)
@@ -151,7 +155,12 @@ def results_to_markdown(results: Iterable[TrialResult]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_results(out_dir: Path, results: list[TrialResult]) -> None:
+def write_results(
+    out_dir: Path,
+    results: list[TrialResult],
+    *,
+    manifest: dict[str, object],
+) -> None:
     """Write JSON + markdown artifacts under ``out_dir``."""
     out_dir.mkdir(parents=True, exist_ok=True)
     payload = [asdict(r) for r in results]
@@ -160,6 +169,10 @@ def write_results(out_dir: Path, results: list[TrialResult]) -> None:
         encoding="utf-8",
     )
     (out_dir / "results.md").write_text(results_to_markdown(results), encoding="utf-8")
+    (out_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -177,6 +190,7 @@ def main(argv: list[str] | None = None) -> None:
         help="Scratch directory for per-trial DBs (default: <out>/work)",
     )
     parser.add_argument("--trials", type=int, default=1)
+    parser.add_argument("--label", default="adhoc")
     parser.add_argument(
         "--systems",
         nargs="+",
@@ -198,7 +212,43 @@ def main(argv: list[str] | None = None) -> None:
         faults=args.faults,
         trials=args.trials,
     )
-    write_results(args.out, results)
+    command = " ".join(
+        shlex.quote(part)
+        for part in (
+            "python",
+            "-m",
+            MODULE_NAME,
+            "--out",
+            str(args.out),
+            "--label",
+            args.label,
+            "--systems",
+            *args.systems,
+            "--faults",
+            *args.faults,
+            "--trials",
+            str(args.trials),
+        )
+    )
+    write_results(
+        args.out,
+        results,
+        manifest={
+            "label": args.label,
+            "trials": args.trials,
+            "systems": args.systems,
+            "faults": args.faults,
+            "result_count": len(results),
+            "command": command,
+            "git_commit": subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip(),
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),  # noqa: UP017
+        },
+    )
     print(results_to_markdown(results), end="")
     failures = [r for r in results if r.error]
     # Scientific failures (dups on c_full) also exit non-zero for CI.

@@ -49,3 +49,21 @@ jobs:
 
       - name: Check linting
         run: uv run ruff check src/ tests/
+
+  paper-a-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv python install 3.11
+      - run: uv sync --extra paper_a_eval
+      - name: Run E0 and C-full two-fault tests
+        run: >-
+          uv run pytest -v --tb=short
+          tests/test_kill_harness.py
+          tests/test_paper_a_matrix.py::test_c_full_kill_after_commit_zero_dups
+          tests/test_paper_a_matrix.py::test_c_full_kill_after_success_zero_dups
+      - run: >-
+          uv run python -m castor.evals.paper_a.matrix
+          --out /tmp/castor-paper-a-smoke --label ci-smoke
+          --systems c_full --faults kill_after_commit kill_after_success --trials 3
