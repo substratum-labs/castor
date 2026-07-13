@@ -5,6 +5,7 @@ from __future__ import annotations
 from castor.evals.actuator_bench import ActuatorBench
 from castor.evals.paper_a.harness import run_s_pay_kill_trial
 from castor.evals.paper_a.matrix import run_trial
+from castor.evals.paper_a.secondary_workloads import run_s_hitl_workload
 
 
 def test_actuator_no_dedupe_allows_duplicate_operation_ids(tmp_path) -> None:
@@ -93,3 +94,17 @@ def test_matrix_trial_records_c_full(tmp_path) -> None:
     assert trial.error is None
     assert trial.dup_commits == 0
     assert trial.resume_success is True
+
+
+def test_s_hitl_approve_has_one_payment_and_no_duplicates(tmp_path) -> None:
+    result = run_s_hitl_workload(tmp_path, decision="approve")
+    assert result.checkpoint_status == "COMPLETED"
+    assert result.committed_effects == 1
+    assert result.dup_commits == 0
+
+
+def test_s_hitl_reject_executes_no_payment(tmp_path) -> None:
+    result = run_s_hitl_workload(tmp_path, decision="reject")
+    assert result.checkpoint_status == "COMPLETED"
+    assert result.committed_effects == 0
+    assert result.journal_statuses[-1] == "HITL_REJECTED"
