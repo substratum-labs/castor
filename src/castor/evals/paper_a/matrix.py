@@ -21,7 +21,13 @@ from typing import Iterable, Sequence
 
 from castor.evals.paper_a.harness import SPayHarnessResult, run_s_pay_kill_trial
 
-DEFAULT_SYSTEMS = ("c_full", "c_no_op_id", "c_no_dedup", "b_naive")
+DEFAULT_SYSTEMS = (
+    "c_full",
+    "c_no_op_id",
+    "c_no_dedup",
+    "b_naive",
+    "b_langgraph",
+)
 DEFAULT_FAULTS = ("kill_after_commit", "kill_after_success")
 
 

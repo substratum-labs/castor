@@ -121,3 +121,28 @@ def test_matrix_trial_records_c_full(tmp_path) -> None:
     assert trial.error is None
     assert trial.dup_commits == 0
     assert trial.resume_success is True
+
+
+def test_matrix_records_langgraph_in_existing_result_schema(tmp_path) -> None:
+    trial = run_trial(
+        tmp_path / "matrix",
+        system="b_langgraph",
+        fault="kill_after_commit",
+        trial=0,
+    )
+    assert trial.error is None
+    assert trial.system == "b_langgraph"
+    assert set(trial.__dict__) == {
+        "system",
+        "fault",
+        "trial",
+        "committed_effects",
+        "dup_commits",
+        "missing_commits",
+        "resume_success",
+        "resumed_checkpoint_status",
+        "commits",
+        "wall_ms",
+        "error",
+    }
+    assert trial.dup_commits == 1

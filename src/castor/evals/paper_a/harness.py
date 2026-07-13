@@ -15,10 +15,13 @@ from castor.evals.actuator_bench import ActuatorBench
 from castor.evals.paper_a.s_pay_worker import COMMIT_MARKER
 from castor.scheduler.persistence import CheckpointStore
 
-SystemName = Literal["c_full", "c_no_op_id", "c_no_dedup", "b_naive"]
+SystemName = Literal[
+    "c_full", "c_no_op_id", "c_no_dedup", "b_naive", "b_langgraph"
+]
 FaultName = Literal["kill_after_commit", "kill_after_success"]
 
 _WORKER_MODULE = "castor.evals.paper_a.s_pay_worker"
+_LANGGRAPH_WORKER_MODULE = "castor.evals.paper_a.langgraph_worker"
 _MARKER_TIMEOUT_SECONDS = 15
 _PROCESS_TIMEOUT_SECONDS = 15
 
@@ -88,7 +91,7 @@ def run_s_pay_kill_trial(
     resume_ok = resumed.returncode == 0
 
     resumed_status: str | None = None
-    if system != "b_naive":
+    if system not in {"b_naive", "b_langgraph"}:
         if not resume_ok:
             raise RuntimeError(
                 "resume worker failed: "
@@ -104,7 +107,7 @@ def run_s_pay_kill_trial(
             )
         resume_ok = True
     else:
-        # Naive baseline always "resumes" by re-exec; success means process exited 0.
+        # Baselines resume by re-exec; success means process exited 0.
         if not resume_ok:
             raise RuntimeError(
                 "naive resume worker failed: "
@@ -112,14 +115,13 @@ def run_s_pay_kill_trial(
                 f"stderr={resume_stderr!r}"
             )
 
-    metrics = ActuatorBench(
-        actuator_db, dedupe=(system not in {"c_no_dedup", "b_naive"})
-    ).metrics(expected_effects=EXPECTED_EFFECTS_COMPLETE)
+    dedupe = system not in {"c_no_dedup", "b_naive", "b_langgraph"}
+    metrics = ActuatorBench(actuator_db, dedupe=dedupe).metrics(
+        expected_effects=EXPECTED_EFFECTS_COMPLETE
+    )
     commits = tuple(
         row["effect_name"]
-        for row in ActuatorBench(
-            actuator_db, dedupe=(system not in {"c_no_dedup", "b_naive"})
-        ).list_commits()
+        for row in ActuatorBench(actuator_db, dedupe=dedupe).list_commits()
     )
 
     return SPayHarnessResult(
@@ -143,21 +145,24 @@ def _start_worker(
     system: SystemName,
     fault: FaultName,
 ) -> subprocess.Popen[str]:
+    worker_module = (
+        _LANGGRAPH_WORKER_MODULE if system == "b_langgraph" else _WORKER_MODULE
+    )
     cmd = [
         sys.executable,
         "-m",
-        _WORKER_MODULE,
+        worker_module,
         "--actuator-db",
         str(actuator_db),
         "--pid",
         pid,
         "--phase",
         phase,
-        "--system",
-        system,
         "--fault",
         fault,
     ]
+    if system != "b_langgraph":
+        cmd.extend(["--system", system])
     if system != "b_naive":
         cmd.extend(["--checkpoint-db", str(checkpoint_db)])
     return subprocess.Popen(
