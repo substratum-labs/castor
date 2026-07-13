@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
 from castor.evals.actuator_bench import ActuatorBench
-from castor.evals.paper_a.harness import run_s_pay_kill_trial
 from castor.evals.paper_a import matrix
+from castor.evals.paper_a.harness import run_s_pay_kill_trial
 from castor.evals.paper_a.matrix import run_matrix, run_trial, write_results
 from castor.evals.paper_a.secondary_workloads import (
     run_s_hitl_workload,
@@ -173,7 +173,7 @@ def test_main_writes_portable_module_provenance_for_labeled_run(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    fixed_now = datetime(2026, 7, 13, tzinfo=timezone.utc)
+    fixed_now = datetime(2026, 7, 13, tzinfo=UTC)
     with (
         patch.object(matrix, "datetime") as mocked_datetime,
         patch.object(matrix.subprocess, "run") as mocked_git,
