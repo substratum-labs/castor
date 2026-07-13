@@ -7,9 +7,12 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from castor.evals.actuator_bench import ActuatorBench
 from castor.evals.paper_a.s_pay_worker import COMMIT_MARKER
@@ -24,6 +27,7 @@ _WORKER_MODULE = "castor.evals.paper_a.s_pay_worker"
 _LANGGRAPH_WORKER_MODULE = "castor.evals.paper_a.langgraph_worker"
 _MARKER_TIMEOUT_SECONDS = 15
 _PROCESS_TIMEOUT_SECONDS = 15
+_LANGGRAPH_CHECKPOINT_POLL_SECONDS = 0.01
 
 # S-Pay fully complete: one payment + one email (reads/LLM are not actuators).
 EXPECTED_EFFECTS_COMPLETE = 2
@@ -65,6 +69,8 @@ def run_s_pay_kill_trial(
     )
     try:
         _wait_for_commit_marker(initial)
+        if system == "b_langgraph" and fault == "kill_after_success":
+            _wait_for_langgraph_payment_checkpoint(checkpoint_db, pid)
         initial.kill()
         return_code = initial.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
     finally:
@@ -175,6 +181,34 @@ def _start_worker(
 
 def _checkpoint_url(db_path: Path) -> str:
     return f"sqlite:///{db_path}"
+
+
+def _wait_for_langgraph_payment_checkpoint(
+    checkpoint_db: Path, thread_id: str
+) -> None:
+    """Wait until LangGraph durably schedules post-payment for ``thread_id``."""
+    deadline = time.monotonic() + _MARKER_TIMEOUT_SECONDS
+    last_channel_names: tuple[str, ...] = ()
+    config = {"configurable": {"thread_id": thread_id}}
+
+    while time.monotonic() < deadline:
+        if checkpoint_db.exists():
+            with SqliteSaver.from_conn_string(str(checkpoint_db)) as saver:
+                for checkpoint in saver.list(config):
+                    channel_values = checkpoint.checkpoint.get("channel_values", {})
+                    last_channel_names = tuple(sorted(channel_values))
+                    if {
+                        "payment",
+                        "branch:to:post_payment",
+                    }.issubset(channel_values):
+                        return
+        time.sleep(_LANGGRAPH_CHECKPOINT_POLL_SECONDS)
+
+    raise RuntimeError(
+        "LangGraph payment checkpoint was not durable before SIGKILL: "
+        f"thread_id={thread_id!r}; checkpoint_db={checkpoint_db}; "
+        f"last_channel_values={last_channel_names!r}"
+    )
 
 
 def _wait_for_commit_marker(process: subprocess.Popen[str]) -> None:
