@@ -213,11 +213,11 @@ Castor provides **application-layer control**: it gates what the agent *intends*
 
 ### Paper A frozen S-Pay results
 
-Regenerate the committed `full-n3` artifact (five systems × two faults × three
+Regenerate the committed `full-n20` artifact (five systems × two faults × 20
 trials) with:
 
 ```bash
-uv sync --extra paper_a_eval && uv run python -m castor.evals.paper_a.matrix --out results/paper_a --label full-n3 --trials 3
+uv sync --extra paper_a_eval && uv run python -m castor.evals.paper_a.matrix --out results/paper_a --label full-n20 --systems c_full c_no_op_id c_no_dedup b_naive b_langgraph --faults kill_after_commit kill_after_success --trials 20
 ```
 
 `results.json` remains the row-level record; `run_manifest.json` identifies
