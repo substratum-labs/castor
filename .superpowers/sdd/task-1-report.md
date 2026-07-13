@@ -1,12 +1,19 @@
-# Task 1 — Independent SQLite ActuatorBench Report
+# Task 1 — S-HITL Secondary Workload Report
 
 ## Status
 
-Implemented the evaluation-only SQLite actuator in commit
-`c201de15d6084817453497ee32e12db87a28e472`
-(`feat(evals): add independent SQLite actuator bench`). The implementation is
-isolated under `castor.evals`; it does not import or interact with Castor
-checkpoint persistence.
+Implemented and committed the S-HITL Paper A secondary workload in
+`77911f45b8ce43b42610532973996b9b6fb23bb9`
+(`feat(evals): add S-HITL workload`).
+
+## Files changed
+
+- `src/castor/evals/paper_a/secondary_workloads.py` — added
+  `SecondaryWorkloadResult` and `run_s_hitl_workload`; the workload suspends a
+  destructive payment for HITL, resolves it according to the supplied decision,
+  resumes the checkpoint, and reports actuator/journal observations.
+- `tests/test_paper_a_matrix.py` — added approve and reject S-HITL behavioral
+  tests.
 
 ## TDD evidence
 
@@ -15,77 +22,61 @@ checkpoint persistence.
 Command:
 
 ```console
-uv run pytest tests/test_actuator_bench.py -q
+PYTHONPATH=src /Users/yong/projects/substratum/castor/.venv/bin/python -m pytest tests/test_paper_a_matrix.py -k s_hitl -v
 ```
 
 Output before production code:
 
 ```text
-ModuleNotFoundError: No module named 'castor.evals'
-1 error in 0.20s
+collected 0 items / 1 error
+E   ModuleNotFoundError: No module named 'castor.evals.paper_a.secondary_workloads'
+=============================== 1 error in 0.23s ===============================
 ```
 
-This was the expected failure: the contract test imported the absent Task 1
-module.
+This was the expected collection failure after adding the new import and tests:
+the workload module did not exist.
 
 ### GREEN
 
 Command:
 
 ```console
-uv run pytest tests/test_actuator_bench.py -q
+PYTHONPATH=src /Users/yong/projects/substratum/castor/.venv/bin/python -m pytest tests/test_paper_a_matrix.py -k s_hitl -v
 ```
 
 Output:
 
 ```text
-.                                                                        [100%]
-1 passed in 0.13s
+tests/test_paper_a_matrix.py::test_s_hitl_approve_has_one_payment_and_no_duplicates PASSED
+tests/test_paper_a_matrix.py::test_s_hitl_reject_executes_no_payment PASSED
+======================= 2 passed, 7 deselected in 0.19s ========================
 ```
 
-Focused quality checks:
+## Full verification
 
 ```console
-uv run ruff check src/castor/evals tests/test_actuator_bench.py
-uv run ruff format --check src/castor/evals tests/test_actuator_bench.py
+PYTHONPATH=src /Users/yong/projects/substratum/castor/.venv/bin/python -m pytest tests/test_paper_a_matrix.py -v
 ```
 
-Output:
+```text
+============================== 9 passed in 3.52s ===============================
+```
+
+```console
+/Users/yong/projects/substratum/castor/.venv/bin/python -m ruff check src/castor/evals/paper_a/secondary_workloads.py tests/test_paper_a_matrix.py
+/Users/yong/projects/substratum/castor/.venv/bin/python -m ruff format --check src/castor/evals/paper_a/secondary_workloads.py tests/test_paper_a_matrix.py
+```
 
 ```text
 All checks passed!
-3 files already formatted
+2 files already formatted
 ```
-
-Full-suite command:
-
-```console
-uv run pytest -q
-```
-
-Output:
-
-```text
-511 passed, 9 skipped in 14.51s
-```
-
-## Changed files
-
-- `src/castor/evals/__init__.py` — new evaluation package boundary.
-- `src/castor/evals/actuator_bench.py` — SQLite-backed, idempotent actuator
-  with `INSERT ... ON CONFLICT DO NOTHING`, stable commit-ID lookup, and
-  `ActuatorMetrics`.
-- `tests/test_actuator_bench.py` — contract test covering duplicate operation
-  IDs, one persisted row, stable commit ID, and `dup_commits == 0`.
 
 ## Self-review
 
-- `operation_id` is the SQLite primary key, so retries cannot create a second
-  effect row.
-- `BEGIN IMMEDIATE` contains the conflict-safe insert and lookup in one
-  transaction; callers receive the previously stored commit ID after a retry.
-- The database path is supplied directly to the bench and the module has no
-  dependency on `castor.scheduler.persistence`, checkpoints, workers, or a
-  harness.
-- Scope is limited to the three requested Task 1 code/test files plus this
-  requested report. No worker or kill harness was added.
+- Approval executes exactly one deduplicated external payment and replay uses
+  the HITL journal record rather than issuing a second payment.
+- Rejection records `HITL_REJECTED`; replay completes without invoking the
+  actuator, so zero effects are committed.
+- The implementation is confined to the requested workload module and matrix
+  test file; no ledger, plans, or unrelated project files were changed.
