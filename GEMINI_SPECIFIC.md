@@ -1,1 +1,1 @@
-../../substratum-internal/agent-md/castor.md
+../substratum-internal/agent-md/castor.md
