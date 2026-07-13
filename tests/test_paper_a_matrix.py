@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from castor.evals.actuator_bench import ActuatorBench
 from castor.evals.paper_a.harness import run_s_pay_kill_trial
 from castor.evals.paper_a.matrix import run_trial
@@ -9,6 +11,34 @@ from castor.evals.paper_a.secondary_workloads import (
     run_s_hitl_workload,
     run_s_loop_workload,
 )
+
+
+def test_langgraph_kill_after_commit_reenters_uncheckpointed_payment(tmp_path) -> None:
+    result = run_s_pay_kill_trial(
+        tmp_path / "langgraph_commit",
+        system="b_langgraph",
+        fault="kill_after_commit",
+    )
+    assert result.resume_success is True
+    assert result.committed_effects == 3
+    assert result.dup_commits == 1
+    assert result.missing_commits == 0
+    assert result.commits.count("payment") == 2
+    assert result.commits.count("email") == 1
+
+
+def test_langgraph_kill_after_success_keeps_checkpointed_payment(tmp_path) -> None:
+    result = run_s_pay_kill_trial(
+        tmp_path / "langgraph_success",
+        system="b_langgraph",
+        fault="kill_after_success",
+    )
+    assert result.resume_success is True
+    assert result.committed_effects == 2
+    assert result.dup_commits == 0
+    assert result.missing_commits == 0
+    assert result.commits.count("payment") == 1
+    assert result.commits.count("email") == 1
 
 
 def test_actuator_no_dedupe_allows_duplicate_operation_ids(tmp_path) -> None:
@@ -118,3 +148,41 @@ def test_s_loop_stops_at_budget_without_extra_effect() -> None:
     assert result.checkpoint_status == "COMPLETED"
     assert result.committed_effects == 1
     assert result.journal_statuses[-1] == "INSUFFICIENT_CAPABILITY"
+
+
+def test_matrix_records_langgraph_in_existing_result_schema(tmp_path) -> None:
+    trial = run_trial(
+        tmp_path / "matrix",
+        system="b_langgraph",
+        fault="kill_after_commit",
+        trial=0,
+    )
+    assert trial.error is None
+    assert trial.system == "b_langgraph"
+    assert set(trial.__dict__) == {
+        "system",
+        "fault",
+        "trial",
+        "committed_effects",
+        "dup_commits",
+        "missing_commits",
+        "resume_success",
+        "resumed_checkpoint_status",
+        "commits",
+        "wall_ms",
+        "error",
+    }
+    assert trial.dup_commits == 1
+
+
+def test_langgraph_comparison_note_states_the_fairness_boundary() -> None:
+    note = Path("docs/paper_a/langgraph_baseline.md").read_text(encoding="utf-8")
+    for required in (
+        "LangGraph 1.1.2",
+        "SQLite",
+        "tool cache: off",
+        "no stable external operation_id",
+        "kill_after_commit",
+        "not a universal claim",
+    ):
+        assert required in note

@@ -173,7 +173,7 @@ name = "aiosqlite"
 version = "0.21.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/13/7d/8bca2bf9a247c2c5dfeec1d7a5f40db6518f88d314b8bca9da29670d2671/aiosqlite-0.21.0.tar.gz", hash = "sha256:131bb8056daa3bc875608c631c678cda73922a2d4ba8aec373b19f18c17e7aa3", size = 13454, upload-time = "2025-02-03T07:30:16.235Z" }
 wheels = [
@@ -557,9 +557,12 @@ observability = [
 openai-agents = [
     { name = "openai-agents" },
 ]
+paper-a-eval = [
+    { name = "langgraph" },
+    { name = "langgraph-checkpoint-sqlite" },
+]
 pydantic-ai = [
-    { name = "pydantic-ai", version = "0.7.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "pydantic-ai", version = "1.31.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "pydantic-ai" },
 ]
 smolagents = [
     { name = "smolagents" },
@@ -568,8 +571,7 @@ smolagents = [
 [package.dev-dependencies]
 dev = [
     { name = "hypothesis" },
-    { name = "pydantic-ai", version = "0.7.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "pydantic-ai", version = "1.31.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "pydantic-ai" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -584,6 +586,8 @@ requires-dist = [
     { name = "google-adk", marker = "extra == 'google-adk'", specifier = ">=0.1" },
     { name = "langchain-core", marker = "extra == 'langchain'", specifier = ">=0.2" },
     { name = "langgraph", marker = "extra == 'langchain'", specifier = ">=0.2" },
+    { name = "langgraph", marker = "extra == 'paper-a-eval'", specifier = "==1.1.2" },
+    { name = "langgraph-checkpoint-sqlite", marker = "extra == 'paper-a-eval'" },
     { name = "litellm", marker = "extra == 'demo'", specifier = ">=1.0" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5" },
@@ -598,7 +602,7 @@ requires-dist = [
     { name = "smolagents", marker = "extra == 'smolagents'", specifier = ">=1.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },
 ]
-provides-extras = ["observability", "smolagents", "pydantic-ai", "langchain", "crewai", "openai-agents", "autogen", "google-adk", "mnemos", "demo", "docs", "mcp"]
+provides-extras = ["paper-a-eval", "observability", "smolagents", "pydantic-ai", "langchain", "crewai", "openai-agents", "autogen", "google-adk", "mnemos", "demo", "docs", "mcp"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1409,8 +1413,8 @@ name = "genai-prices"
 version = "0.0.55"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "httpx", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "pydantic", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "httpx" },
+    { name = "pydantic" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/77/67/de9d9be180db6d80b298c281dff71502095c0776d7cc9286f486f667f61a/genai_prices-0.0.55.tar.gz", hash = "sha256:8692c65d0deefe2ad0680d71841eb12822a35945a6060d2b6adbcbdf4945e1cb", size = 59987, upload-time = "2026-02-26T17:56:41.467Z" }
 wheels = [
@@ -2737,15 +2741,29 @@ wheels = [
 
 [[package]]
 name = "langgraph-checkpoint"
-version = "4.0.1"
+version = "4.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "langchain-core" },
     { name = "ormsgpack" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b1/44/a8df45d1e8b4637e29789fa8bae1db022c953cc7ac80093cfc52e923547e/langgraph_checkpoint-4.0.1.tar.gz", hash = "sha256:b433123735df11ade28829e40ce25b9be614930cd50245ff2af60629234befd9", size = 158135, upload-time = "2026-02-27T21:06:16.092Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/83/47/886af6f886f0bff2273164a45f008694e48a96ff3cd25ff0228f2aa9480e/langgraph_checkpoint-4.1.1.tar.gz", hash = "sha256:6c2bdb530c91f91d7d9c1bd100925d0fc4f498d418c17f3587d1526279482a25", size = 184020, upload-time = "2026-05-22T16:57:38.503Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/65/4c/09a4a0c42f5d2fc38d6c4d67884788eff7fd2cfdf367fdf7033de908b4c0/langgraph_checkpoint-4.0.1-py3-none-any.whl", hash = "sha256:e3adcd7a0e0166f3b48b8cf508ce0ea366e7420b5a73aa81289888727769b034", size = 50453, upload-time = "2026-02-27T21:06:14.293Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/b4/71425e3e38be92611300b9cc5e46a5bf98ab23f5ea8a75b73d02a2f1413c/langgraph_checkpoint-4.1.1-py3-none-any.whl", hash = "sha256:25d29144b082827218e7bc3f1e9b0566a4bb007895cd6cc26f66a8428739f56e", size = 56212, upload-time = "2026-05-22T16:57:37.203Z" },
+]
+
+[[package]]
+name = "langgraph-checkpoint-sqlite"
+version = "3.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiosqlite" },
+    { name = "langgraph-checkpoint" },
+    { name = "sqlite-vec" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e3/ea/83917c2369acf8a10a894d4247655fd063c07924ba5bc4e83c85d2eaeded/langgraph_checkpoint_sqlite-3.1.0.tar.gz", hash = "sha256:f926916ebc1b985d802cc9c820026036e84db9d910d62c97b57e4ba64f67d5ae", size = 147902, upload-time = "2026-05-12T03:34:52.503Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/97/07/b342811a16327900af2747c752ea19676172fcddf9b592cc384031076623/langgraph_checkpoint_sqlite-3.1.0-py3-none-any.whl", hash = "sha256:cc9b40df0076feae8a9ad42ae713621b148b00ac23adc09dc1dc66090a46e5ad", size = 38587, upload-time = "2026-05-12T03:34:51.231Z" },
 ]
 
 [[package]]
@@ -2833,10 +2851,15 @@ wheels = [
 name = "logfire"
 version = "4.6.0"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version == '3.13.*'",
+    "python_full_version < '3.13'",
+]
 dependencies = [
     { name = "executing", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
     { name = "opentelemetry-exporter-otlp-proto-http", version = "1.34.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "opentelemetry-instrumentation", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "opentelemetry-instrumentation", version = "0.55b1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
     { name = "opentelemetry-sdk", version = "1.34.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
     { name = "protobuf", version = "5.29.6", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
     { name = "rich", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
@@ -2849,7 +2872,35 @@ wheels = [
 
 [package.optional-dependencies]
 httpx = [
-    { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "opentelemetry-instrumentation-httpx", version = "0.55b1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+]
+
+[[package]]
+name = "logfire"
+version = "4.37.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version == '3.13.*'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "executing", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+    { name = "opentelemetry-exporter-otlp-proto-http", version = "1.41.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+    { name = "opentelemetry-instrumentation", version = "0.62b0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+    { name = "opentelemetry-sdk", version = "1.41.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+    { name = "protobuf", version = "6.33.6", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+    { name = "rich", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+    { name = "typing-extensions", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c2/f2/34b8ebbd6bbd82c71055d6b881b24d8ada79a0e6692d3dd8cca5e86fadb3/logfire-4.37.0.tar.gz", hash = "sha256:7ee0cb64b59c356a41a1701fb84597037f8db1fa15df7a3715ef363e5a1de06a", size = 1212176, upload-time = "2026-06-12T20:47:06.904Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7a/08/1805d2f26955671115aae555d78cc4c72a6fe733f332d44d69756bc1737b/logfire-4.37.0-py3-none-any.whl", hash = "sha256:a20823e6dbb3204614a3ea5e79c91df42405c5112393ec9d8e34ef45b60d315f", size = 378930, upload-time = "2026-06-12T20:47:03.674Z" },
+]
+
+[package.optional-dependencies]
+httpx = [
+    { name = "opentelemetry-instrumentation-httpx", version = "0.62b0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
 ]
 
 [[package]]
@@ -3821,6 +3872,11 @@ wheels = [
 name = "opentelemetry-instrumentation"
 version = "0.55b1"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version == '3.13.*'",
+    "python_full_version < '3.13'",
+]
 dependencies = [
     { name = "opentelemetry-api", version = "1.34.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
     { name = "opentelemetry-semantic-conventions", version = "0.55b1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
@@ -3833,19 +3889,65 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-instrumentation"
+version = "0.62b0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version == '3.13.*'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "opentelemetry-api", version = "1.41.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+    { name = "opentelemetry-semantic-conventions", version = "0.62b0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+    { name = "packaging", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+    { name = "wrapt", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f9/fd/b8e90bb340957f059084376f94cff336b0e871a42feba7d3f7342365e987/opentelemetry_instrumentation-0.62b0.tar.gz", hash = "sha256:aa1b0b9ab2e1722c2a8a5384fb016fc28d30bba51826676c8036074790d2861e", size = 34042, upload-time = "2026-04-09T14:40:22.843Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/00/b6/3356d2e335e3c449c5183e9b023f30f04f1b7073a6583c68745ea2e704b1/opentelemetry_instrumentation-0.62b0-py3-none-any.whl", hash = "sha256:30d4e76486eae64fb095264a70c2c809c4bed17b73373e53091470661f7d477c", size = 34158, upload-time = "2026-04-09T14:39:21.428Z" },
+]
+
+[[package]]
 name = "opentelemetry-instrumentation-httpx"
 version = "0.55b1"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version == '3.13.*'",
+    "python_full_version < '3.13'",
+]
 dependencies = [
     { name = "opentelemetry-api", version = "1.34.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "opentelemetry-instrumentation", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "opentelemetry-instrumentation", version = "0.55b1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
     { name = "opentelemetry-semantic-conventions", version = "0.55b1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "opentelemetry-util-http", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "opentelemetry-util-http", version = "0.55b1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
     { name = "wrapt", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/7d/3fe981e7ee6655406aef2ff391a8192c1d3934f5990603af4ce1a8689a8e/opentelemetry_instrumentation_httpx-0.55b1.tar.gz", hash = "sha256:3121a9196a25a72b65cb16188a1b09f61e365694c75534b306d09088e5f90041", size = 19268, upload-time = "2025-06-10T08:58:31.31Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/86/70/a4bd4b7b5c601573975e33e276b0c2eb7635ae4d752359d49b68a8547414/opentelemetry_instrumentation_httpx-0.55b1-py3-none-any.whl", hash = "sha256:5fe22fcc3ad78a1da85cbd5d35d6acfb208521c164ad1dd75594230a266c6811", size = 15124, upload-time = "2025-06-10T08:57:43.062Z" },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation-httpx"
+version = "0.62b0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version == '3.13.*'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "opentelemetry-api", version = "1.41.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+    { name = "opentelemetry-instrumentation", version = "0.62b0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+    { name = "opentelemetry-semantic-conventions", version = "0.62b0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+    { name = "opentelemetry-util-http", version = "0.62b0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+    { name = "wrapt", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/77/a7/63e2c6325c8e99cd9b8e0229a8b61c37520ee537214a2c8d514e84486a94/opentelemetry_instrumentation_httpx-0.62b0.tar.gz", hash = "sha256:d865398db3f3c289ba226e355bf4d94460a4301c0c8916e3136caea55ae18000", size = 24182, upload-time = "2026-04-09T14:40:38.719Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/5e/7d5fc28487637871b015128cd5dbb3c36f6d343a9098b893bd803d5a9cca/opentelemetry_instrumentation_httpx-0.62b0-py3-none-any.whl", hash = "sha256:c7660b939c12608fec67743126e9b4dc23dceef0ed631c415924966b0d1579e3", size = 17200, upload-time = "2026-04-09T14:39:46.618Z" },
 ]
 
 [[package]]
@@ -3977,9 +4079,28 @@ wheels = [
 name = "opentelemetry-util-http"
 version = "0.55b1"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version == '3.13.*'",
+    "python_full_version < '3.13'",
+]
 sdist = { url = "https://files.pythonhosted.org/packages/12/f7/3cc23b95921177cdda6d61d3475659b86bac335ed02dd19f994a850ceee3/opentelemetry_util_http-0.55b1.tar.gz", hash = "sha256:29e119c1f6796cccf5fc2aedb55274435cde5976d0ac3fec3ca20a80118f821e", size = 8038, upload-time = "2025-06-10T08:58:53.414Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a3/0a/49c5464efc0e6f6aa94a9ec054879efe2a59d7c1f6aacc500665b3d8afdc/opentelemetry_util_http-0.55b1-py3-none-any.whl", hash = "sha256:e134218df8ff010e111466650e5f019496b29c3b4f1b7de0e8ff8ebeafeebdf4", size = 7299, upload-time = "2025-06-10T08:58:11.785Z" },
+]
+
+[[package]]
+name = "opentelemetry-util-http"
+version = "0.62b0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version == '3.13.*'",
+    "python_full_version < '3.13'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9b/e7/830f7c57135158eb8a8efd3f94ab191a89e3b8a49bed314a35ee501da3f2/opentelemetry_util_http-0.62b0.tar.gz", hash = "sha256:a62e4b19b8a432c0de657f167dee3455516136bb9c6ed463ca8063019970d835", size = 11393, upload-time = "2026-04-09T14:40:59.442Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3d/7f/5c1b7d4385852b9e5eacd4e7f9d8b565d3d351d17463b24916ad098adf1a/opentelemetry_util_http-0.62b0-py3-none-any.whl", hash = "sha256:c20462808d8cc95b69b0dc4a3e02a9d36beb663347e96c931f51ffd78bd318ad", size = 9294, upload-time = "2026-04-09T14:40:19.014Z" },
 ]
 
 [[package]]
@@ -4741,32 +4862,10 @@ email = [
 
 [[package]]
 name = "pydantic-ai"
-version = "0.7.2"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14'",
-    "python_full_version == '3.13.*'",
-    "python_full_version < '3.13'",
-]
-dependencies = [
-    { name = "pydantic-ai-slim", version = "0.7.2", source = { registry = "https://pypi.org/simple" }, extra = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "huggingface", "mcp", "mistral", "openai", "retries", "temporal", "vertexai"], marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6f/d0/ca0dbea87aa677192fa4b663532bd37ae8273e883c55b661b786dbb52731/pydantic_ai-0.7.2.tar.gz", hash = "sha256:d215c323741d47ff13c6b48aa75aedfb8b6b5f9da553af709675c3078a4be4fc", size = 43763306, upload-time = "2025-08-14T22:59:58.912Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/77/402a278b9694cdfaeb5bf0ed4e0fee447de624aa67126ddcce8d98dc6062/pydantic_ai-0.7.2-py3-none-any.whl", hash = "sha256:a6e5d0994aa87385a05fdfdad7fda1fd14576f623635e4000883c4c7856eba13", size = 10188, upload-time = "2025-08-14T22:59:50.653Z" },
-]
-
-[[package]]
-name = "pydantic-ai"
 version = "1.31.0"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14'",
-    "python_full_version == '3.13.*'",
-    "python_full_version < '3.13'",
-]
 dependencies = [
-    { name = "pydantic-ai-slim", version = "1.31.0", source = { registry = "https://pypi.org/simple" }, extra = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "temporal", "ui", "vertexai"], marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "pydantic-ai-slim", extra = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "temporal", "ui", "vertexai"] },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/63/c8/0ad451458ee3f5fd7d5fcd53bca52062131778dcd0a7f457a3f0991fae83/pydantic_ai-1.31.0.tar.gz", hash = "sha256:2371df35588ba01f44d2a034874f1e17058466636338fcb0d8468feeaa05d61e", size = 11811, upload-time = "2025-12-12T00:46:34.222Z" }
 wheels = [
@@ -4775,95 +4874,17 @@ wheels = [
 
 [[package]]
 name = "pydantic-ai-slim"
-version = "0.7.2"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14'",
-    "python_full_version == '3.13.*'",
-    "python_full_version < '3.13'",
-]
-dependencies = [
-    { name = "eval-type-backport", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "griffe", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "httpx", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "opentelemetry-api", version = "1.41.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "pydantic", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "pydantic-graph", version = "0.7.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "typing-inspection", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/96/39/87500c5e038296fe1becf62ac24f7e62dd5a1fb7fe63a9e29c58a2898b1a/pydantic_ai_slim-0.7.2.tar.gz", hash = "sha256:636ca32c8928048ba1173963aab6b7eb33b71174bbc371ad3f2096fee4c48dfe", size = 211787, upload-time = "2025-08-14T23:00:02.67Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ea/93/fc3723a7cde4a8edb2d060fb8abeba22270ae61984796ab653fdd05baca0/pydantic_ai_slim-0.7.2-py3-none-any.whl", hash = "sha256:f5749d63bf4c2deac45371874df30d1d76a1572ce9467f6505926ecb835da583", size = 289755, upload-time = "2025-08-14T22:59:53.346Z" },
-]
-
-[package.optional-dependencies]
-ag-ui = [
-    { name = "ag-ui-protocol", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "starlette", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-anthropic = [
-    { name = "anthropic", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-bedrock = [
-    { name = "boto3", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-cli = [
-    { name = "argcomplete", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "prompt-toolkit", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "rich", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-cohere = [
-    { name = "cohere", marker = "(sys_platform != 'emscripten' and extra == 'extra-13-castor-kernel-mnemos') or (extra == 'extra-13-castor-kernel-autogen' and extra == 'extra-13-castor-kernel-mnemos')" },
-]
-evals = [
-    { name = "pydantic-evals", version = "0.7.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-google = [
-    { name = "google-genai", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-groq = [
-    { name = "groq", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-huggingface = [
-    { name = "huggingface-hub", extra = ["inference"], marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-mcp = [
-    { name = "mcp", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-mistral = [
-    { name = "mistralai", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-openai = [
-    { name = "openai", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-retries = [
-    { name = "tenacity", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-temporal = [
-    { name = "temporalio", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-vertexai = [
-    { name = "google-auth", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "requests", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-
-[[package]]
-name = "pydantic-ai-slim"
 version = "1.31.0"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14'",
-    "python_full_version == '3.13.*'",
-    "python_full_version < '3.13'",
-]
 dependencies = [
-    { name = "genai-prices", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "griffe", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "httpx", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "genai-prices" },
+    { name = "griffe" },
+    { name = "httpx" },
     { name = "opentelemetry-api", version = "1.34.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "pydantic", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "pydantic-graph", version = "1.31.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "typing-inspection", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "opentelemetry-api", version = "1.41.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
+    { name = "pydantic" },
+    { name = "pydantic-graph" },
+    { name = "typing-inspection" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/35/7c/808c653fb316841c7443564a0f5d053fb04ed7ce4e72e93193579ced4ce0/pydantic_ai_slim-1.31.0.tar.gz", hash = "sha256:b40f67c0ff30476f97ac8741c56736b3ccabe4a067c6ace9d8d7cc3a6f5dd944", size = 334094, upload-time = "2025-12-12T00:46:36.46Z" }
 wheels = [
@@ -4872,63 +4893,64 @@ wheels = [
 
 [package.optional-dependencies]
 ag-ui = [
-    { name = "ag-ui-protocol", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "starlette", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "ag-ui-protocol" },
+    { name = "starlette" },
 ]
 anthropic = [
-    { name = "anthropic", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "anthropic" },
 ]
 bedrock = [
-    { name = "boto3", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "boto3" },
 ]
 cli = [
-    { name = "argcomplete", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "prompt-toolkit", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "pyperclip", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "rich", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "argcomplete" },
+    { name = "prompt-toolkit" },
+    { name = "pyperclip" },
+    { name = "rich" },
 ]
 cohere = [
-    { name = "cohere", marker = "(sys_platform != 'emscripten' and extra == 'extra-13-castor-kernel-autogen') or (sys_platform != 'emscripten' and extra != 'extra-13-castor-kernel-mnemos') or (extra == 'extra-13-castor-kernel-autogen' and extra == 'extra-13-castor-kernel-mnemos')" },
+    { name = "cohere", marker = "sys_platform != 'emscripten' or (extra == 'extra-13-castor-kernel-autogen' and extra == 'extra-13-castor-kernel-mnemos')" },
 ]
 evals = [
-    { name = "pydantic-evals", version = "1.31.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "pydantic-evals" },
 ]
 fastmcp = [
-    { name = "fastmcp", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "fastmcp" },
 ]
 google = [
-    { name = "google-genai", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "google-genai" },
 ]
 groq = [
-    { name = "groq", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "groq" },
 ]
 huggingface = [
-    { name = "huggingface-hub", extra = ["inference"], marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "huggingface-hub", extra = ["inference"] },
 ]
 logfire = [
-    { name = "logfire", extra = ["httpx"], marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "logfire", version = "4.6.0", source = { registry = "https://pypi.org/simple" }, extra = ["httpx"], marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "logfire", version = "4.37.0", source = { registry = "https://pypi.org/simple" }, extra = ["httpx"], marker = "extra == 'extra-13-castor-kernel-mnemos'" },
 ]
 mcp = [
-    { name = "mcp", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "mcp" },
 ]
 mistral = [
-    { name = "mistralai", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "mistralai" },
 ]
 openai = [
-    { name = "openai", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "openai" },
 ]
 retries = [
-    { name = "tenacity", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "tenacity" },
 ]
 temporal = [
-    { name = "temporalio", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "temporalio" },
 ]
 ui = [
-    { name = "starlette", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "starlette" },
 ]
 vertexai = [
-    { name = "google-auth", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "requests", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "google-auth" },
+    { name = "requests" },
 ]
 
 [[package]]
@@ -4998,42 +5020,15 @@ wheels = [
 
 [[package]]
 name = "pydantic-evals"
-version = "0.7.2"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14'",
-    "python_full_version == '3.13.*'",
-    "python_full_version < '3.13'",
-]
-dependencies = [
-    { name = "anyio", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "logfire-api", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "pydantic", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "pydantic-ai-slim", version = "0.7.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "pyyaml", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "rich", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/32/b7/005b1b23b96abf2bce880a4c10496c00f8ebd67690f6888e576269059f54/pydantic_evals-0.7.2.tar.gz", hash = "sha256:0cf7adee67b8a12ea0b41e5162c7256ae0f6a237acb1eea161a74ed6cf61615a", size = 44086, upload-time = "2025-08-14T23:00:03.606Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7c/6f/3b844991fc1223f9c3b201f222397b0d115e236389bd90ced406ebc478ea/pydantic_evals-0.7.2-py3-none-any.whl", hash = "sha256:c7497d89659c35fbcaefbeb6f457ae09d62e36e161c4b25a462808178b7cfa92", size = 52753, upload-time = "2025-08-14T22:59:55.018Z" },
-]
-
-[[package]]
-name = "pydantic-evals"
 version = "1.31.0"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14'",
-    "python_full_version == '3.13.*'",
-    "python_full_version < '3.13'",
-]
 dependencies = [
-    { name = "anyio", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "logfire-api", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "pydantic", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "pydantic-ai-slim", version = "1.31.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "pyyaml", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "rich", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "anyio" },
+    { name = "logfire-api" },
+    { name = "pydantic" },
+    { name = "pydantic-ai-slim" },
+    { name = "pyyaml" },
+    { name = "rich" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/45/45/8d28e7d5d47f32602fb80df311705f7719e2fd79b3cfd36dcc1019e3bba6/pydantic_evals-1.31.0.tar.gz", hash = "sha256:c339f12900cce4a1b9cd532f185601f624da49776b5d226f3f2d429f34440929", size = 47164, upload-time = "2025-12-12T00:46:37.442Z" }
 wheels = [
@@ -5042,38 +5037,13 @@ wheels = [
 
 [[package]]
 name = "pydantic-graph"
-version = "0.7.2"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14'",
-    "python_full_version == '3.13.*'",
-    "python_full_version < '3.13'",
-]
-dependencies = [
-    { name = "httpx", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "logfire-api", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "pydantic", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-    { name = "typing-inspection", marker = "extra == 'extra-13-castor-kernel-mnemos'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/cf/a9/8a918b4dc2cd55775d854e076823fa9b60a390e4fbec5283916346556754/pydantic_graph-0.7.2.tar.gz", hash = "sha256:f90e4ec6f02b899bf6f88cc026dafa119ea5041ab4c62ba81497717c003a946e", size = 21804, upload-time = "2025-08-14T23:00:04.834Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/12/d7/639c69dda9e4b4cf376c9f45e5eae96721f2dc2f2dc618fb63142876dce4/pydantic_graph-0.7.2-py3-none-any.whl", hash = "sha256:b6189500a465ce1bce4bbc65ac5871149af8e0f81a15d54540d3dfc0cc9b2502", size = 27392, upload-time = "2025-08-14T22:59:56.564Z" },
-]
-
-[[package]]
-name = "pydantic-graph"
 version = "1.31.0"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14'",
-    "python_full_version == '3.13.*'",
-    "python_full_version < '3.13'",
-]
 dependencies = [
-    { name = "httpx", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "logfire-api", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "pydantic", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
-    { name = "typing-inspection", marker = "extra == 'extra-13-castor-kernel-autogen' or extra != 'extra-13-castor-kernel-mnemos'" },
+    { name = "httpx" },
+    { name = "logfire-api" },
+    { name = "pydantic" },
+    { name = "typing-inspection" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/87/bd/89c30dfa7d1e0c743741d5e2bc21d3640a08b879696efe1daf4ce93fc5f0/pydantic_graph-1.31.0.tar.gz", hash = "sha256:e2a3c924b3ba6f00c88446ca6ae1667254f9837908a1f45db6dde9b3837d4e55", size = 58456, upload-time = "2025-12-12T00:46:38.705Z" }
 wheels = [
@@ -5880,6 +5850,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8e/29/21698bb83e542f32e3581886671f39d94b1f7e8b190c24a8bfa994e62fd6/sqlalchemy_spanner-1.17.2.tar.gz", hash = "sha256:56ce4da7168a27442d80ffd71c29ed639b5056d7e69b1e69bb9c1e10190b67c4", size = 82745, upload-time = "2025-12-15T23:30:08.622Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7f/87/05be45a086116cea32cfa00fa0059d31b5345360dba7902ee640a1db793b/sqlalchemy_spanner-1.17.2-py3-none-any.whl", hash = "sha256:18713d4d78e0bf048eda0f7a5c80733e08a7b678b34349496415f37652efb12f", size = 31917, upload-time = "2025-12-15T23:30:07.356Z" },
+]
+
+[[package]]
+name = "sqlite-vec"
+version = "0.1.9"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/68/85/9fad0045d8e7c8df3e0fa5a56c630e8e15ad6e5ca2e6106fceb666aa6638/sqlite_vec-0.1.9-py3-none-macosx_10_6_x86_64.whl", hash = "sha256:1b62a7f0a060d9475575d4e599bbf94a13d85af896bc1ce86ee80d1b5b48e5fb", size = 131171, upload-time = "2026-03-31T08:02:31.717Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/3d/3677e0cd2f92e5ebc43cd29fbf565b75582bff1ccfa0b8327c7508e1084f/sqlite_vec-0.1.9-py3-none-macosx_11_0_arm64.whl", hash = "sha256:1d52e30513bae4cc9778ddbf6145610434081be4c3afe57cd877893bad9f6b6c", size = 165434, upload-time = "2026-03-31T08:02:32.712Z" },
+    { url = "https://files.pythonhosted.org/packages/00/d4/f2b936d3bdc38eadcbd2a87875815db36430fab0363182ba5d12cd8e0b51/sqlite_vec-0.1.9-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:4e921e592f24a5f9a18f590b6ddd530eb637e2d474e3b1972f9bbeb773aa3cb9", size = 160076, upload-time = "2026-03-31T08:02:33.796Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/ad/6afd073b0f817b3e03f9e37ad626ae341805891f23c74b5292818f49ac63/sqlite_vec-0.1.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux1_x86_64.whl", hash = "sha256:1515727990b49e79bcaf75fdee2ffc7d461f8b66905013231251f1c8938e7786", size = 163388, upload-time = "2026-03-31T08:02:34.888Z" },
+    { url = "https://files.pythonhosted.org/packages/42/89/81b2907cda14e566b9bf215e2ad82fc9b349edf07d2010756ffdb902f328/sqlite_vec-0.1.9-py3-none-win_amd64.whl", hash = "sha256:4a28dc12fa4b53d7b1dced22da2488fade444e96b5d16fd2d698cd670675cf32", size = 292804, upload-time = "2026-03-31T08:02:36.035Z" },
 ]
 
 [[package]]

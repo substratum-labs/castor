@@ -102,7 +102,9 @@ def _make_llm_tool():
     return llm_decide
 
 
-async def _s_pay_agent(proxy, *, fault: FaultName, phase: PhaseName) -> dict[str, object]:
+async def _s_pay_agent(
+    proxy, *, fault: FaultName, phase: PhaseName
+) -> dict[str, object]:
     balance = await proxy.syscall("get_balance", {"account": "checking"})
     decision = await proxy.syscall(
         "llm_decide",
@@ -113,10 +115,13 @@ async def _s_pay_agent(proxy, *, fault: FaultName, phase: PhaseName) -> dict[str
     if phase == "initial" and fault == "kill_after_success":
         print(COMMIT_MARKER, flush=True)
         threading.Event().wait()
-    email = await proxy.syscall(
-        "send_email", {"to": EMAIL_TO, "body": EMAIL_BODY}
-    )
-    return {"balance": balance, "decision": decision, "payment": payment, "email": email}
+    email = await proxy.syscall("send_email", {"to": EMAIL_TO, "body": EMAIL_BODY})
+    return {
+        "balance": balance,
+        "decision": decision,
+        "payment": payment,
+        "email": email,
+    }
 
 
 def run_castor_worker(
@@ -183,9 +188,7 @@ def run_naive_worker(
 ) -> None:
     """No-kernel baseline: re-executes the full effect path on every process."""
     actuator = ActuatorBench(actuator_db, dedupe=False)
-    payment = _make_payment_tool(
-        actuator, system="b_naive", fault=fault, phase=phase
-    )
+    payment = _make_payment_tool(actuator, system="b_naive", fault=fault, phase=phase)
     send_email = _make_email_tool(actuator, system="b_naive")
     get_balance = _make_balance_tool()
     llm_decide = _make_llm_tool()

@@ -7,20 +7,25 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from castor.evals.actuator_bench import ActuatorBench
 from castor.evals.paper_a.s_pay_worker import COMMIT_MARKER
 from castor.scheduler.persistence import CheckpointStore
 
-SystemName = Literal["c_full", "c_no_op_id", "c_no_dedup", "b_naive"]
+SystemName = Literal["c_full", "c_no_op_id", "c_no_dedup", "b_naive", "b_langgraph"]
 FaultName = Literal["kill_after_commit", "kill_after_success"]
 
 _WORKER_MODULE = "castor.evals.paper_a.s_pay_worker"
+_LANGGRAPH_WORKER_MODULE = "castor.evals.paper_a.langgraph_worker"
 _MARKER_TIMEOUT_SECONDS = 15
 _PROCESS_TIMEOUT_SECONDS = 15
+_LANGGRAPH_CHECKPOINT_POLL_SECONDS = 0.01
 
 # S-Pay fully complete: one payment + one email (reads/LLM are not actuators).
 EXPECTED_EFFECTS_COMPLETE = 2
@@ -62,6 +67,8 @@ def run_s_pay_kill_trial(
     )
     try:
         _wait_for_commit_marker(initial)
+        if system == "b_langgraph" and fault == "kill_after_success":
+            _wait_for_langgraph_payment_checkpoint(checkpoint_db, pid)
         initial.kill()
         return_code = initial.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
     finally:
@@ -82,13 +89,11 @@ def run_s_pay_kill_trial(
         system=system,
         fault=fault,
     )
-    resume_stdout, resume_stderr = resumed.communicate(
-        timeout=_PROCESS_TIMEOUT_SECONDS
-    )
+    resume_stdout, resume_stderr = resumed.communicate(timeout=_PROCESS_TIMEOUT_SECONDS)
     resume_ok = resumed.returncode == 0
 
     resumed_status: str | None = None
-    if system != "b_naive":
+    if system not in {"b_naive", "b_langgraph"}:
         if not resume_ok:
             raise RuntimeError(
                 "resume worker failed: "
@@ -104,7 +109,7 @@ def run_s_pay_kill_trial(
             )
         resume_ok = True
     else:
-        # Naive baseline always "resumes" by re-exec; success means process exited 0.
+        # Baselines resume by re-exec; success means process exited 0.
         if not resume_ok:
             raise RuntimeError(
                 "naive resume worker failed: "
@@ -112,14 +117,13 @@ def run_s_pay_kill_trial(
                 f"stderr={resume_stderr!r}"
             )
 
-    metrics = ActuatorBench(
-        actuator_db, dedupe=(system not in {"c_no_dedup", "b_naive"})
-    ).metrics(expected_effects=EXPECTED_EFFECTS_COMPLETE)
+    dedupe = system not in {"c_no_dedup", "b_naive", "b_langgraph"}
+    metrics = ActuatorBench(actuator_db, dedupe=dedupe).metrics(
+        expected_effects=EXPECTED_EFFECTS_COMPLETE
+    )
     commits = tuple(
         row["effect_name"]
-        for row in ActuatorBench(
-            actuator_db, dedupe=(system not in {"c_no_dedup", "b_naive"})
-        ).list_commits()
+        for row in ActuatorBench(actuator_db, dedupe=dedupe).list_commits()
     )
 
     return SPayHarnessResult(
@@ -143,21 +147,24 @@ def _start_worker(
     system: SystemName,
     fault: FaultName,
 ) -> subprocess.Popen[str]:
+    worker_module = (
+        _LANGGRAPH_WORKER_MODULE if system == "b_langgraph" else _WORKER_MODULE
+    )
     cmd = [
         sys.executable,
         "-m",
-        _WORKER_MODULE,
+        worker_module,
         "--actuator-db",
         str(actuator_db),
         "--pid",
         pid,
         "--phase",
         phase,
-        "--system",
-        system,
         "--fault",
         fault,
     ]
+    if system != "b_langgraph":
+        cmd.extend(["--system", system])
     if system != "b_naive":
         cmd.extend(["--checkpoint-db", str(checkpoint_db)])
     return subprocess.Popen(
@@ -170,6 +177,32 @@ def _start_worker(
 
 def _checkpoint_url(db_path: Path) -> str:
     return f"sqlite:///{db_path}"
+
+
+def _wait_for_langgraph_payment_checkpoint(checkpoint_db: Path, thread_id: str) -> None:
+    """Wait until LangGraph durably schedules post-payment for ``thread_id``."""
+    deadline = time.monotonic() + _MARKER_TIMEOUT_SECONDS
+    last_channel_names: tuple[str, ...] = ()
+    config = {"configurable": {"thread_id": thread_id}}
+
+    while time.monotonic() < deadline:
+        if checkpoint_db.exists():
+            with SqliteSaver.from_conn_string(str(checkpoint_db)) as saver:
+                for checkpoint in saver.list(config):
+                    channel_values = checkpoint.checkpoint.get("channel_values", {})
+                    last_channel_names = tuple(sorted(channel_values))
+                    if {
+                        "payment",
+                        "branch:to:post_payment",
+                    }.issubset(channel_values):
+                        return
+        time.sleep(_LANGGRAPH_CHECKPOINT_POLL_SECONDS)
+
+    raise RuntimeError(
+        "LangGraph payment checkpoint was not durable before SIGKILL: "
+        f"thread_id={thread_id!r}; checkpoint_db={checkpoint_db}; "
+        f"last_channel_values={last_channel_names!r}"
+    )
 
 
 def _wait_for_commit_marker(process: subprocess.Popen[str]) -> None:
