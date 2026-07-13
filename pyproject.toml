@@ -94,6 +94,8 @@ dev = [
     "ruff>=0.8",
     "hypothesis>=6.0",
     "pydantic-ai>=0.1",
+    "langgraph==1.1.2",
+    "langgraph-checkpoint-sqlite",
 ]
 
 [tool.uv.sources]

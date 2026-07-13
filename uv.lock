@@ -571,6 +571,8 @@ smolagents = [
 [package.dev-dependencies]
 dev = [
     { name = "hypothesis" },
+    { name = "langgraph" },
+    { name = "langgraph-checkpoint-sqlite" },
     { name = "pydantic-ai" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -607,6 +609,8 @@ provides-extras = ["paper-a-eval", "observability", "smolagents", "pydantic-ai",
 [package.metadata.requires-dev]
 dev = [
     { name = "hypothesis", specifier = ">=6.0" },
+    { name = "langgraph", specifier = "==1.1.2" },
+    { name = "langgraph-checkpoint-sqlite" },
     { name = "pydantic-ai", specifier = ">=0.1" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
