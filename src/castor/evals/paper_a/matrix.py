@@ -16,7 +16,6 @@ import argparse
 import json
 import shlex
 import subprocess
-import sys
 import time
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
@@ -33,6 +32,7 @@ DEFAULT_SYSTEMS = (
     "b_langgraph",
 )
 DEFAULT_FAULTS = ("kill_after_commit", "kill_after_success")
+MODULE_NAME = "castor.evals.paper_a.matrix"
 
 
 @dataclass(frozen=True)
@@ -212,6 +212,24 @@ def main(argv: list[str] | None = None) -> None:
         faults=args.faults,
         trials=args.trials,
     )
+    command = " ".join(
+        shlex.quote(part)
+        for part in (
+            "python",
+            "-m",
+            MODULE_NAME,
+            "--out",
+            str(args.out),
+            "--label",
+            args.label,
+            "--systems",
+            *args.systems,
+            "--faults",
+            *args.faults,
+            "--trials",
+            str(args.trials),
+        )
+    )
     write_results(
         args.out,
         results,
@@ -221,7 +239,7 @@ def main(argv: list[str] | None = None) -> None:
             "systems": args.systems,
             "faults": args.faults,
             "result_count": len(results),
-            "command": " ".join(shlex.quote(arg) for arg in sys.argv),
+            "command": command,
             "git_commit": subprocess.run(
                 ["git", "rev-parse", "HEAD"],
                 check=True,
