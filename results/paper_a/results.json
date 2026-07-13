@@ -13,7 +13,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_full",
     "trial": 0,
-    "wall_ms": 526.7410420347005
+    "wall_ms": 539.7540000267327
   },
   {
     "commits": [
@@ -29,7 +29,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_full",
     "trial": 1,
-    "wall_ms": 505.847625026945
+    "wall_ms": 527.6693329797126
   },
   {
     "commits": [
@@ -45,7 +45,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_full",
     "trial": 2,
-    "wall_ms": 533.3307500113733
+    "wall_ms": 510.10866701835766
   },
   {
     "commits": [
@@ -61,7 +61,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_full",
     "trial": 0,
-    "wall_ms": 509.08445805544034
+    "wall_ms": 516.7542909621261
   },
   {
     "commits": [
@@ -77,7 +77,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_full",
     "trial": 1,
-    "wall_ms": 520.4779169871472
+    "wall_ms": 504.8419999657199
   },
   {
     "commits": [
@@ -93,7 +93,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_full",
     "trial": 2,
-    "wall_ms": 503.88983299490064
+    "wall_ms": 513.0610410124063
   },
   {
     "commits": [
@@ -110,7 +110,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_no_op_id",
     "trial": 0,
-    "wall_ms": 522.4440829479136
+    "wall_ms": 504.306250018999
   },
   {
     "commits": [
@@ -127,7 +127,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_no_op_id",
     "trial": 1,
-    "wall_ms": 504.3628750136122
+    "wall_ms": 537.3827089788392
   },
   {
     "commits": [
@@ -144,7 +144,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_no_op_id",
     "trial": 2,
-    "wall_ms": 541.7738339747302
+    "wall_ms": 516.7205419857055
   },
   {
     "commits": [
@@ -160,7 +160,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_no_op_id",
     "trial": 0,
-    "wall_ms": 534.835959027987
+    "wall_ms": 518.5813750140369
   },
   {
     "commits": [
@@ -176,7 +176,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_no_op_id",
     "trial": 1,
-    "wall_ms": 530.2186670014635
+    "wall_ms": 505.080959002953
   },
   {
     "commits": [
@@ -192,7 +192,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_no_op_id",
     "trial": 2,
-    "wall_ms": 557.5074170483276
+    "wall_ms": 532.6245409669355
   },
   {
     "commits": [
@@ -209,7 +209,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_no_dedup",
     "trial": 0,
-    "wall_ms": 509.1108750202693
+    "wall_ms": 503.92200000351295
   },
   {
     "commits": [
@@ -226,7 +226,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_no_dedup",
     "trial": 1,
-    "wall_ms": 516.3283749716356
+    "wall_ms": 550.5790419992991
   },
   {
     "commits": [
@@ -243,7 +243,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_no_dedup",
     "trial": 2,
-    "wall_ms": 514.072332996875
+    "wall_ms": 521.5880839969032
   },
   {
     "commits": [
@@ -259,7 +259,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_no_dedup",
     "trial": 0,
-    "wall_ms": 531.0359169961885
+    "wall_ms": 529.7862919978797
   },
   {
     "commits": [
@@ -275,7 +275,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_no_dedup",
     "trial": 1,
-    "wall_ms": 507.5594169902615
+    "wall_ms": 514.6844579721801
   },
   {
     "commits": [
@@ -291,7 +291,7 @@
     "resumed_checkpoint_status": "COMPLETED",
     "system": "c_no_dedup",
     "trial": 2,
-    "wall_ms": 529.1726249852218
+    "wall_ms": 515.9732089960016
   },
   {
     "commits": [
@@ -308,7 +308,7 @@
     "resumed_checkpoint_status": null,
     "system": "b_naive",
     "trial": 0,
-    "wall_ms": 492.4948330153711
+    "wall_ms": 479.1842909762636
   },
   {
     "commits": [
@@ -325,7 +325,7 @@
     "resumed_checkpoint_status": null,
     "system": "b_naive",
     "trial": 1,
-    "wall_ms": 489.26187498727813
+    "wall_ms": 488.2902500103228
   },
   {
     "commits": [
@@ -342,7 +342,7 @@
     "resumed_checkpoint_status": null,
     "system": "b_naive",
     "trial": 2,
-    "wall_ms": 471.736416046042
+    "wall_ms": 471.69425000902265
   },
   {
     "commits": [
@@ -359,7 +359,7 @@
     "resumed_checkpoint_status": null,
     "system": "b_naive",
     "trial": 0,
-    "wall_ms": 497.9522909852676
+    "wall_ms": 496.5280839824118
   },
   {
     "commits": [
@@ -376,7 +376,7 @@
     "resumed_checkpoint_status": null,
     "system": "b_naive",
     "trial": 1,
-    "wall_ms": 498.64195799455047
+    "wall_ms": 472.99587505403906
   },
   {
     "commits": [
@@ -393,7 +393,7 @@
     "resumed_checkpoint_status": null,
     "system": "b_naive",
     "trial": 2,
-    "wall_ms": 499.64016705052927
+    "wall_ms": 492.32625000877306
   },
   {
     "commits": [
@@ -410,7 +410,7 @@
     "resumed_checkpoint_status": null,
     "system": "b_langgraph",
     "trial": 0,
-    "wall_ms": 718.4151250403374
+    "wall_ms": 778.8911670213565
   },
   {
     "commits": [
@@ -427,7 +427,7 @@
     "resumed_checkpoint_status": null,
     "system": "b_langgraph",
     "trial": 1,
-    "wall_ms": 733.4634999861009
+    "wall_ms": 719.5106250001118
   },
   {
     "commits": [
@@ -444,7 +444,7 @@
     "resumed_checkpoint_status": null,
     "system": "b_langgraph",
     "trial": 2,
-    "wall_ms": 726.9425840349868
+    "wall_ms": 728.1950410106219
   },
   {
     "commits": [
@@ -460,7 +460,7 @@
     "resumed_checkpoint_status": null,
     "system": "b_langgraph",
     "trial": 0,
-    "wall_ms": 707.4637920013629
+    "wall_ms": 725.360875017941
   },
   {
     "commits": [
@@ -476,7 +476,7 @@
     "resumed_checkpoint_status": null,
     "system": "b_langgraph",
     "trial": 1,
-    "wall_ms": 738.1629580049776
+    "wall_ms": 723.3876250102185
   },
   {
     "commits": [
@@ -492,6 +492,6 @@
     "resumed_checkpoint_status": null,
     "system": "b_langgraph",
     "trial": 2,
-    "wall_ms": 735.3255829657428
+    "wall_ms": 758.7103329715319
   }
 ]
