@@ -26,6 +26,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+paper_a_eval = [
+    "langgraph==1.1.2",
+    "langgraph-checkpoint-sqlite",
+]
 observability = [
     "opentelemetry-api>=1.20",
     "opentelemetry-sdk>=1.20",

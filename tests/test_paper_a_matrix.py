@@ -7,6 +7,20 @@ from castor.evals.paper_a.harness import run_s_pay_kill_trial
 from castor.evals.paper_a.matrix import run_trial
 
 
+def test_langgraph_kill_after_commit_reenters_uncheckpointed_payment(tmp_path) -> None:
+    result = run_s_pay_kill_trial(
+        tmp_path / "langgraph_commit",
+        system="b_langgraph",
+        fault="kill_after_commit",
+    )
+    assert result.resume_success is True
+    assert result.committed_effects == 3
+    assert result.dup_commits == 1
+    assert result.missing_commits == 0
+    assert result.commits.count("payment") == 2
+    assert result.commits.count("email") == 1
+
+
 def test_actuator_no_dedupe_allows_duplicate_operation_ids(tmp_path) -> None:
     actuator = ActuatorBench(tmp_path / "a.sqlite3", dedupe=False)
     actuator.commit("payment", {"amount": 1}, operation_id="same")
