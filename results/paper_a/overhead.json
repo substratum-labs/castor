@@ -18,42 +18,42 @@
       "error": null,
       "journal_bytes": 496,
       "journal_len": 0,
-      "resume_ms": 4.960540973115712,
+      "resume_ms": 0.9622499928809702,
       "status": "COMPLETED"
     },
     {
       "error": null,
       "journal_bytes": 1339,
       "journal_len": 4,
-      "resume_ms": 0.5448330193758011,
+      "resume_ms": 0.3765420406125486,
       "status": "COMPLETED"
     },
     {
       "error": null,
       "journal_bytes": 3884,
       "journal_len": 16,
-      "resume_ms": 0.4426249652169645,
+      "resume_ms": 0.3624170203693211,
       "status": "COMPLETED"
     },
     {
       "error": null,
       "journal_bytes": 14108,
       "journal_len": 64,
-      "resume_ms": 0.5704169743694365,
+      "resume_ms": 0.4859169712290168,
       "status": "COMPLETED"
     },
     {
       "error": null,
       "journal_bytes": 55317,
       "journal_len": 256,
-      "resume_ms": 0.9610839770175517,
+      "resume_ms": 0.8610840304754674,
       "status": "COMPLETED"
     }
   ],
   "manifest": {
     "command": "python -m castor.evals.paper_a.overhead --out results/paper_a --label t-257 --lengths 0 4 16 64 256",
-    "generated_at_utc": "2026-07-14T00:44:28.812453+00:00",
-    "git_commit": "239e5563eba057f3a2faf9173d219c1f8c9ebeb9",
+    "generated_at_utc": "2026-07-14T00:49:48.789830+00:00",
+    "git_commit": "8294fe2d9e006d52507ae7e67a668aa7908db84e",
     "label": "t-257",
     "lengths": [
       0,

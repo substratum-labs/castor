@@ -14,11 +14,11 @@ Prototype checkpoint/journal overhead measurements; no MMU or asymptotic claim.
 
 | journal_len | journal_bytes | resume_ms | status | error |
 |---:|---:|---:|---|---|
-| 0 | 496 | 4.961 | COMPLETED |  |
-| 4 | 1339 | 0.545 | COMPLETED |  |
-| 16 | 3884 | 0.443 | COMPLETED |  |
-| 64 | 14108 | 0.570 | COMPLETED |  |
-| 256 | 55317 | 0.961 | COMPLETED |  |
+| 0 | 496 | 0.962 | COMPLETED |  |
+| 4 | 1339 | 0.377 | COMPLETED |  |
+| 16 | 3884 | 0.362 | COMPLETED |  |
+| 64 | 14108 | 0.486 | COMPLETED |  |
+| 256 | 55317 | 0.861 | COMPLETED |  |
 
 ## Reproduction
 
