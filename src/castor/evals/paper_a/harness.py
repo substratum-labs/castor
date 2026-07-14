@@ -18,7 +18,14 @@ from castor.evals.actuator_bench import ActuatorBench
 from castor.evals.paper_a.s_pay_worker import COMMIT_MARKER
 from castor.scheduler.persistence import CheckpointStore
 
-SystemName = Literal["c_full", "c_no_op_id", "c_no_dedup", "b_naive", "b_langgraph"]
+SystemName = Literal[
+    "c_full",
+    "c_no_op_id",
+    "c_no_dedup",
+    "b_naive",
+    "b_langgraph",
+    "s_bypass",
+]
 FaultName = Literal["kill_after_commit", "kill_after_success"]
 
 _WORKER_MODULE = "castor.evals.paper_a.s_pay_worker"

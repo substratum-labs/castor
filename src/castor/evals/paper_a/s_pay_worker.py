@@ -28,7 +28,7 @@ from castor.models.checkpoint import AgentCheckpoint
 from castor.scheduler.persistence import CheckpointNotFoundError, CheckpointStore
 from castor.scheduler.runner import AgentRunner
 
-SystemName = Literal["c_full", "c_no_op_id", "c_no_dedup", "b_naive"]
+SystemName = Literal["c_full", "c_no_op_id", "c_no_dedup", "b_naive", "s_bypass"]
 FaultName = Literal["kill_after_commit", "kill_after_success"]
 PhaseName = Literal["initial", "resume"]
 
@@ -103,7 +103,12 @@ def _make_llm_tool():
 
 
 async def _s_pay_agent(
-    proxy, *, fault: FaultName, phase: PhaseName
+    proxy,
+    *,
+    actuator: ActuatorBench,
+    system: SystemName,
+    fault: FaultName,
+    phase: PhaseName,
 ) -> dict[str, object]:
     balance = await proxy.syscall("get_balance", {"account": "checking"})
     decision = await proxy.syscall(
@@ -111,7 +116,19 @@ async def _s_pay_agent(
         {"prompt": f"balance={balance['balance']} payee=merchant"},
     )
     amount = int(decision["amount"])
-    payment = await proxy.syscall("payment", {"amount": amount})
+    if system == "s_bypass":
+        # Negative control: the external effect is deliberately outside the
+        # Castor syscall bus and therefore absent from the journal.
+        payment = actuator.commit(
+            "payment",
+            {"amount": amount, "payee": "merchant"},
+            operation_id=uuid.uuid4().hex,
+        )
+        if phase == "initial" and fault == "kill_after_commit":
+            print(COMMIT_MARKER, flush=True)
+            threading.Event().wait()
+    else:
+        payment = await proxy.syscall("payment", {"amount": amount})
     if phase == "initial" and fault == "kill_after_success":
         print(COMMIT_MARKER, flush=True)
         threading.Event().wait()
@@ -161,7 +178,13 @@ def run_castor_worker(
     )
 
     async def agent(proxy):
-        return await _s_pay_agent(proxy, fault=fault, phase=phase)
+        return await _s_pay_agent(
+            proxy,
+            actuator=actuator,
+            system=system,
+            fault=fault,
+            phase=phase,
+        )
 
     try:
         checkpoint = store.load(pid)
@@ -211,7 +234,7 @@ def main() -> None:
     parser.add_argument("--phase", choices=("initial", "resume"), required=True)
     parser.add_argument(
         "--system",
-        choices=("c_full", "c_no_op_id", "c_no_dedup", "b_naive"),
+        choices=("c_full", "c_no_op_id", "c_no_dedup", "b_naive", "s_bypass"),
         required=True,
     )
     parser.add_argument(
