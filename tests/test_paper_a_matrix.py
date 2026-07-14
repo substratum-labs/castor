@@ -169,6 +169,29 @@ def test_write_results_keeps_trial_rows_and_writes_manifest(tmp_path) -> None:
     }
 
 
+def test_frozen_paper_a_artifact_is_paper_scale() -> None:
+    root = Path(__file__).parents[1]
+    manifest = json.loads(
+        (root / "results/paper_a/run_manifest.json").read_text(encoding="utf-8")
+    )
+    rows = json.loads(
+        (root / "results/paper_a/results.json").read_text(encoding="utf-8")
+    )
+
+    assert manifest["trials"] >= 20
+    assert manifest["result_count"] == (
+        len(manifest["systems"])
+        * len(manifest["faults"])
+        * manifest["trials"]
+    )
+    assert len(rows) == manifest["result_count"]
+    full_rows = [row for row in rows if row["system"] == "c_full"]
+    assert full_rows
+    assert all(row["error"] is None for row in full_rows)
+    assert all(row["dup_commits"] == 0 for row in full_rows)
+    assert all(row["resume_success"] is True for row in full_rows)
+
+
 def test_main_writes_portable_module_provenance_for_labeled_run(
     tmp_path, monkeypatch
 ) -> None:
