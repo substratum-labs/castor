@@ -31,7 +31,7 @@ the PyO3 adapter layer.
 - Produces: Python class `castor_kernel.KernelRuntime` with `grant`,
   `revoke`, `propose`, `commit`, `agent_state`, `cursor`, and `journal`.
 
-- [ ] **Step 1: Write failing interpreter-backed tests**
+- [x] **Step 1: Write failing interpreter-backed tests**
 
 ```rust
 let runtime = py_kernel.getattr("KernelRuntime")?.call0()?;
@@ -41,19 +41,19 @@ runtime.call_method1("commit", ("effect_a",))?;
 assert_eq!(runtime.getattr("agent_state")?.extract::<String>()?, "running");
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run: `cargo test --manifest-path kernel/Cargo.toml --test python_bindings`
 Expected: FAIL because `KernelRuntime` is not exported.
 
-- [ ] **Step 3: Implement the smallest binding adapter**
+- [x] **Step 3: Implement the smallest binding adapter**
 
 Add parsers for the closed effect/capability vocabulary, an in-memory
 `#[pyclass] KernelRuntime`, direct calls to `runtime` transitions, and module
 registration. Map `Unauthorized` to `PyPermissionError` and `InvalidState` to
 `PyRuntimeError`.
 
-- [ ] **Step 4: Run the focused test and verify GREEN**
+- [x] **Step 4: Run the focused test and verify GREEN**
 
 Run: `cargo test --manifest-path kernel/Cargo.toml --test python_bindings`
 Expected: PASS.
@@ -67,7 +67,7 @@ Expected: PASS.
 - Consumes: `kernel/Cargo.toml` crate name and `castor_kernel` module name.
 - Produces: an independently buildable Maturin extension wheel.
 
-- [ ] **Step 1: Add minimal Maturin metadata**
+- [x] **Step 1: Add minimal Maturin metadata**
 
 ```toml
 [build-system]
@@ -83,7 +83,7 @@ requires-python = ">=3.11"
 module-name = "castor_kernel"
 ```
 
-- [ ] **Step 2: Build a wheel**
+- [x] **Step 2: Build a wheel**
 
 Run: `maturin build --manifest-path kernel/Cargo.toml --release -o /tmp/castor-kernel-wheel`
 Expected: one `castor_kernel_runtime-0.1.0-*.whl` artifact and exit 0.
@@ -93,12 +93,12 @@ Expected: one `castor_kernel_runtime-0.1.0-*.whl` artifact and exit 0.
 **Files:**
 - Verify: `kernel/src/lib.rs`, `kernel/tests/python_bindings.rs`, `kernel/pyproject.toml`
 
-- [ ] **Step 1: Format and run all kernel tests**
+- [x] **Step 1: Format and run all kernel tests**
 
 Run: `cargo fmt --manifest-path kernel/Cargo.toml --check && cargo test --manifest-path kernel/Cargo.toml`
 Expected: formatting clean and every Rust/PyO3 integration test passes.
 
-- [ ] **Step 2: Verify boundary exclusions**
+- [x] **Step 2: Verify boundary exclusions**
 
 Run: `rg -n -i 'sqlite|rusqlite|std::fs|tokio|reqwest|http' kernel/src kernel/tests`
 Expected: no matches.

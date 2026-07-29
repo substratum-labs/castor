@@ -50,6 +50,38 @@ jobs:
       - name: Check linting
         run: uv run ruff check src/ tests/
 
+  kernel:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Check Rust formatting and tests
+        run: >-
+          cargo fmt --manifest-path kernel/Cargo.toml --check &&
+          cargo test --manifest-path kernel/Cargo.toml
+
+      - name: Build the PyO3 extension wheel
+        run: >-
+          uvx --from maturin maturin build
+          --manifest-path kernel/Cargo.toml --release
+          -o /tmp/castor-kernel-wheel
+
+      - name: Import and exercise the installed wheel
+        run: >-
+          uv run --with /tmp/castor-kernel-wheel/*.whl python -c
+          'import castor_kernel; runtime = castor_kernel.KernelRuntime();
+          runtime.grant("cap_a"); runtime.propose("effect_a");
+          runtime.commit("effect_a"); assert runtime.agent_state == "running";
+          assert runtime.cursor == 2'
+
   paper-a-smoke:
     runs-on: ubuntu-latest
     steps:
