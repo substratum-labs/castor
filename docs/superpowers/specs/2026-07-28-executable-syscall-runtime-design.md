@@ -8,16 +8,18 @@ proofs of its correspondence to the existing specification.
 
 ## Architecture
 
-`kernel/src/spec.rs` remains the ghost/specification layer. A new public
-runtime module will define ordinary Rust enums and a state container using
-`Vec` and `BTreeSet`, then provide verified `exec fn` transitions. Each
-transition declares an `ensures` clause relating its runtime result to the
-existing specification transition.
+`kernel/src/spec.rs` and `kernel/src/syscalls.rs` remain the ghost model and
+its transition contracts. A new public runtime module defines ordinary Rust
+enums and a state container using `Vec` and `BTreeSet`, then provides verified
+`exec fn` transitions. Its contracts prove the runtime cursor invariant and
+the mode, journal-length, and cursor postconditions for every successful
+transition.
 
 The library root exports the runtime module normally; the verification root
-imports both specification and runtime source files so the same executable
-definitions are checked by Verus and compiled by Cargo. The previous
-verification-only syscall module is replaced rather than duplicated.
+imports the specification, pure transition contracts, and runtime source so
+the same executable definitions are checked by Verus and compiled by Cargo.
+The proof-only syscall module remains as the model-level companion to the
+runtime state machine.
 
 ## Runtime API
 
@@ -37,9 +39,9 @@ pending agent but does not require a capability.
 
 ## Verification and Tests
 
-Verus contracts prove each successful executable transition refines the
-matching spec transition and preserves the state invariant. Runtime unit tests
-exercise normal Cargo-visible behavior: proposal/commit, revoked-capability
-TOCTOU rejection, state-mode rejection, and public API construction. The
+Verus verifies the executable transitions' invariant and state-change
+contracts, while the existing pure transition contracts continue to specify
+the abstract model. Runtime integration tests exercise normal Cargo-visible
+behavior: proposal/commit and revoked-capability TOCTOU rejection. The
 acceptance checks are the local Verus invocation and `cargo check` for
 `kernel/`.

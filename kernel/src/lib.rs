@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 
-#[cfg(not(doctest))]
-pub mod verification;
+pub mod spec;
+pub mod runtime;
 
 /// Formats the sum of two numbers as string.
 #[pyfunction]
@@ -15,4 +15,3 @@ fn castor_kernel(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
     Ok(())
 }
-

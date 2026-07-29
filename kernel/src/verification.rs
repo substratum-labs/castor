@@ -5,3 +5,6 @@ pub mod spec;
 
 #[path = "syscalls.rs"]
 pub mod syscalls;
+
+#[path = "runtime.rs"]
+pub mod runtime;
