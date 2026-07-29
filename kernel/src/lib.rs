@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 
-pub mod spec;
+#[cfg(not(doctest))]
+pub mod verification;
 
 /// Formats the sum of two numbers as string.
 #[pyfunction]
