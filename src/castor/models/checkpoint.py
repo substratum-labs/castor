@@ -119,6 +119,18 @@ class SyscallRecord(BaseModel):
     (backwards compatible).
     """
 
+    cost: float = 0.0
+    """Capability cost charged for this completed syscall."""
+
+    duration_ms: float = 0.0
+    """Wall-clock execution duration, retained for journal summaries."""
+
+    timestamp: float = 0.0
+    """Unix timestamp at completion; ``0`` preserves old checkpoints."""
+
+    raised_exception: str | None = None
+    """Exception class when a completed syscall returns an error result."""
+
     # ── Informational ──
     was_hitl: bool = False
     """True if this invocation was approved by a human."""

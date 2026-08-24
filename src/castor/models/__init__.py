@@ -6,6 +6,15 @@ from castor.models.checkpoint import (
     SuspendInterrupt,
     SyscallRecord,
 )
+from castor.models.introspection import (
+    FindDecisionsQuery,
+    FindSyscallQuery,
+    GetReasoningChainQuery,
+    GetSyscallQuery,
+    IntrospectionQuery,
+    IntrospectionResult,
+    SummarizeQuery,
+)
 
 __all__ = [
     "AgentCheckpoint",
@@ -14,4 +23,11 @@ __all__ = [
     "SyscallRecord",
     "SyscallRequest",
     "SyscallResponse",
+    "IntrospectionQuery",
+    "IntrospectionResult",
+    "FindSyscallQuery",
+    "GetSyscallQuery",
+    "GetReasoningChainQuery",
+    "SummarizeQuery",
+    "FindDecisionsQuery",
 ]

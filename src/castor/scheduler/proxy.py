@@ -28,6 +28,7 @@ from castor.models.checkpoint import (
     SyscallRecord,
     compute_invocation_id,
 )
+from castor.models.introspection import IntrospectionQuery, IntrospectionResult
 from castor.models.result import SyscallResult
 from castor.observability import get_logger, get_meter
 from castor.protocols import (
@@ -93,6 +94,8 @@ class SyscallProxy:
         cf_overrides: dict[str, Any] | None = None,
         cf_mode: str | None = None,
         cf_parent_log: list[Any] | None = None,
+        introspection_cost: float = 0.0001,
+        introspection_resource: str = "api_usd",
     ) -> None:
         self.checkpoint = checkpoint
         self._gate = gate
@@ -115,6 +118,8 @@ class SyscallProxy:
         self._cf_overrides = cf_overrides or {}
         self._cf_mode = cf_mode
         self._cf_parent_log = cf_parent_log or []
+        self._introspection_cost = introspection_cost
+        self._introspection_resource = introspection_resource
         self._past_divergence = False
         self._llm_tool_names = llm_tool_names or {"llm_inference"}
         self._kernel_tool_names = kernel_tool_names or set()
@@ -620,6 +625,54 @@ class SyscallProxy:
                 )
 
         return self._wrap_if_needed(tool_name, result)
+
+    async def introspect(self, query: IntrospectionQuery) -> IntrospectionResult:
+        """Read the calling agent's journal through a cheap kernel syscall.
+
+        The record is replayed like any other syscall, while execution is
+        deliberately local and read-only.  The only journal mutation is the
+        appended ``sys_introspect`` accounting record.
+        """
+        request = {
+            "tool_name": "sys_introspect",
+            "arguments": query.model_dump(mode="json"),
+        }
+        if self._replay_index < len(self._journal):
+            record = self._journal.get(self._replay_index)
+            if record.request != request:
+                raise ReplayDivergenceError(self._replay_index, record.request, request)
+            self._replay_index += 1
+            return IntrospectionResult.model_validate(record.response)
+
+        from castor.scheduler.introspection import IntrospectionEngine
+
+        start = time.perf_counter()
+        self._budget_mgr.deduct(
+            self.checkpoint.capabilities,
+            self._introspection_resource,
+            self._introspection_cost,
+        )
+        try:
+            result = IntrospectionEngine().execute(query, self.checkpoint.syscall_log)
+        except BaseException:
+            self._budget_mgr.refund(
+                self.checkpoint.capabilities,
+                self._introspection_resource,
+                self._introspection_cost,
+            )
+            raise
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        self._append_record(
+            SyscallRecord(
+                request=request,
+                response=result.model_dump(mode="json"),
+                purpose=SyscallPurpose.INTROSPECTION,
+                cost=self._introspection_cost,
+                duration_ms=elapsed_ms,
+                timestamp=time.time(),
+            )
+        )
+        return result
 
     async def _handle_spawn(
         self,
