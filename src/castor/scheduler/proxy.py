@@ -7,7 +7,7 @@ import inspect
 import time
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from castor.budget.manager import BudgetExhaustedError
 from castor.gate.registry import prepare_execution_arguments
@@ -20,6 +20,7 @@ from castor.kernel.decisions import (
     decide_syscall,
 )
 from castor.kernel.journal import InMemoryJournal
+from castor.models.causal import ProvenanceRef
 from castor.models.checkpoint import (
     AgentCheckpoint,
     CastorMessage,
@@ -58,6 +59,8 @@ _MEMORY_SYSCALL_NAMES = frozenset(
         "mem_evict",
         "mem_promote",
         "mem_protect",
+        "mem_provenance",
+        "mem_explain",
     }
 )
 
@@ -491,6 +494,14 @@ class SyscallProxy:
         assert isinstance(decision, Allow)
         tool_meta = decision.tool_meta
         validated = decision.validated_args
+        if self._lodge is not None:
+            # MMU syscall handlers need the current checkpoint to resolve
+            # causal relationships.  Other MMUProtocol implementations do
+            # not expose this optional implementation detail.
+            from castor.mmu.core import MMU
+
+            if isinstance(self._lodge, MMU):
+                self._lodge._active_checkpoint = self.checkpoint
         operation_id = self._make_invocation_id(request)
         execution_arguments = {**validated, "operation_id": operation_id}
 
@@ -586,7 +597,9 @@ class SyscallProxy:
 
         # Tag memory syscalls with their purpose for cost accounting.
         purpose = SyscallPurpose.TASK_EXECUTION
-        if tool_name in _MEMORY_SYSCALL_NAMES:
+        if tool_name in {"mem_provenance", "mem_explain"}:
+            purpose = SyscallPurpose.PROVENANCE
+        elif tool_name in _MEMORY_SYSCALL_NAMES:
             purpose = SyscallPurpose.MEMORY_MANAGEMENT
 
         # Kernel decided whether this step needs review (via Allow decision)
@@ -1010,8 +1023,7 @@ class SyscallProxy:
         r = result if isinstance(result, dict) else {}
 
         if tool_name == MEM_EVICT:
-            mid = arguments.get("memory_id", "")
-            if mid:
+            for mid in r.get("evicted", []):
                 removed = mmu.apply_eviction(self.checkpoint, mid)
                 if removed:
                     await mmu.persist_evicted(removed)
@@ -1040,8 +1052,25 @@ class SyscallProxy:
             pin = r.get("pin", False)
             role = arguments.get("role", "memory")
             mid = mmu.next_memory_id(self.checkpoint.pid, role, content)
-            msg = CastorMessage(id=mid, role=role, content=content, pinned=pin)
+            dependencies = r.get("depends_on")
+            parsed_dependencies = TypeAdapter(list[ProvenanceRef]).validate_python(
+                dependencies or []
+            )
+            msg = CastorMessage(
+                id=mid,
+                role=role,
+                content=content,
+                pinned=pin,
+                depends_on=parsed_dependencies,
+                superseding=r.get("superseding"),
+                source_trust=r.get("source_trust", 1.0),
+                reason=r.get("reason", ""),
+            )
             mmu.apply_write(self.checkpoint, msg)
+            if msg.superseding:
+                superseded = mmu.find_by_id(self.checkpoint, msg.superseding)
+                if superseded:
+                    superseded.superseded_by = mid
             # Also persist to cold for durability
             await mmu._cold.store_explicit(
                 mmu._agent_id,

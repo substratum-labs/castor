@@ -1,6 +1,7 @@
 """Castor data models."""
 
 from castor.models.budget import Budget, SyscallRequest, SyscallResponse
+from castor.models.causal import CascadeMode, ExternalSource, MemoryRef, ProvenanceRef
 from castor.models.checkpoint import (
     AgentCheckpoint,
     SuspendInterrupt,
@@ -30,4 +31,8 @@ __all__ = [
     "GetReasoningChainQuery",
     "SummarizeQuery",
     "FindDecisionsQuery",
+    "CascadeMode",
+    "ExternalSource",
+    "MemoryRef",
+    "ProvenanceRef",
 ]

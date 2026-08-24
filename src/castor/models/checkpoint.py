@@ -33,6 +33,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from castor.models.budget import Budget
+from castor.models.causal import ProvenanceRef
 from castor.models.preemption import PreemptionReason
 
 
@@ -54,6 +55,9 @@ class SyscallPurpose(StrEnum):
 
     INTROSPECTION = "introspection"
     """Status, budget, and capability queries (future)."""
+
+    PROVENANCE = "provenance"
+    """Read-only causal graph and explanation queries."""
 
 
 class CastorMessage(BaseModel):
@@ -77,6 +81,11 @@ class CastorMessage(BaseModel):
     content: Any
     pinned: bool = False  # Never evicted by MMU if True
     token_count: int = 0  # 0 = use estimator
+    depends_on: list[ProvenanceRef] = Field(default_factory=list)
+    superseding: str | None = None
+    superseded_by: str | None = None
+    source_trust: float = 1.0
+    reason: str = ""
 
 
 class SyscallRecord(BaseModel):
