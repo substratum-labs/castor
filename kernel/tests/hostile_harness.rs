@@ -10,7 +10,7 @@ use castor_kernel::c01_storage::{
 };
 use castor_kernel::c04_adapter::{
     authority_binding_digest, D1EffectAdapter, DeliverOutcome, DispatchCommand, EffectAdapter,
-    EffectProvider, ExternalKnowledge, ProviderOutcome,
+    EffectObservationReport, EffectProvider, ExternalKnowledge, ProviderOutcome,
 };
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -509,4 +509,63 @@ fn hostile_trace_non_action_region_digest_cannot_authorize_provider_io() {
         DeliverOutcome::RejectedInvalidCommand(_)
     ));
     assert_eq!(submissions.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn hostile_trace_conflicting_observations_are_both_retained_across_reopen() {
+    let core = tempfile::tempdir().expect("core root");
+    let adapter = tempfile::tempdir().expect("adapter root");
+    let (provider, _) = ScriptedProvider::new(ProviderOutcome::Unknown);
+    let mut effect_adapter = D1EffectAdapter::initialize(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        provider,
+    )
+    .expect("initialize adapter before Core dispatch");
+    let command = persisted_dispatch_command(core.path(), "agent_lambda", "action_payment_01", 8);
+    assert!(matches!(
+        effect_adapter.deliver_armed_attempt(command),
+        DeliverOutcome::SubmissionObserved { .. }
+    ));
+    let first = EffectObservationReport {
+        agent_id: "agent_lambda".to_string(),
+        action_id: "action_payment_01".to_string(),
+        attempt_id: 8,
+        observation_id: "provider-status-1".to_string(),
+        observation_digest: "sha256:observed-success".to_string(),
+        adapter_id: ADAPTER_ID.to_string(),
+        evidence_ref: Some("evidence://success".to_string()),
+    };
+    let conflicting = EffectObservationReport {
+        observation_digest: "sha256:observed-failure".to_string(),
+        evidence_ref: Some("evidence://failure".to_string()),
+        ..first.clone()
+    };
+
+    assert!(effect_adapter.report_effect_observation(first.clone()));
+    assert!(effect_adapter.report_effect_observation(first.clone()));
+    assert!(effect_adapter.report_effect_observation(conflicting.clone()));
+    drop(effect_adapter);
+
+    let (recovery_provider, _) = ScriptedProvider::new(ProviderOutcome::Unknown);
+    let recovered = D1EffectAdapter::open(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        recovery_provider,
+    )
+    .expect("reopen adapter with conflicting observations");
+    let reports = recovered.observation_reports(
+        "agent_lambda",
+        "action_payment_01",
+        8,
+        ADAPTER_ID,
+        "provider-status-1",
+    );
+    assert_eq!(reports.len(), 2);
+    assert!(reports.contains(&first));
+    assert!(reports.contains(&conflicting));
 }

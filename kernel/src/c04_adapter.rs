@@ -48,7 +48,7 @@ type DedupKey = (String, String, u64, String, String);
 type ObservationKey = (String, String, u64, String, String);
 type ReplayState = (
     HashMap<DedupKey, AdapterDedupRecord>,
-    HashMap<ObservationKey, EffectObservationReport>,
+    HashMap<ObservationKey, Vec<EffectObservationReport>>,
     AdapterHead,
 );
 
@@ -138,7 +138,7 @@ pub struct D1EffectAdapter<P: EffectProvider> {
     config: AdapterConfig,
     provider: P,
     dedup: HashMap<DedupKey, AdapterDedupRecord>,
-    observations: HashMap<ObservationKey, EffectObservationReport>,
+    observations: HashMap<ObservationKey, Vec<EffectObservationReport>>,
     head: AdapterHead,
     healthy: bool,
 }
@@ -269,6 +269,26 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
 
     pub fn assurance_profile(&self) -> &str {
         &self.config.assurance_profile
+    }
+
+    pub fn observation_reports(
+        &self,
+        agent_id: &str,
+        action_id: &str,
+        attempt_id: u64,
+        adapter_id: &str,
+        observation_id: &str,
+    ) -> Vec<EffectObservationReport> {
+        self.observations
+            .get(&(
+                agent_id.to_string(),
+                action_id.to_string(),
+                attempt_id,
+                adapter_id.to_string(),
+                observation_id.to_string(),
+            ))
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn append_event(&mut self, event: &AdapterEvent) -> io::Result<()> {
@@ -475,8 +495,12 @@ impl<P: EffectProvider> EffectAdapter for D1EffectAdapter<P> {
             report.adapter_id.clone(),
             report.observation_id.clone(),
         );
-        if let Some(existing) = self.observations.get(&key) {
-            return existing == &report;
+        if self
+            .observations
+            .get(&key)
+            .is_some_and(|reports| reports.contains(&report))
+        {
+            return true;
         }
         if self
             .append_event(&AdapterEvent::Observation(report.clone()))
@@ -484,7 +508,7 @@ impl<P: EffectProvider> EffectAdapter for D1EffectAdapter<P> {
         {
             return false;
         }
-        self.observations.insert(key, report);
+        self.observations.entry(key).or_default().push(report);
         true
     }
 }
@@ -582,12 +606,9 @@ fn replay_events(root: &Path, config: &AdapterConfig) -> io::Result<ReplayState>
                     report.adapter_id.clone(),
                     report.observation_id.clone(),
                 );
-                if let Some(existing) = observations.get(&key) {
-                    if existing != &report {
-                        return Err(invalid_data("conflicting observation identity"));
-                    }
-                } else {
-                    observations.insert(key, report);
+                let reports = observations.entry(key).or_insert_with(Vec::new);
+                if !reports.contains(&report) {
+                    reports.push(report);
                 }
             }
         }
