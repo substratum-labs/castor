@@ -205,6 +205,10 @@ impl D1DurableStorage {
         &self.root
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     fn persist_region(
         &self,
         region_ref: &str,
@@ -260,11 +264,12 @@ impl DurableStorage for D1DurableStorage {
             let existing_bytes = self.read_region(region_ref);
             if existing.persisted.content_digest == content_digest
                 && existing.persisted.profile == profile
-                && existing_bytes.as_deref() == Some(content)
             {
-                return EnsureRegionOutcome::AlreadyPersistedSameContent(
-                    existing.persisted.clone(),
-                );
+                return if existing_bytes.as_deref() == Some(content) {
+                    EnsureRegionOutcome::AlreadyPersistedSameContent(existing.persisted.clone())
+                } else {
+                    EnsureRegionOutcome::IntegrityFault
+                };
             }
             return EnsureRegionOutcome::RejectedIdentityConflict;
         }
@@ -361,6 +366,11 @@ fn load_regions(root: &Path) -> io::Result<HashMap<String, RegionRecord>> {
         }
         let record: RegionRecord =
             serde_json::from_slice(&fs::read(&path)?).map_err(invalid_json)?;
+        let expected_data_file =
+            format!("{}.bin", hex_sha256(record.persisted.region_ref.as_bytes()));
+        if record.data_file != expected_data_file {
+            return Err(invalid_data("Region data file identity mismatch"));
+        }
         let bytes = fs::read(root.join("regions").join(&record.data_file))?;
         if digest_label(&bytes) != record.persisted.content_digest {
             return Err(invalid_data("Region content digest mismatch"));
@@ -401,6 +411,12 @@ fn validate_record(
         || record.proof.entry_digest != request_digest(&record.request)?
         || record.proof.entry_kind != entry_kind(&record.request.entry)
         || record.proof.durability_profile != DurabilityProfile::D1
+        || record.proof.expected_projection_digest
+            != record
+                .request
+                .expected_base_projection_digest
+                .clone()
+                .unwrap_or_default()
     {
         return Err(invalid_data("journal proof does not resolve to entry"));
     }
@@ -471,14 +487,20 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         std::process::id(),
         sequence
     ));
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&temp)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    fs::rename(&temp, path)?;
-    sync_directory(parent)
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        fs::rename(&temp, path)?;
+        sync_directory(parent)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
 }
 
 fn sync_directory(path: &Path) -> io::Result<()> {

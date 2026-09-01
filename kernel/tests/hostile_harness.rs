@@ -133,7 +133,6 @@ fn persisted_dispatch_command(
 fn hostile_trace_normal_delivery_uses_real_proofs_and_one_provider_submission() {
     let core = tempfile::tempdir().expect("core root");
     let adapter = tempfile::tempdir().expect("adapter root");
-    let command = persisted_dispatch_command(core.path(), "agent_alpha", "action_payment_01", 1);
     let (provider, submissions) =
         ScriptedProvider::new(ProviderOutcome::Observed("provider-receipt-1".to_string()));
     let mut effect_adapter = D1EffectAdapter::initialize(
@@ -144,6 +143,7 @@ fn hostile_trace_normal_delivery_uses_real_proofs_and_one_provider_submission() 
         provider,
     )
     .expect("initialize adapter D1 store");
+    let command = persisted_dispatch_command(core.path(), "agent_alpha", "action_payment_01", 1);
 
     assert_eq!(
         effect_adapter.deliver_armed_attempt(command),
@@ -159,7 +159,6 @@ fn hostile_trace_normal_delivery_uses_real_proofs_and_one_provider_submission() 
 fn hostile_trace_duplicate_delivery_reuses_durable_dedup_record() {
     let core = tempfile::tempdir().expect("core root");
     let adapter = tempfile::tempdir().expect("adapter root");
-    let command = persisted_dispatch_command(core.path(), "agent_beta", "action_payment_01", 42);
     let (provider, submissions) =
         ScriptedProvider::new(ProviderOutcome::Observed("provider-receipt-42".to_string()));
     let mut effect_adapter = D1EffectAdapter::initialize(
@@ -170,6 +169,7 @@ fn hostile_trace_duplicate_delivery_reuses_durable_dedup_record() {
         provider,
     )
     .expect("initialize adapter D1 store");
+    let command = persisted_dispatch_command(core.path(), "agent_beta", "action_payment_01", 42);
 
     assert!(matches!(
         effect_adapter.deliver_armed_attempt(command.clone()),
@@ -221,7 +221,6 @@ fn hostile_trace_lost_acknowledgement_recovers_same_entry_from_disk() {
 fn hostile_trace_crash_after_possible_submit_never_calls_provider_twice() {
     let core = tempfile::tempdir().expect("core root");
     let adapter = tempfile::tempdir().expect("adapter root");
-    let command = persisted_dispatch_command(core.path(), "agent_delta", "action_payment_01", 99);
     let (provider, submissions) = ScriptedProvider::new(ProviderOutcome::Unknown);
     let mut before_crash = D1EffectAdapter::initialize(
         adapter.path(),
@@ -231,6 +230,7 @@ fn hostile_trace_crash_after_possible_submit_never_calls_provider_twice() {
         provider,
     )
     .expect("initialize adapter D1 store");
+    let command = persisted_dispatch_command(core.path(), "agent_delta", "action_payment_01", 99);
 
     assert_eq!(
         before_crash.deliver_armed_attempt(command.clone()),
@@ -267,10 +267,6 @@ fn hostile_trace_crash_after_possible_submit_never_calls_provider_twice() {
 fn hostile_trace_tampered_command_is_rejected_before_provider_io() {
     let core = tempfile::tempdir().expect("core root");
     let adapter = tempfile::tempdir().expect("adapter root");
-    let mut command =
-        persisted_dispatch_command(core.path(), "agent_epsilon", "action_payment_01", 7);
-    command.request_digest = "tampered-request".to_string();
-    command.authority_binding_digest = authority_binding_digest(&command);
     let (provider, submissions) = ScriptedProvider::new(ProviderOutcome::Unknown);
     let mut effect_adapter = D1EffectAdapter::initialize(
         adapter.path(),
@@ -280,6 +276,10 @@ fn hostile_trace_tampered_command_is_rejected_before_provider_io() {
         provider,
     )
     .expect("initialize adapter D1 store");
+    let mut command =
+        persisted_dispatch_command(core.path(), "agent_epsilon", "action_payment_01", 7);
+    command.request_digest = "tampered-request".to_string();
+    command.authority_binding_digest = authority_binding_digest(&command);
 
     assert!(matches!(
         effect_adapter.deliver_armed_attempt(command),
@@ -292,8 +292,6 @@ fn hostile_trace_tampered_command_is_rejected_before_provider_io() {
 fn hostile_trace_same_attempt_number_for_two_agents_does_not_collide() {
     let core = tempfile::tempdir().expect("core root");
     let adapter = tempfile::tempdir().expect("adapter root");
-    let first = persisted_dispatch_command(core.path(), "agent_zeta", "action_payment_01", 1);
-    let second = persisted_dispatch_command(core.path(), "agent_eta", "action_payment_01", 1);
     let (provider, submissions) =
         ScriptedProvider::new(ProviderOutcome::Observed("provider-receipt".to_string()));
     let mut effect_adapter = D1EffectAdapter::initialize(
@@ -304,6 +302,8 @@ fn hostile_trace_same_attempt_number_for_two_agents_does_not_collide() {
         provider,
     )
     .expect("initialize adapter D1 store");
+    let first = persisted_dispatch_command(core.path(), "agent_zeta", "action_payment_01", 1);
+    let second = persisted_dispatch_command(core.path(), "agent_eta", "action_payment_01", 1);
 
     assert!(matches!(
         effect_adapter.deliver_armed_attempt(first),
@@ -314,4 +314,56 @@ fn hostile_trace_same_attempt_number_for_two_agents_does_not_collide() {
         DeliverOutcome::SubmissionObserved { .. }
     ));
     assert_eq!(submissions.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn hostile_trace_deleted_adapter_journal_fails_closed_on_recovery() {
+    let core = tempfile::tempdir().expect("core root");
+    let adapter = tempfile::tempdir().expect("adapter root");
+    let (provider, _) = ScriptedProvider::new(ProviderOutcome::Unknown);
+    let mut effect_adapter = D1EffectAdapter::initialize(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        provider,
+    )
+    .expect("initialize adapter D1 store");
+    let command = persisted_dispatch_command(core.path(), "agent_theta", "action_payment_01", 3);
+    assert!(matches!(
+        effect_adapter.deliver_armed_attempt(command),
+        DeliverOutcome::SubmissionObserved { .. }
+    ));
+    drop(effect_adapter);
+    std::fs::remove_file(adapter.path().join("adapter-journal.jsonl"))
+        .expect("simulate lost adapter journal");
+
+    let (recovery_provider, recovery_submissions) = ScriptedProvider::new(ProviderOutcome::Unknown);
+    assert!(D1EffectAdapter::open(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        recovery_provider,
+    )
+    .is_err());
+    assert_eq!(recovery_submissions.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn hostile_trace_adapter_cannot_initialize_after_core_dispatch_exists() {
+    let core = tempfile::tempdir().expect("core root");
+    let adapter = tempfile::tempdir().expect("adapter root");
+    let _command = persisted_dispatch_command(core.path(), "agent_iota", "action_payment_01", 4);
+    let (provider, submissions) = ScriptedProvider::new(ProviderOutcome::Unknown);
+
+    assert!(D1EffectAdapter::initialize(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        provider,
+    )
+    .is_err());
+    assert_eq!(submissions.load(Ordering::SeqCst), 0);
 }

@@ -45,6 +45,11 @@ pub enum ExternalKnowledge {
 
 type DedupKey = (String, String, u64, String, String);
 type ObservationKey = (String, String, u64, String, String);
+type ReplayState = (
+    HashMap<DedupKey, AdapterDedupRecord>,
+    HashMap<ObservationKey, EffectObservationReport>,
+    AdapterHead,
+);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdapterDedupRecord {
@@ -106,6 +111,12 @@ struct AdapterConfig {
     core_root: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct AdapterHead {
+    event_count: u64,
+    last_digest: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AdapterStoreIdentity {
     pub adapter_id: String,
@@ -126,6 +137,8 @@ pub struct D1EffectAdapter<P: EffectProvider> {
     provider: P,
     dedup: HashMap<DedupKey, AdapterDedupRecord>,
     observations: HashMap<ObservationKey, EffectObservationReport>,
+    head: AdapterHead,
+    healthy: bool,
 }
 
 pub fn inspect_adapter_store(
@@ -165,6 +178,13 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
                 "adapter store is not fresh",
             ));
         }
+        let core_store = D1DurableStorage::open(core_root.as_ref())?;
+        if !core_store.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "adapter must be initialized before Core entries exist",
+            ));
+        }
         let core_root = fs::canonicalize(core_root.as_ref())?;
         let root = fs::canonicalize(root)?;
         let config = AdapterConfig {
@@ -174,6 +194,15 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
         };
         let bytes = serde_json::to_vec(&config).map_err(invalid_json)?;
         atomic_write(&root.join("adapter-config.json"), &bytes)?;
+        atomic_write(&root.join("adapter-journal.jsonl"), b"")?;
+        let head = AdapterHead {
+            event_count: 0,
+            last_digest: digest_bytes(&bytes),
+        };
+        atomic_write(
+            &root.join("adapter-head.json"),
+            &serde_json::to_vec(&head).map_err(invalid_json)?,
+        )?;
         Ok(Self {
             root,
             core_root,
@@ -181,6 +210,8 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
             provider,
             dedup: HashMap::new(),
             observations: HashMap::new(),
+            head,
+            healthy: true,
         })
     }
 
@@ -205,7 +236,7 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
                 "adapter store identity mismatch",
             ));
         }
-        let (mut dedup, observations) = replay_events(&root, &config)?;
+        let (mut dedup, observations, head) = replay_events(&root, &config)?;
         // A durable reservation without a durable post-submit observation is
         // conservatively ambiguous after process loss. It is never a retry grant.
         for record in dedup.values_mut() {
@@ -221,6 +252,8 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
             provider,
             dedup,
             observations,
+            head,
+            healthy: true,
         })
     }
 
@@ -232,16 +265,41 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
         &self.config.assurance_profile
     }
 
-    fn append_event(&self, event: &AdapterEvent) -> io::Result<()> {
+    fn append_event(&mut self, event: &AdapterEvent) -> io::Result<()> {
+        if !self.healthy {
+            return Err(invalid_data("adapter store is unhealthy"));
+        }
+        match replay_events(&self.root, &self.config) {
+            Ok((_, _, disk_head)) if disk_head == self.head => {}
+            _ => {
+                self.healthy = false;
+                return Err(invalid_data("adapter journal continuity lost"));
+            }
+        }
         let mut bytes = serde_json::to_vec(event).map_err(invalid_json)?;
         bytes.push(b'\n');
-        let mut journal = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.root.join("adapter-journal.jsonl"))?;
-        journal.write_all(&bytes)?;
-        journal.sync_all()?;
-        sync_directory(&self.root)
+        let result = (|| {
+            let mut journal = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(self.root.join("adapter-journal.jsonl"))?;
+            journal.write_all(&bytes)?;
+            journal.sync_all()?;
+            let next_head = AdapterHead {
+                event_count: self.head.event_count + 1,
+                last_digest: chained_digest(&self.head.last_digest, &bytes),
+            };
+            atomic_write(
+                &self.root.join("adapter-head.json"),
+                &serde_json::to_vec(&next_head).map_err(invalid_json)?,
+            )?;
+            self.head = next_head;
+            Ok(())
+        })();
+        if result.is_err() {
+            self.healthy = false;
+        }
+        result
     }
 
     fn validate_command(&self, command: &DispatchCommand) -> Result<DedupKey, String> {
@@ -446,17 +504,15 @@ fn dedup_key(command: &DispatchCommand) -> DedupKey {
     )
 }
 
-fn replay_events(
-    root: &Path,
-    config: &AdapterConfig,
-) -> io::Result<(
-    HashMap<DedupKey, AdapterDedupRecord>,
-    HashMap<ObservationKey, EffectObservationReport>,
-)> {
+fn replay_events(root: &Path, config: &AdapterConfig) -> io::Result<ReplayState> {
     let path = root.join("adapter-journal.jsonl");
-    if !path.exists() {
-        return Ok((HashMap::new(), HashMap::new()));
-    }
+    let stored_head: AdapterHead =
+        serde_json::from_slice(&fs::read(root.join("adapter-head.json"))?).map_err(invalid_json)?;
+    let config_bytes = serde_json::to_vec(config).map_err(invalid_json)?;
+    let mut computed_head = AdapterHead {
+        event_count: 0,
+        last_digest: digest_bytes(&config_bytes),
+    };
     let mut dedup = HashMap::new();
     let mut observations = HashMap::new();
     for line in BufReader::new(File::open(path)?).lines() {
@@ -464,6 +520,10 @@ fn replay_events(
         if line.is_empty() {
             return Err(invalid_data("empty adapter journal record"));
         }
+        let mut encoded = line.as_bytes().to_vec();
+        encoded.push(b'\n');
+        computed_head.event_count += 1;
+        computed_head.last_digest = chained_digest(&computed_head.last_digest, &encoded);
         let event: AdapterEvent = serde_json::from_str(&line).map_err(invalid_json)?;
         match event {
             AdapterEvent::Reserved(record) => {
@@ -520,7 +580,10 @@ fn replay_events(
             }
         }
     }
-    Ok((dedup, observations))
+    if computed_head != stored_head {
+        return Err(invalid_data("adapter journal continuity mismatch"));
+    }
+    Ok((dedup, observations, stored_head))
 }
 
 fn validate_record_identity(record: &AdapterDedupRecord, config: &AdapterConfig) -> io::Result<()> {
@@ -583,4 +646,15 @@ fn invalid_json(error: serde_json::Error) -> io::Error {
 
 fn invalid_data(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+fn digest_bytes(bytes: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+fn chained_digest(previous: &str, event: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(previous.as_bytes());
+    hasher.update(event);
+    format!("sha256:{:x}", hasher.finalize())
 }
