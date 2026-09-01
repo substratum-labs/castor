@@ -157,3 +157,16 @@ fn castord_reopens_core_and_adapter_without_a_second_provider_submission() {
     );
     assert!(String::from_utf8_lossy(&check.stdout).contains("castord state valid"));
 }
+
+#[test]
+fn castord_check_on_missing_state_does_not_create_it() {
+    let parent = tempfile::tempdir().expect("parent root");
+    let missing = parent.path().join("missing-state");
+    let check = ProcessCommand::new(env!("CARGO_BIN_EXE_castord"))
+        .args(["--state-dir", missing.to_str().unwrap(), "--check"])
+        .output()
+        .expect("run castord check mode");
+
+    assert!(!check.status.success());
+    assert!(!missing.exists());
+}

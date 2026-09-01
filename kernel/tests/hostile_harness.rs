@@ -53,6 +53,14 @@ impl EffectProvider for ScriptedProvider {
     }
 }
 
+struct PanicProvider;
+
+impl EffectProvider for PanicProvider {
+    fn submit(&mut self, _command: &DispatchCommand) -> ProviderOutcome {
+        panic!("injected provider crash after durable reservation")
+    }
+}
+
 fn persisted_dispatch_command(
     core_root: &Path,
     agent_id: &str,
@@ -649,4 +657,78 @@ fn hostile_trace_adapter_lineage_cannot_be_reinitialized_after_store_loss() {
     )
     .is_err());
     assert_eq!(replacement_submissions.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn hostile_trace_provider_panic_after_reservation_recovers_without_resubmit() {
+    let core = tempfile::tempdir().expect("core root");
+    let adapter = tempfile::tempdir().expect("adapter root");
+    let mut effect_adapter = D1EffectAdapter::initialize(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        PanicProvider,
+    )
+    .expect("initialize adapter before Core dispatch");
+    let command = persisted_dispatch_command(core.path(), "agent_nu", "action_payment_01", 10);
+
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        effect_adapter.deliver_armed_attempt(command.clone())
+    }))
+    .is_err());
+    drop(effect_adapter);
+
+    let (recovery_provider, recovery_submissions) = ScriptedProvider::new(ProviderOutcome::Unknown);
+    let mut recovered = D1EffectAdapter::open(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        recovery_provider,
+    )
+    .expect("reopen Reserved-only adapter state");
+    assert_eq!(
+        recovered.deliver_armed_attempt(command),
+        DeliverOutcome::DuplicateDelivery {
+            accepted_and_durable: true,
+            prior_external_knowledge: ExternalKnowledge::Unknown,
+        }
+    );
+    assert_eq!(recovery_submissions.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn hostile_trace_truncated_adapter_journal_fails_closed() {
+    let core = tempfile::tempdir().expect("core root");
+    let adapter = tempfile::tempdir().expect("adapter root");
+    let (provider, _) = ScriptedProvider::new(ProviderOutcome::Unknown);
+    let effect_adapter = D1EffectAdapter::initialize(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        provider,
+    )
+    .expect("initialize adapter");
+    drop(effect_adapter);
+    use std::io::Write;
+    let mut journal = std::fs::OpenOptions::new()
+        .append(true)
+        .open(adapter.path().join("adapter-journal.jsonl"))
+        .expect("open adapter journal");
+    journal.write_all(b"{truncated").expect("write torn tail");
+    journal.sync_all().expect("persist torn tail");
+    drop(journal);
+
+    let (recovery_provider, recovery_submissions) = ScriptedProvider::new(ProviderOutcome::Unknown);
+    assert!(D1EffectAdapter::open(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        recovery_provider,
+    )
+    .is_err());
+    assert_eq!(recovery_submissions.load(Ordering::SeqCst), 0);
 }
