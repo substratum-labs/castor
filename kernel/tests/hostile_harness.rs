@@ -262,3 +262,56 @@ fn hostile_trace_crash_after_possible_submit_never_calls_provider_twice() {
     assert_eq!(recovery_submissions.load(Ordering::SeqCst), 0);
     assert_eq!(submissions.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn hostile_trace_tampered_command_is_rejected_before_provider_io() {
+    let core = tempfile::tempdir().expect("core root");
+    let adapter = tempfile::tempdir().expect("adapter root");
+    let mut command =
+        persisted_dispatch_command(core.path(), "agent_epsilon", "action_payment_01", 7);
+    command.request_digest = "tampered-request".to_string();
+    command.authority_binding_digest = authority_binding_digest(&command);
+    let (provider, submissions) = ScriptedProvider::new(ProviderOutcome::Unknown);
+    let mut effect_adapter = D1EffectAdapter::initialize(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        provider,
+    )
+    .expect("initialize adapter D1 store");
+
+    assert!(matches!(
+        effect_adapter.deliver_armed_attempt(command),
+        DeliverOutcome::RejectedInvalidCommand(_)
+    ));
+    assert_eq!(submissions.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn hostile_trace_same_attempt_number_for_two_agents_does_not_collide() {
+    let core = tempfile::tempdir().expect("core root");
+    let adapter = tempfile::tempdir().expect("adapter root");
+    let first = persisted_dispatch_command(core.path(), "agent_zeta", "action_payment_01", 1);
+    let second = persisted_dispatch_command(core.path(), "agent_eta", "action_payment_01", 1);
+    let (provider, submissions) =
+        ScriptedProvider::new(ProviderOutcome::Observed("provider-receipt".to_string()));
+    let mut effect_adapter = D1EffectAdapter::initialize(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        provider,
+    )
+    .expect("initialize adapter D1 store");
+
+    assert!(matches!(
+        effect_adapter.deliver_armed_attempt(first),
+        DeliverOutcome::SubmissionObserved { .. }
+    ));
+    assert!(matches!(
+        effect_adapter.deliver_armed_attempt(second),
+        DeliverOutcome::SubmissionObserved { .. }
+    ));
+    assert_eq!(submissions.load(Ordering::SeqCst), 2);
+}

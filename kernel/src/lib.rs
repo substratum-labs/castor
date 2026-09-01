@@ -9,6 +9,7 @@ use crate::runtime::{
 
 pub mod c01_storage;
 pub mod c04_adapter;
+pub mod castord;
 pub mod runtime;
 pub mod spec;
 

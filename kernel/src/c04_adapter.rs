@@ -106,6 +106,12 @@ struct AdapterConfig {
     core_root: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdapterStoreIdentity {
+    pub adapter_id: String,
+    pub assurance_profile: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 enum AdapterEvent {
     Reserved(AdapterDedupRecord),
@@ -120,6 +126,25 @@ pub struct D1EffectAdapter<P: EffectProvider> {
     provider: P,
     dedup: HashMap<DedupKey, AdapterDedupRecord>,
     observations: HashMap<ObservationKey, EffectObservationReport>,
+}
+
+pub fn inspect_adapter_store(
+    adapter_root: impl AsRef<Path>,
+    core_root: impl AsRef<Path>,
+) -> io::Result<AdapterStoreIdentity> {
+    let root = fs::canonicalize(adapter_root.as_ref())?;
+    let core_root = fs::canonicalize(core_root.as_ref())?;
+    let config: AdapterConfig =
+        serde_json::from_slice(&fs::read(root.join("adapter-config.json"))?)
+            .map_err(invalid_json)?;
+    if config.core_root != core_root.to_string_lossy() {
+        return Err(invalid_data("adapter Core root identity mismatch"));
+    }
+    replay_events(&root, &config)?;
+    Ok(AdapterStoreIdentity {
+        adapter_id: config.adapter_id,
+        assurance_profile: config.assurance_profile,
+    })
 }
 
 impl<P: EffectProvider> D1EffectAdapter<P> {
