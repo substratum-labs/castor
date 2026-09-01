@@ -7,6 +7,8 @@ use crate::runtime::{
     KernelState, SyscallError,
 };
 
+pub mod c01_storage;
+pub mod c04_adapter;
 pub mod runtime;
 pub mod spec;
 

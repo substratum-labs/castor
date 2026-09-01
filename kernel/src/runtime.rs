@@ -135,6 +135,7 @@ pub open spec fn runtime_state_is_valid(state: KernelState) -> bool {
 }
 
 impl KernelState {
+    #[allow(clippy::new_without_default)]
     pub exec fn new() -> (state: KernelState)
         ensures
             runtime_state_is_valid(state),
