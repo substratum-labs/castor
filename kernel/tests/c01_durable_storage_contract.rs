@@ -4,7 +4,15 @@
 //! - `RegionPersisted` -> `EnsureRegionOutcome::Success` or equal-content replay;
 //! - `EntryPersisted` -> `AppendConditionalOutcome::EntryPersisted`;
 //! - stable-entry replay -> `AlreadyPersistedSameEntry` plus `read_entry` recovery;
-//! - an unpersisted Region dependency -> `RejectedMissingOrUnpersistedRegion`.
+//! - stale authority/base projection -> `RejectedPrecondition` without a partial entry;
+//! - an unpersisted Region dependency -> `RejectedMissingOrUnpersistedRegion`;
+//! - immutable Region identity/content disagreement -> `RejectedIdentityConflict`;
+//! - unavailable persistence -> `UnavailableBeforeAck`, never durable success.
+//!
+//! A fresh per-Agent journal has no current projection. Its first conditional
+//! append establishes the authority tuple supplied by that request. A persisted
+//! `FenceRevoked { generation }` advances the current Agent generation, so a
+//! later request that still expects the prior generation is stale.
 //!
 //! These tests deliberately exercise `PreImplementationDurableStorage`. They
 //! compile in Phase 2 and remain red until the Phase-3 D1 implementation exists.
@@ -127,6 +135,37 @@ fn conditional_append_refines_entry_persisted_for_current_authority() {
 }
 
 #[test]
+fn persisted_fence_rejects_stale_authority_without_erasing_original_entry() {
+    let mut storage = PreImplementationDurableStorage::new();
+    let fence_request = region_free_fence_request(400);
+
+    let fence_proof = match storage.append_conditional(fence_request.clone()) {
+        AppendConditionalOutcome::EntryPersisted(proof) => proof,
+        other => panic!("current fence must persist before testing stale authority, got {other:?}"),
+    };
+
+    let mut stale_request = region_free_fence_request(401);
+    stale_request.entry = CoreEntry::FenceRevoked { generation: 9 };
+
+    assert!(matches!(
+        storage.append_conditional(stale_request.clone()),
+        AppendConditionalOutcome::RejectedPrecondition { .. }
+    ));
+    assert_eq!(
+        storage.read_entry(&stale_request.agent_id, stale_request.entry_id),
+        None
+    );
+    assert_eq!(
+        storage.read_entry(&fence_request.agent_id, fence_request.entry_id),
+        Some(fence_proof.clone())
+    );
+    assert_eq!(
+        storage.append_conditional(fence_request),
+        AppendConditionalOutcome::AlreadyPersistedSameEntry(fence_proof)
+    );
+}
+
+#[test]
 fn region_backed_append_proof_refines_region_before_entry_ordering() {
     let mut storage = PreImplementationDurableStorage::new();
     let request = attempt_armed_request(303);
@@ -166,6 +205,19 @@ fn same_entry_retry_and_read_refine_lost_ack_recovery() {
     );
     assert_eq!(
         storage.read_entry(&request.agent_id, request.entry_id),
+        Some(first_proof.clone())
+    );
+
+    let mut conflicting_request = request.clone();
+    conflicting_request.entry = CoreEntry::TurnCommitted { turn_id: 99 };
+
+    assert!(matches!(
+        storage.append_conditional(conflicting_request),
+        AppendConditionalOutcome::IntegrityFault
+            | AppendConditionalOutcome::RejectedPrecondition { .. }
+    ));
+    assert_eq!(
+        storage.read_entry(&request.agent_id, request.entry_id),
         Some(first_proof)
     );
 }
@@ -182,5 +234,21 @@ fn unpersisted_region_refines_append_rejection_without_partial_entry() {
     assert_eq!(
         storage.read_entry(&request.agent_id, request.entry_id),
         None
+    );
+
+    assert!(matches!(
+        storage.ensure_region(REGION_REF, REGION_DIGEST, DurabilityProfile::D1),
+        EnsureRegionOutcome::Success(_)
+    ));
+
+    let proof = match storage.append_conditional(request.clone()) {
+        AppendConditionalOutcome::EntryPersisted(proof) => proof,
+        other => panic!(
+            "missing-Region rejection must not consume the entry identity; retry got {other:?}"
+        ),
+    };
+    assert_eq!(
+        proof.referenced_region_digests,
+        vec![REGION_DIGEST.to_string()]
     );
 }
