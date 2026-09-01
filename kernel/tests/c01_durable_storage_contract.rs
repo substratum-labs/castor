@@ -313,3 +313,40 @@ fn d1_core_store_enforces_one_live_writer_per_root() {
     drop(first);
     D1DurableStorage::open(root.path()).expect("ownership is released when writer drops");
 }
+
+#[test]
+fn uncertain_journal_write_poisoning_requires_reopen_before_more_transitions() {
+    let root = tempfile::tempdir().expect("D1 root");
+    let mut storage = D1DurableStorage::open(root.path()).expect("open D1 store");
+    let request = AppendConditionalRequest {
+        agent_id: "agent_uncertain".to_string(),
+        entry_id: 1,
+        expected_core_epoch: 1,
+        expected_agent_generation: Some(1),
+        expected_turn_id: Some(1),
+        expected_lease_epoch: Some(1),
+        expected_base_projection_digest: Some("projection-before-uncertain".to_string()),
+        entry: CoreEntry::TurnCommitted { turn_id: 1 },
+        region_refs: vec![],
+    };
+    storage.inject_failure_after_next_journal_write();
+
+    assert_eq!(
+        storage.append_conditional(request.clone()),
+        AppendConditionalOutcome::UnavailableBeforeAck
+    );
+    assert!(!storage.is_healthy());
+    assert_eq!(
+        storage.append_conditional(request.clone()),
+        AppendConditionalOutcome::IntegrityFault,
+        "the uncertain live instance must not append or claim idempotence"
+    );
+    drop(storage);
+
+    let mut recovered = D1DurableStorage::open(root.path()).expect("replay uncertain journal");
+    assert!(recovered.is_healthy());
+    assert!(matches!(
+        recovered.append_conditional(request),
+        AppendConditionalOutcome::AlreadyPersistedSameEntry(_)
+    ));
+}

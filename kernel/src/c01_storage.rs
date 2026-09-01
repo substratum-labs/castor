@@ -160,6 +160,8 @@ pub struct D1DurableStorage {
     regions: HashMap<String, RegionRecord>,
     entries: HashMap<(String, u64), JournalRecord>,
     authority: HashMap<String, AuthorityState>,
+    healthy: bool,
+    fail_after_journal_write_once: bool,
 }
 
 impl D1DurableStorage {
@@ -202,15 +204,23 @@ impl D1DurableStorage {
             regions,
             entries,
             authority,
+            healthy: true,
+            fail_after_journal_write_once: false,
         })
     }
 
     pub fn read_region(&self, region_ref: &str) -> Option<Vec<u8>> {
+        if !self.healthy {
+            return None;
+        }
         let record = self.regions.get(region_ref)?;
         fs::read(self.root.join("regions").join(&record.data_file)).ok()
     }
 
     pub fn resolve_entry(&self, proof: &PersistedEntryProof) -> Option<AppendConditionalRequest> {
+        if !self.healthy {
+            return None;
+        }
         let record = self
             .entries
             .get(&(proof.agent_id.clone(), proof.entry_id))?;
@@ -223,6 +233,14 @@ impl D1DurableStorage {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    pub fn is_healthy(&self) -> bool {
+        self.healthy
+    }
+
+    pub fn inject_failure_after_next_journal_write(&mut self) {
+        self.fail_after_journal_write_once = true;
     }
 
     fn persist_region(
@@ -251,7 +269,7 @@ impl D1DurableStorage {
         Ok(record)
     }
 
-    fn append_record(&self, record: &JournalRecord) -> io::Result<()> {
+    fn append_record(&mut self, record: &JournalRecord) -> io::Result<()> {
         let mut encoded = serde_json::to_vec(record).map_err(invalid_json)?;
         encoded.push(b'\n');
         let mut journal = OpenOptions::new()
@@ -259,6 +277,11 @@ impl D1DurableStorage {
             .append(true)
             .open(self.root.join("core-journal.jsonl"))?;
         journal.write_all(&encoded)?;
+        if std::mem::take(&mut self.fail_after_journal_write_once) {
+            return Err(io::Error::other(
+                "injected failure after journal write and before durable acknowledgement",
+            ));
+        }
         journal.sync_all()?;
         sync_directory(&self.root)
     }
@@ -272,6 +295,9 @@ impl DurableStorage for D1DurableStorage {
         content: &[u8],
         profile: DurabilityProfile,
     ) -> EnsureRegionOutcome {
+        if !self.healthy {
+            return EnsureRegionOutcome::IntegrityFault;
+        }
         if region_ref.is_empty() || content_digest != digest_label(content) {
             return EnsureRegionOutcome::RejectedIdentityConflict;
         }
@@ -297,9 +323,13 @@ impl DurableStorage for D1DurableStorage {
                 EnsureRegionOutcome::Success(persisted)
             }
             Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+                self.healthy = false;
                 EnsureRegionOutcome::IntegrityFault
             }
-            Err(_) => EnsureRegionOutcome::UnavailableBeforeAck,
+            Err(_) => {
+                self.healthy = false;
+                EnsureRegionOutcome::UnavailableBeforeAck
+            }
         }
     }
 
@@ -307,6 +337,9 @@ impl DurableStorage for D1DurableStorage {
         &mut self,
         request: AppendConditionalRequest,
     ) -> AppendConditionalOutcome {
+        if !self.healthy {
+            return AppendConditionalOutcome::IntegrityFault;
+        }
         let key = (request.agent_id.clone(), request.entry_id);
         let entry_digest = match request_digest(&request) {
             Ok(digest) => digest,
@@ -354,6 +387,7 @@ impl DurableStorage for D1DurableStorage {
         };
 
         if self.append_record(&record).is_err() {
+            self.healthy = false;
             return AppendConditionalOutcome::UnavailableBeforeAck;
         }
 
@@ -367,6 +401,9 @@ impl DurableStorage for D1DurableStorage {
     }
 
     fn read_entry(&self, agent_id: &str, entry_id: u64) -> Option<PersistedEntryProof> {
+        if !self.healthy {
+            return None;
+        }
         self.entries
             .get(&(agent_id.to_string(), entry_id))
             .map(|record| record.proof.clone())
