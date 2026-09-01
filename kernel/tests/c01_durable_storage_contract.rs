@@ -1,9 +1,9 @@
-//! C-01 DurableStorage refinement tests for T-288-B.
+//! C-01 DurableStorage D1 refinement tests for T-288-C.
 //!
 //! Refinement map from the frozen L4 contract to the Rust target surface:
-//! - `RegionPersisted` -> `EnsureRegionOutcome::Success` or equal-content replay;
-//! - `EntryPersisted` -> `AppendConditionalOutcome::EntryPersisted`;
-//! - stable-entry replay -> `AlreadyPersistedSameEntry` plus `read_entry` recovery;
+//! - `RegionPersisted` -> D1-synced bytes plus `EnsureRegionOutcome::Success`;
+//! - `EntryPersisted` -> an fsynced conditional journal record;
+//! - stable-entry replay -> `AlreadyPersistedSameEntry` after process reopen;
 //! - stale authority/base projection -> `RejectedPrecondition` without a partial entry;
 //! - an unpersisted Region dependency -> `RejectedMissingOrUnpersistedRegion`;
 //! - immutable Region identity/content disagreement -> `RejectedIdentityConflict`;
@@ -13,19 +13,28 @@
 //! append establishes the authority tuple supplied by that request. A persisted
 //! `FenceRevoked { generation }` advances the current Agent generation, so a
 //! later request that still expects the prior generation is stale.
-//!
-//! These tests deliberately exercise `PreImplementationDurableStorage`. They
-//! compile in Phase 2 and remain red until the Phase-3 D1 implementation exists.
 
 use castor_kernel::c01_storage::{
-    AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, DurabilityProfile,
-    DurableStorage, EnsureRegionOutcome, PreImplementationDurableStorage, RegionPersisted,
+    AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, D1DurableStorage,
+    DurabilityProfile, DurableStorage, EnsureRegionOutcome, RegionPersisted,
 };
+use sha2::{Digest, Sha256};
+use tempfile::TempDir;
 
 const AGENT_ID: &str = "agent-c01";
 const REGION_REF: &str = "region://agent-c01/action-spec";
-const REGION_DIGEST: &str = "sha256:region-action-spec-v1";
+const REGION_BYTES: &[u8] = b"action-spec-v1";
 const BASE_PROJECTION: &str = "sha256:projection-7";
+
+fn digest(bytes: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+fn storage() -> (TempDir, D1DurableStorage) {
+    let root = tempfile::tempdir().expect("temporary D1 root");
+    let storage = D1DurableStorage::open(root.path()).expect("open D1 store");
+    (root, storage)
+}
 
 fn attempt_armed_request(entry_id: u64) -> AppendConditionalRequest {
     AppendConditionalRequest {
@@ -60,52 +69,82 @@ fn region_free_fence_request(entry_id: u64) -> AppendConditionalRequest {
 }
 
 #[test]
-fn region_persistence_refines_region_persisted_at_d1() {
-    let mut storage = PreImplementationDurableStorage::new();
-
-    let outcome = storage.ensure_region(REGION_REF, REGION_DIGEST, DurabilityProfile::D1);
+fn region_persistence_refines_region_persisted_at_d1_across_reopen() {
+    let (root, mut storage) = storage();
+    let region_digest = digest(REGION_BYTES);
 
     assert_eq!(
-        outcome,
+        storage.ensure_region(
+            REGION_REF,
+            &region_digest,
+            REGION_BYTES,
+            DurabilityProfile::D1,
+        ),
         EnsureRegionOutcome::Success(RegionPersisted {
             region_ref: REGION_REF.to_string(),
-            content_digest: REGION_DIGEST.to_string(),
+            content_digest: region_digest.clone(),
             profile: DurabilityProfile::D1,
         })
+    );
+
+    drop(storage);
+    let reopened = D1DurableStorage::open(root.path()).expect("reopen D1 store");
+    assert_eq!(
+        reopened.read_region(REGION_REF),
+        Some(REGION_BYTES.to_vec())
     );
 }
 
 #[test]
 fn equal_region_replay_refines_idempotent_region_success() {
-    let mut storage = PreImplementationDurableStorage::new();
+    let (_root, mut storage) = storage();
+    let region_digest = digest(REGION_BYTES);
     let persisted = RegionPersisted {
         region_ref: REGION_REF.to_string(),
-        content_digest: REGION_DIGEST.to_string(),
+        content_digest: region_digest.clone(),
         profile: DurabilityProfile::D1,
     };
 
     assert_eq!(
-        storage.ensure_region(REGION_REF, REGION_DIGEST, DurabilityProfile::D1),
+        storage.ensure_region(
+            REGION_REF,
+            &region_digest,
+            REGION_BYTES,
+            DurabilityProfile::D1
+        ),
         EnsureRegionOutcome::Success(persisted.clone())
     );
     assert_eq!(
-        storage.ensure_region(REGION_REF, REGION_DIGEST, DurabilityProfile::D1),
+        storage.ensure_region(
+            REGION_REF,
+            &region_digest,
+            REGION_BYTES,
+            DurabilityProfile::D1
+        ),
         EnsureRegionOutcome::AlreadyPersistedSameContent(persisted)
     );
 }
 
 #[test]
 fn conflicting_region_digest_refines_immutable_identity_rejection() {
-    let mut storage = PreImplementationDurableStorage::new();
+    let (_root, mut storage) = storage();
+    let region_digest = digest(REGION_BYTES);
+    let different = b"different-content";
 
     assert!(matches!(
-        storage.ensure_region(REGION_REF, REGION_DIGEST, DurabilityProfile::D1),
+        storage.ensure_region(
+            REGION_REF,
+            &region_digest,
+            REGION_BYTES,
+            DurabilityProfile::D1
+        ),
         EnsureRegionOutcome::Success(_)
     ));
     assert_eq!(
         storage.ensure_region(
             REGION_REF,
-            "sha256:different-content",
+            &digest(different),
+            different,
             DurabilityProfile::D1,
         ),
         EnsureRegionOutcome::RejectedIdentityConflict
@@ -114,7 +153,7 @@ fn conflicting_region_digest_refines_immutable_identity_rejection() {
 
 #[test]
 fn conditional_append_refines_entry_persisted_for_current_authority() {
-    let mut storage = PreImplementationDurableStorage::new();
+    let (_root, mut storage) = storage();
     let request = region_free_fence_request(300);
 
     let proof = match storage.append_conditional(request.clone()) {
@@ -136,7 +175,7 @@ fn conditional_append_refines_entry_persisted_for_current_authority() {
 
 #[test]
 fn persisted_fence_rejects_stale_authority_without_erasing_original_entry() {
-    let mut storage = PreImplementationDurableStorage::new();
+    let (_root, mut storage) = storage();
     let fence_request = region_free_fence_request(400);
 
     let fence_proof = match storage.append_conditional(fence_request.clone()) {
@@ -167,11 +206,17 @@ fn persisted_fence_rejects_stale_authority_without_erasing_original_entry() {
 
 #[test]
 fn region_backed_append_proof_refines_region_before_entry_ordering() {
-    let mut storage = PreImplementationDurableStorage::new();
+    let (_root, mut storage) = storage();
     let request = attempt_armed_request(303);
+    let region_digest = digest(REGION_BYTES);
 
     assert!(matches!(
-        storage.ensure_region(REGION_REF, REGION_DIGEST, DurabilityProfile::D1),
+        storage.ensure_region(
+            REGION_REF,
+            &region_digest,
+            REGION_BYTES,
+            DurabilityProfile::D1
+        ),
         EnsureRegionOutcome::Success(_)
     ));
 
@@ -183,28 +228,27 @@ fn region_backed_append_proof_refines_region_before_entry_ordering() {
     assert_eq!(proof.agent_id, request.agent_id);
     assert_eq!(proof.entry_id, request.entry_id);
     assert_eq!(proof.entry_kind, "AttemptArmed");
-    assert_eq!(
-        proof.referenced_region_digests,
-        vec![REGION_DIGEST.to_string()]
-    );
+    assert_eq!(proof.referenced_region_digests, vec![region_digest]);
 }
 
 #[test]
 fn same_entry_retry_and_read_refine_lost_ack_recovery() {
-    let mut storage = PreImplementationDurableStorage::new();
+    let (root, mut storage) = storage();
     let request = region_free_fence_request(301);
 
     let first_proof = match storage.append_conditional(request.clone()) {
         AppendConditionalOutcome::EntryPersisted(proof) => proof,
         other => panic!("first append must persist before its ack is lost, got {other:?}"),
     };
+    drop(storage);
 
+    let mut reopened = D1DurableStorage::open(root.path()).expect("reopen after lost ack");
     assert_eq!(
-        storage.append_conditional(request.clone()),
+        reopened.append_conditional(request.clone()),
         AppendConditionalOutcome::AlreadyPersistedSameEntry(first_proof.clone())
     );
     assert_eq!(
-        storage.read_entry(&request.agent_id, request.entry_id),
+        reopened.read_entry(&request.agent_id, request.entry_id),
         Some(first_proof.clone())
     );
 
@@ -212,19 +256,19 @@ fn same_entry_retry_and_read_refine_lost_ack_recovery() {
     conflicting_request.entry = CoreEntry::TurnCommitted { turn_id: 99 };
 
     assert!(matches!(
-        storage.append_conditional(conflicting_request),
+        reopened.append_conditional(conflicting_request),
         AppendConditionalOutcome::IntegrityFault
             | AppendConditionalOutcome::RejectedPrecondition { .. }
     ));
     assert_eq!(
-        storage.read_entry(&request.agent_id, request.entry_id),
+        reopened.read_entry(&request.agent_id, request.entry_id),
         Some(first_proof)
     );
 }
 
 #[test]
 fn unpersisted_region_refines_append_rejection_without_partial_entry() {
-    let mut storage = PreImplementationDurableStorage::new();
+    let (_root, mut storage) = storage();
     let request = attempt_armed_request(302);
 
     assert_eq!(
@@ -236,8 +280,14 @@ fn unpersisted_region_refines_append_rejection_without_partial_entry() {
         None
     );
 
+    let region_digest = digest(REGION_BYTES);
     assert!(matches!(
-        storage.ensure_region(REGION_REF, REGION_DIGEST, DurabilityProfile::D1),
+        storage.ensure_region(
+            REGION_REF,
+            &region_digest,
+            REGION_BYTES,
+            DurabilityProfile::D1
+        ),
         EnsureRegionOutcome::Success(_)
     ));
 
@@ -247,8 +297,5 @@ fn unpersisted_region_refines_append_rejection_without_partial_entry() {
             "missing-Region rejection must not consume the entry identity; retry got {other:?}"
         ),
     };
-    assert_eq!(
-        proof.referenced_region_digests,
-        vec![REGION_DIGEST.to_string()]
-    );
+    assert_eq!(proof.referenced_region_digests, vec![region_digest]);
 }
