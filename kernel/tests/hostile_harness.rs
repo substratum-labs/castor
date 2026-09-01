@@ -84,9 +84,11 @@ fn persisted_dispatch_command(
         entry: CoreEntry::AttemptArmed {
             action_id: action_id.to_string(),
             attempt_id,
+            action_region_ref: action_region.clone(),
+            action_digest: action_digest.clone(),
             request_digest: "request_hash_001".to_string(),
         },
-        region_refs: vec![action_region],
+        region_refs: vec![action_region.clone()],
     };
     let armed_proof = match storage.append_conditional(armed_request) {
         AppendConditionalOutcome::EntryPersisted(proof) => proof,
@@ -117,8 +119,90 @@ fn persisted_dispatch_command(
         agent_id: agent_id.to_string(),
         action_id: action_id.to_string(),
         attempt_id,
+        action_region_ref: action_region,
         action_digest,
         request_digest: "request_hash_001".to_string(),
+        adapter_id: ADAPTER_ID.to_string(),
+        assurance_profile: ASSURANCE_PROFILE.to_string(),
+        attempt_armed_proof: armed_proof,
+        dispatch_proof,
+        authority_binding_digest: String::new(),
+    };
+    command.authority_binding_digest = authority_binding_digest(&command);
+    command
+}
+
+fn persisted_dispatch_command_with_decoy_region(core_root: &Path) -> DispatchCommand {
+    let mut storage = D1DurableStorage::open(core_root).expect("open core D1 store");
+    let action_digest = digest(ACTION_BYTES);
+    let decoy_bytes = b"unrelated-observation";
+    let decoy_digest = digest(decoy_bytes);
+    assert!(matches!(
+        storage.ensure_region(
+            "region://agent_kappa/action",
+            &action_digest,
+            ACTION_BYTES,
+            DurabilityProfile::D1,
+        ),
+        EnsureRegionOutcome::Success(_)
+    ));
+    assert!(matches!(
+        storage.ensure_region(
+            "region://agent_kappa/decoy",
+            &decoy_digest,
+            decoy_bytes,
+            DurabilityProfile::D1,
+        ),
+        EnsureRegionOutcome::Success(_)
+    ));
+    let armed_proof = match storage.append_conditional(AppendConditionalRequest {
+        agent_id: "agent_kappa".to_string(),
+        entry_id: 10,
+        expected_core_epoch: 1,
+        expected_agent_generation: Some(2),
+        expected_turn_id: Some(5),
+        expected_lease_epoch: Some(3),
+        expected_base_projection_digest: Some("projection-kappa".to_string()),
+        entry: CoreEntry::AttemptArmed {
+            action_id: "action_payment_01".to_string(),
+            attempt_id: 5,
+            action_region_ref: "region://agent_kappa/action".to_string(),
+            action_digest: action_digest.clone(),
+            request_digest: "request-kappa".to_string(),
+        },
+        region_refs: vec![
+            "region://agent_kappa/action".to_string(),
+            "region://agent_kappa/decoy".to_string(),
+        ],
+    }) {
+        AppendConditionalOutcome::EntryPersisted(proof) => proof,
+        other => panic!("AttemptArmed must persist: {other:?}"),
+    };
+    let dispatch_proof = match storage.append_conditional(AppendConditionalRequest {
+        agent_id: "agent_kappa".to_string(),
+        entry_id: 11,
+        expected_core_epoch: 1,
+        expected_agent_generation: Some(2),
+        expected_turn_id: Some(5),
+        expected_lease_epoch: Some(3),
+        expected_base_projection_digest: Some(armed_proof.entry_digest.clone()),
+        entry: CoreEntry::DispatchAttempt {
+            action_id: "action_payment_01".to_string(),
+            attempt_id: 5,
+            adapter_id: ADAPTER_ID.to_string(),
+        },
+        region_refs: vec![],
+    }) {
+        AppendConditionalOutcome::EntryPersisted(proof) => proof,
+        other => panic!("DispatchAttempt must persist: {other:?}"),
+    };
+    let mut command = DispatchCommand {
+        agent_id: "agent_kappa".to_string(),
+        action_id: "action_payment_01".to_string(),
+        attempt_id: 5,
+        action_region_ref: "region://agent_kappa/action".to_string(),
+        action_digest: decoy_digest,
+        request_digest: "request-kappa".to_string(),
         adapter_id: ADAPTER_ID.to_string(),
         assurance_profile: ASSURANCE_PROFILE.to_string(),
         attempt_armed_proof: armed_proof,
@@ -403,4 +487,26 @@ fn hostile_trace_two_live_adapter_instances_cannot_share_one_root() {
         recovery_provider,
     )
     .expect("adapter ownership is released on drop");
+}
+
+#[test]
+fn hostile_trace_non_action_region_digest_cannot_authorize_provider_io() {
+    let core = tempfile::tempdir().expect("core root");
+    let adapter = tempfile::tempdir().expect("adapter root");
+    let (provider, submissions) = ScriptedProvider::new(ProviderOutcome::Unknown);
+    let mut effect_adapter = D1EffectAdapter::initialize(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        provider,
+    )
+    .expect("initialize adapter before Core dispatch");
+    let command = persisted_dispatch_command_with_decoy_region(core.path());
+
+    assert!(matches!(
+        effect_adapter.deliver_armed_attempt(command),
+        DeliverOutcome::RejectedInvalidCommand(_)
+    ));
+    assert_eq!(submissions.load(Ordering::SeqCst), 0);
 }

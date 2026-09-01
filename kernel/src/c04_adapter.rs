@@ -20,6 +20,7 @@ pub struct DispatchCommand {
     pub agent_id: String,
     pub action_id: String,
     pub attempt_id: u64,
+    pub action_region_ref: String,
     pub action_digest: String,
     pub request_digest: String,
     pub adapter_id: String,
@@ -311,6 +312,7 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
         for (name, value) in [
             ("agent_id", command.agent_id.as_str()),
             ("action_id", command.action_id.as_str()),
+            ("action_region_ref", command.action_region_ref.as_str()),
             ("action_digest", command.action_digest.as_str()),
             ("request_digest", command.request_digest.as_str()),
         ] {
@@ -348,9 +350,13 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
             CoreEntry::AttemptArmed {
                 ref action_id,
                 attempt_id,
+                ref action_region_ref,
+                ref action_digest,
                 ref request_digest,
             } if action_id == &command.action_id
                 && attempt_id == command.attempt_id
+                && action_region_ref == &command.action_region_ref
+                && action_digest == &command.action_digest
                 && request_digest == &command.request_digest => {}
             _ => return Err("AttemptArmed entry mismatch".to_string()),
         }
@@ -488,6 +494,7 @@ pub fn authority_binding_digest(command: &DispatchCommand) -> String {
         &command.agent_id,
         &command.action_id,
         command.attempt_id,
+        &command.action_region_ref,
         &command.action_digest,
         &command.request_digest,
         &command.adapter_id,

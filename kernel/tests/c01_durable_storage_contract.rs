@@ -48,6 +48,8 @@ fn attempt_armed_request(entry_id: u64) -> AppendConditionalRequest {
         entry: CoreEntry::AttemptArmed {
             action_id: "action-pay-42".to_string(),
             attempt_id: 1,
+            action_region_ref: REGION_REF.to_string(),
+            action_digest: digest(REGION_BYTES),
             request_digest: "sha256:payment-request".to_string(),
         },
         region_refs: vec![REGION_REF.to_string()],

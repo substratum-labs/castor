@@ -77,6 +77,8 @@ fn castord_reopens_core_and_adapter_without_a_second_provider_submission() {
             entry: CoreEntry::AttemptArmed {
                 action_id: "action-v".to_string(),
                 attempt_id: 1,
+                action_region_ref: "region://agent-v/action-v".to_string(),
+                action_digest: action_digest.clone(),
                 request_digest: "request-v".to_string(),
             },
             region_refs: vec!["region://agent-v/action-v".to_string()],
@@ -108,6 +110,7 @@ fn castord_reopens_core_and_adapter_without_a_second_provider_submission() {
         agent_id: "agent-v".to_string(),
         action_id: "action-v".to_string(),
         attempt_id: 1,
+        action_region_ref: "region://agent-v/action-v".to_string(),
         action_digest,
         request_digest: "request-v".to_string(),
         adapter_id: ADAPTER_ID.to_string(),

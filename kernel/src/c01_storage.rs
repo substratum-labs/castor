@@ -54,6 +54,8 @@ pub enum CoreEntry {
     AttemptArmed {
         action_id: String,
         attempt_id: u64,
+        action_region_ref: String,
+        action_digest: String,
         request_digest: String,
     },
     DispatchAttempt {
@@ -359,6 +361,21 @@ impl DurableStorage for D1DurableStorage {
                 return AppendConditionalOutcome::RejectedMissingOrUnpersistedRegion;
             };
             referenced_region_digests.push(region.persisted.content_digest.clone());
+        }
+        if let CoreEntry::AttemptArmed {
+            action_region_ref,
+            action_digest,
+            ..
+        } = &request.entry
+        {
+            let Some(action_region) = self.regions.get(action_region_ref) else {
+                return AppendConditionalOutcome::RejectedMissingOrUnpersistedRegion;
+            };
+            if !request.region_refs.contains(action_region_ref)
+                || action_region.persisted.content_digest != *action_digest
+            {
+                return AppendConditionalOutcome::IntegrityFault;
+            }
         }
 
         if let Some(current) = self.authority.get(&request.agent_id) {
