@@ -569,3 +569,84 @@ fn hostile_trace_conflicting_observations_are_both_retained_across_reopen() {
     assert!(reports.contains(&first));
     assert!(reports.contains(&conflicting));
 }
+
+#[test]
+fn hostile_trace_consistent_adapter_genesis_rollback_is_blocked_by_core_anchor() {
+    let core = tempfile::tempdir().expect("core root");
+    let adapter = tempfile::tempdir().expect("adapter root");
+    let (provider, first_submissions) = ScriptedProvider::new(ProviderOutcome::Unknown);
+    let mut effect_adapter = D1EffectAdapter::initialize(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        provider,
+    )
+    .expect("initialize adapter before Core dispatch");
+    let genesis_journal =
+        std::fs::read(adapter.path().join("adapter-journal.jsonl")).expect("read genesis journal");
+    let genesis_head =
+        std::fs::read(adapter.path().join("adapter-head.json")).expect("read genesis head");
+    let command = persisted_dispatch_command(core.path(), "agent_mu", "action_payment_01", 9);
+    assert!(matches!(
+        effect_adapter.deliver_armed_attempt(command.clone()),
+        DeliverOutcome::SubmissionObserved { .. }
+    ));
+    assert_eq!(first_submissions.load(Ordering::SeqCst), 1);
+    drop(effect_adapter);
+
+    std::fs::write(
+        adapter.path().join("adapter-journal.jsonl"),
+        genesis_journal,
+    )
+    .expect("restore coherent empty journal");
+    std::fs::write(adapter.path().join("adapter-head.json"), genesis_head)
+        .expect("restore coherent genesis head");
+    let (recovery_provider, recovery_submissions) = ScriptedProvider::new(ProviderOutcome::Unknown);
+    let mut recovered = D1EffectAdapter::open(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        recovery_provider,
+    )
+    .expect("coherently rolled-back adapter store opens");
+
+    assert_eq!(
+        recovered.deliver_armed_attempt(command),
+        DeliverOutcome::Ambiguous {
+            accepted_and_durable: true,
+        }
+    );
+    assert_eq!(recovery_submissions.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn hostile_trace_adapter_lineage_cannot_be_reinitialized_after_store_loss() {
+    let core = tempfile::tempdir().expect("core root");
+    let adapter = tempfile::tempdir().expect("adapter root");
+    let (provider, _) = ScriptedProvider::new(ProviderOutcome::Unknown);
+    let effect_adapter = D1EffectAdapter::initialize(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        provider,
+    )
+    .expect("initialize first lineage");
+    drop(effect_adapter);
+    std::fs::remove_dir_all(adapter.path()).expect("simulate complete adapter store loss");
+    std::fs::create_dir(adapter.path()).expect("recreate empty adapter root");
+
+    let (replacement_provider, replacement_submissions) =
+        ScriptedProvider::new(ProviderOutcome::Unknown);
+    assert!(D1EffectAdapter::initialize(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        replacement_provider,
+    )
+    .is_err());
+    assert_eq!(replacement_submissions.load(Ordering::SeqCst), 0);
+}

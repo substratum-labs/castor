@@ -12,6 +12,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -110,6 +111,26 @@ struct AdapterConfig {
     adapter_id: String,
     assurance_profile: String,
     core_root: String,
+    lineage_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct CoreLineageAnchor {
+    adapter_id: String,
+    assurance_profile: String,
+    lineage_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct CoreReservationAnchor {
+    lineage_id: String,
+    dedup_key: DedupKey,
+    dispatch_entry_digest: String,
+}
+
+enum ReservationAnchorStatus {
+    Created,
+    ExistingSame,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,6 +176,7 @@ pub fn inspect_adapter_store(
     if config.core_root != core_root.to_string_lossy() {
         return Err(invalid_data("adapter Core root identity mismatch"));
     }
+    verify_core_lineage(&core_root, &config)?;
     replay_events(&root, &config)?;
     Ok(AdapterStoreIdentity {
         adapter_id: config.adapter_id,
@@ -190,11 +212,23 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
         }
         let core_root = fs::canonicalize(core_root.as_ref())?;
         let root = fs::canonicalize(root)?;
+        let lineage_id = new_lineage_id(&root, &core_root, adapter_id, assurance_profile)?;
         let config = AdapterConfig {
             adapter_id: adapter_id.to_string(),
             assurance_profile: assurance_profile.to_string(),
             core_root: core_root.to_string_lossy().into_owned(),
+            lineage_id: lineage_id.clone(),
         };
+        let lineage_anchor = CoreLineageAnchor {
+            adapter_id: adapter_id.to_string(),
+            assurance_profile: assurance_profile.to_string(),
+            lineage_id,
+        };
+        prepare_core_anchor_dirs(&core_root, &lineage_anchor.lineage_id)?;
+        persist_immutable(
+            &core_lineage_path(&core_root, adapter_id, assurance_profile),
+            &serde_json::to_vec(&lineage_anchor).map_err(invalid_json)?,
+        )?;
         let bytes = serde_json::to_vec(&config).map_err(invalid_json)?;
         atomic_write(&root.join("adapter-config.json"), &bytes)?;
         atomic_write(&root.join("adapter-journal.jsonl"), b"")?;
@@ -241,6 +275,7 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
                 "adapter store identity mismatch",
             ));
         }
+        verify_core_lineage(&core_root, &config)?;
         let (mut dedup, observations, head) = replay_events(&root, &config)?;
         // A durable reservation without a durable post-submit observation is
         // conservatively ambiguous after process loss. It is never a retry grant.
@@ -326,6 +361,33 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
             self.healthy = false;
         }
         result
+    }
+
+    fn reserve_core_anchor(
+        &self,
+        key: &DedupKey,
+        dispatch_entry_digest: &str,
+    ) -> io::Result<ReservationAnchorStatus> {
+        let anchor = CoreReservationAnchor {
+            lineage_id: self.config.lineage_id.clone(),
+            dedup_key: key.clone(),
+            dispatch_entry_digest: dispatch_entry_digest.to_string(),
+        };
+        let path = core_reservation_path(&self.core_root, &self.config.lineage_id, key);
+        let bytes = serde_json::to_vec(&anchor).map_err(invalid_json)?;
+        match persist_immutable(&path, &bytes) {
+            Ok(()) => Ok(ReservationAnchorStatus::Created),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                let existing: CoreReservationAnchor =
+                    serde_json::from_slice(&fs::read(path)?).map_err(invalid_json)?;
+                if existing == anchor {
+                    Ok(ReservationAnchorStatus::ExistingSame)
+                } else {
+                    Err(invalid_data("conflicting Core reservation anchor"))
+                }
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn validate_command(&self, command: &DispatchCommand) -> Result<DedupKey, String> {
@@ -422,6 +484,19 @@ impl<P: EffectProvider> EffectAdapter for D1EffectAdapter<P> {
                 accepted_and_durable: true,
                 prior_external_knowledge: existing.external_knowledge,
             };
+        }
+
+        match self.reserve_core_anchor(&key, &command.dispatch_proof.entry_digest) {
+            Ok(ReservationAnchorStatus::Created) => {}
+            Ok(ReservationAnchorStatus::ExistingSame) => {
+                return DeliverOutcome::Ambiguous {
+                    accepted_and_durable: true,
+                };
+            }
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+                return DeliverOutcome::RejectedInvalidCommand(error.to_string());
+            }
+            Err(_) => return DeliverOutcome::UnavailableBeforeReservation,
         }
 
         let reserved = AdapterDedupRecord {
@@ -642,6 +717,86 @@ fn validate_identity(value: &str, name: &str) -> io::Result<()> {
     }
 }
 
+fn new_lineage_id(
+    adapter_root: &Path,
+    core_root: &Path,
+    adapter_id: &str,
+    assurance_profile: &str,
+) -> io::Result<String> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| invalid_data("system clock precedes Unix epoch"))?
+        .as_nanos();
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let material = format!(
+        "{}\0{}\0{}\0{}\0{}\0{}\0{}",
+        adapter_root.display(),
+        core_root.display(),
+        adapter_id,
+        assurance_profile,
+        std::process::id(),
+        timestamp,
+        sequence
+    );
+    Ok(digest_bytes(material.as_bytes()))
+}
+
+fn core_anchor_dir(core_root: &Path) -> PathBuf {
+    core_root.join("c04-anchors")
+}
+
+fn core_lineage_path(core_root: &Path, adapter_id: &str, assurance_profile: &str) -> PathBuf {
+    let identity = digest_bytes(format!("{adapter_id}\0{assurance_profile}").as_bytes());
+    core_anchor_dir(core_root).join(format!("lineage-{}.json", &identity[7..]))
+}
+
+fn core_reservation_path(core_root: &Path, lineage_id: &str, key: &DedupKey) -> PathBuf {
+    let encoded = serde_json::to_vec(key).expect("dedup key serialization cannot fail");
+    let identity = digest_bytes(&encoded);
+    core_anchor_dir(core_root)
+        .join(format!("reservations-{}", &lineage_id[7..]))
+        .join(format!("{}.json", &identity[7..]))
+}
+
+fn prepare_core_anchor_dirs(core_root: &Path, lineage_id: &str) -> io::Result<()> {
+    let anchor_dir = core_anchor_dir(core_root);
+    fs::create_dir_all(&anchor_dir)?;
+    sync_directory(core_root)?;
+    let reservations = anchor_dir.join(format!("reservations-{}", &lineage_id[7..]));
+    fs::create_dir_all(&reservations)?;
+    sync_directory(&anchor_dir)?;
+    sync_directory(&reservations)
+}
+
+fn verify_core_lineage(core_root: &Path, config: &AdapterConfig) -> io::Result<()> {
+    let expected = CoreLineageAnchor {
+        adapter_id: config.adapter_id.clone(),
+        assurance_profile: config.assurance_profile.clone(),
+        lineage_id: config.lineage_id.clone(),
+    };
+    let actual: CoreLineageAnchor = serde_json::from_slice(&fs::read(core_lineage_path(
+        core_root,
+        &config.adapter_id,
+        &config.assurance_profile,
+    ))?)
+    .map_err(invalid_json)?;
+    if actual != expected {
+        return Err(invalid_data("adapter Core lineage mismatch"));
+    }
+    Ok(())
+}
+
+fn persist_immutable(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let mut file = OpenOptions::new().create_new(true).write(true).open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    sync_directory(parent)
+}
+
 fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let parent = path
         .parent()
@@ -676,6 +831,7 @@ fn sync_directory(path: &Path) -> io::Result<()> {
 fn acquire_ownership_lock(root: &Path, name: &str) -> io::Result<File> {
     let lock = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(root.join(name))?;

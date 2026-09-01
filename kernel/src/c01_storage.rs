@@ -580,6 +580,7 @@ fn sync_directory(path: &Path) -> io::Result<()> {
 fn acquire_ownership_lock(root: &Path, name: &str) -> io::Result<File> {
     let lock = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(root.join(name))?;
