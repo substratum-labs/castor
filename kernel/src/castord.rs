@@ -32,7 +32,6 @@ impl<P: EffectProvider> Castord<P> {
                 "castord state root is not fresh",
             ));
         }
-        let storage = D1DurableStorage::open(&core_root)?;
         let effect_adapter = D1EffectAdapter::initialize(
             &adapter_root,
             &core_root,
@@ -40,6 +39,7 @@ impl<P: EffectProvider> Castord<P> {
             assurance_profile,
             provider,
         )?;
+        let storage = D1DurableStorage::open(&core_root)?;
         Ok(Self {
             state_root: fs::canonicalize(state_root)?,
             storage,

@@ -39,7 +39,7 @@ fn check(state_dir: PathBuf) -> io::Result<()> {
             "castord state root is not initialized",
         ));
     }
-    D1DurableStorage::open(&core_root)?;
+    D1DurableStorage::inspect(&core_root)?;
     let identity = inspect_adapter_store(&adapter_root, &core_root)?;
     println!(
         "castord state valid: adapter={} assurance_profile={}",

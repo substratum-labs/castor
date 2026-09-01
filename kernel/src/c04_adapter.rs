@@ -132,6 +132,7 @@ enum AdapterEvent {
 
 pub struct D1EffectAdapter<P: EffectProvider> {
     root: PathBuf,
+    _ownership_lock: File,
     core_root: PathBuf,
     config: AdapterConfig,
     provider: P,
@@ -178,6 +179,7 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
                 "adapter store is not fresh",
             ));
         }
+        let ownership_lock = acquire_ownership_lock(&root, ".c04-writer.lock")?;
         let core_store = D1DurableStorage::open(core_root.as_ref())?;
         if !core_store.is_empty() {
             return Err(io::Error::new(
@@ -205,6 +207,7 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
         )?;
         Ok(Self {
             root,
+            _ownership_lock: ownership_lock,
             core_root,
             config,
             provider,
@@ -223,6 +226,7 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
         provider: P,
     ) -> io::Result<Self> {
         let root = fs::canonicalize(adapter_root.as_ref())?;
+        let ownership_lock = acquire_ownership_lock(&root, ".c04-writer.lock")?;
         let core_root = fs::canonicalize(core_root.as_ref())?;
         let config: AdapterConfig =
             serde_json::from_slice(&fs::read(root.join("adapter-config.json"))?)
@@ -247,6 +251,7 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
         }
         Ok(Self {
             root,
+            _ownership_lock: ownership_lock,
             core_root,
             config,
             provider,
@@ -322,7 +327,7 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
             return Err("authority binding digest mismatch".to_string());
         }
 
-        let storage = D1DurableStorage::open(&self.core_root)
+        let storage = D1DurableStorage::open_snapshot(&self.core_root)
             .map_err(|error| format!("cannot open Core proof store: {error}"))?;
         let armed = storage
             .resolve_entry(&command.attempt_armed_proof)
@@ -638,6 +643,17 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 fn sync_directory(path: &Path) -> io::Result<()> {
     File::open(path)?.sync_all()
+}
+
+fn acquire_ownership_lock(root: &Path, name: &str) -> io::Result<File> {
+    let lock = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(root.join(name))?;
+    lock.try_lock()?;
+    sync_directory(root)?;
+    Ok(lock)
 }
 
 fn invalid_json(error: serde_json::Error) -> io::Error {

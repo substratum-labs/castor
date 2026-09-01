@@ -367,3 +367,40 @@ fn hostile_trace_adapter_cannot_initialize_after_core_dispatch_exists() {
     .is_err());
     assert_eq!(submissions.load(Ordering::SeqCst), 0);
 }
+
+#[test]
+fn hostile_trace_two_live_adapter_instances_cannot_share_one_root() {
+    let core = tempfile::tempdir().expect("core root");
+    let adapter = tempfile::tempdir().expect("adapter root");
+    let (first_provider, _) = ScriptedProvider::new(ProviderOutcome::Unknown);
+    let first = D1EffectAdapter::initialize(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        first_provider,
+    )
+    .expect("first adapter owns root");
+    let (second_provider, second_submissions) = ScriptedProvider::new(ProviderOutcome::Unknown);
+
+    assert!(D1EffectAdapter::open(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        second_provider,
+    )
+    .is_err());
+    assert_eq!(second_submissions.load(Ordering::SeqCst), 0);
+
+    drop(first);
+    let (recovery_provider, _) = ScriptedProvider::new(ProviderOutcome::Unknown);
+    D1EffectAdapter::open(
+        adapter.path(),
+        core.path(),
+        ADAPTER_ID,
+        ASSURANCE_PROFILE,
+        recovery_provider,
+    )
+    .expect("adapter ownership is released on drop");
+}

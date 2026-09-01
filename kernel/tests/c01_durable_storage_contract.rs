@@ -299,3 +299,17 @@ fn unpersisted_region_refines_append_rejection_without_partial_entry() {
     };
     assert_eq!(proof.referenced_region_digests, vec![region_digest]);
 }
+
+#[test]
+fn d1_core_store_enforces_one_live_writer_per_root() {
+    let root = tempfile::tempdir().expect("D1 root");
+    let first = D1DurableStorage::open(root.path()).expect("first writer owns root");
+
+    assert!(
+        D1DurableStorage::open(root.path()).is_err(),
+        "a second live Core writer must not open the same root"
+    );
+
+    drop(first);
+    D1DurableStorage::open(root.path()).expect("ownership is released when writer drops");
+}

@@ -156,6 +156,7 @@ impl AuthorityState {
 
 pub struct D1DurableStorage {
     root: PathBuf,
+    _ownership_lock: Option<File>,
     regions: HashMap<String, RegionRecord>,
     entries: HashMap<(String, u64), JournalRecord>,
     authority: HashMap<String, AuthorityState>,
@@ -164,6 +165,20 @@ pub struct D1DurableStorage {
 impl D1DurableStorage {
     pub fn open(root: impl AsRef<Path>) -> io::Result<Self> {
         let root = root.as_ref().to_path_buf();
+        fs::create_dir_all(&root)?;
+        let ownership_lock = acquire_ownership_lock(&root, ".c01-writer.lock")?;
+        Self::open_replayed(root, Some(ownership_lock))
+    }
+
+    pub(crate) fn open_snapshot(root: impl AsRef<Path>) -> io::Result<Self> {
+        Self::open_replayed(root.as_ref().to_path_buf(), None)
+    }
+
+    pub fn inspect(root: impl AsRef<Path>) -> io::Result<()> {
+        Self::open_snapshot(root).map(|_| ())
+    }
+
+    fn open_replayed(root: PathBuf, ownership_lock: Option<File>) -> io::Result<Self> {
         fs::create_dir_all(root.join("regions"))?;
         sync_directory(&root)?;
 
@@ -183,6 +198,7 @@ impl D1DurableStorage {
 
         Ok(Self {
             root,
+            _ownership_lock: ownership_lock,
             regions,
             entries,
             authority,
@@ -505,6 +521,17 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 fn sync_directory(path: &Path) -> io::Result<()> {
     File::open(path)?.sync_all()
+}
+
+fn acquire_ownership_lock(root: &Path, name: &str) -> io::Result<File> {
+    let lock = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(root.join(name))?;
+    lock.try_lock()?;
+    sync_directory(root)?;
+    Ok(lock)
 }
 
 fn invalid_json(error: serde_json::Error) -> io::Error {
