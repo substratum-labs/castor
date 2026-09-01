@@ -82,9 +82,7 @@ def test_write_overhead_results_writes_json_and_markdown(tmp_path):
     )
     assert payload["bypass"]["dup_commits"] == 1
     assert [row["journal_len"] for row in payload["l_scaling"]] == [0, 4]
-    assert payload["manifest"]["command"] == (
-        "python -m castor.evals.paper_a.overhead"
-    )
+    assert payload["manifest"]["command"] == ("python -m castor.evals.paper_a.overhead")
     markdown = (tmp_path / "artifacts" / "overhead.md").read_text(encoding="utf-8")
     assert "S-Bypass" in markdown
     assert "journal_bytes" in markdown

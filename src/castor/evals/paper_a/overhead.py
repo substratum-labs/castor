@@ -264,9 +264,7 @@ def main(argv: list[str] | None = None) -> None:
     if not bypass.resume_success or bypass.dup_commits < 1:
         raise SystemExit("S-Bypass negative control did not observe a duplicate")
     failures = [
-        sample
-        for sample in scaling
-        if sample.error or sample.status != "COMPLETED"
+        sample for sample in scaling if sample.error or sample.status != "COMPLETED"
     ]
     if failures:
         raise SystemExit(f"L-scaling contains {len(failures)} failed samples")

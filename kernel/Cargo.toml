@@ -13,7 +13,13 @@ extension-module = ["pyo3/extension-module"]
 
 [dependencies]
 pyo3 = "0.29.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
 vstd = "=0.0.0-2026-07-12-0122"
+
+[dev-dependencies]
+tempfile = "3.23"
 
 [package.metadata.verus]
 verify = true

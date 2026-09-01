@@ -180,9 +180,7 @@ def test_frozen_paper_a_artifact_is_paper_scale() -> None:
 
     assert manifest["trials"] >= 20
     assert manifest["result_count"] == (
-        len(manifest["systems"])
-        * len(manifest["faults"])
-        * manifest["trials"]
+        len(manifest["systems"]) * len(manifest["faults"]) * manifest["trials"]
     )
     assert len(rows) == manifest["result_count"]
     full_rows = [row for row in rows if row["system"] == "c_full"]
