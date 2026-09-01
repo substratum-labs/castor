@@ -52,6 +52,20 @@ pub enum CoreEntry {
     },
 }
 
+/// Structured request for conditional log append (C-01 DurableStorage)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppendConditionalRequest {
+    pub agent_id: String,
+    pub entry_id: u64,
+    pub expected_core_epoch: u64,
+    pub expected_agent_generation: Option<u64>,
+    pub expected_turn_id: Option<u64>,
+    pub expected_lease_epoch: Option<u64>,
+    pub expected_base_projection_digest: Option<String>,
+    pub entry: CoreEntry,
+    pub region_refs: Vec<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AppendConditionalOutcome {
     EntryPersisted(PersistedEntryProof),
@@ -72,13 +86,8 @@ pub trait DurableStorage {
         profile: DurabilityProfile,
     ) -> EnsureRegionOutcome;
 
-    fn append_conditional(
-        &mut self,
-        agent_id: &str,
-        expected_epoch: u64,
-        entry: CoreEntry,
-        region_refs: &[String],
-    ) -> AppendConditionalOutcome;
+    fn append_conditional(&mut self, request: AppendConditionalRequest)
+        -> AppendConditionalOutcome;
 
     fn read_entry(&self, agent_id: &str, entry_id: u64) -> Option<PersistedEntryProof>;
 }
@@ -105,10 +114,7 @@ impl DurableStorage for PreImplementationDurableStorage {
 
     fn append_conditional(
         &mut self,
-        _agent_id: &str,
-        _expected_epoch: u64,
-        _entry: CoreEntry,
-        _region_refs: &[String],
+        _request: AppendConditionalRequest,
     ) -> AppendConditionalOutcome {
         AppendConditionalOutcome::UnavailableBeforeAck
     }

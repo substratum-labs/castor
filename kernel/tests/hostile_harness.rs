@@ -1,9 +1,9 @@
 //! Hostile Test Harness for C-01 Durable Storage & C-04 Effect Adapter (T-288-A)
 //!
 //! Expresses the target production assertions for the 4 mandatory hostile traces:
-//! 1. Normal delivery flow
+//! 1. Normal delivery flow (demonstrating full authority tuple in AppendConditionalRequest)
 //! 2. Duplicate delivery deduplication
-//! 3. Lost acknowledgement recovery
+//! 3. Lost acknowledgement recovery (reusing stable entry_id)
 //! 4. Crash-after-possible-submit recovery
 //!
 //! Note: These tests compile cleanly but MUST FAIL against the pre-implementation stubs
@@ -11,8 +11,9 @@
 //! required before Phase 2 / Phase 3 implementation.
 
 use castor_kernel::c01_storage::{
-    AppendConditionalOutcome, CoreEntry, DurabilityProfile, DurableStorage, EnsureRegionOutcome,
-    PersistedEntryProof, PreImplementationDurableStorage, RegionPersisted,
+    AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, DurabilityProfile,
+    DurableStorage, EnsureRegionOutcome, PersistedEntryProof, PreImplementationDurableStorage,
+    RegionPersisted,
 };
 use castor_kernel::c04_adapter::{
     DeliverOutcome, DispatchCommand, EffectAdapter, ExternalKnowledge,
@@ -62,18 +63,25 @@ fn test_hostile_trace_01_normal_delivery() {
         })
     );
 
-    // Step 2: Target C-01 AppendConditional must persist AttemptArmed entry and return PersistedEntryProof
-    let entry_res = storage.append_conditional(
-        "agent_alpha",
-        1,
-        CoreEntry::AttemptArmed {
+    // Step 2: Target C-01 AppendConditional must evaluate full authority tuple in AppendConditionalRequest
+    let req = AppendConditionalRequest {
+        agent_id: "agent_alpha".to_string(),
+        entry_id: 100,
+        expected_core_epoch: 1,
+        expected_agent_generation: Some(2),
+        expected_turn_id: Some(5),
+        expected_lease_epoch: Some(3),
+        expected_base_projection_digest: Some("base_projection_hash_001".to_string()),
+        entry: CoreEntry::AttemptArmed {
             action_id: "action_payment_01".to_string(),
             attempt_id: 1,
             request_digest: "request_hash_001".to_string(),
         },
-        &["region_100".to_string()],
-    );
-    let expected_armed_proof = mock_proof("agent_alpha", 1, "AttemptArmed");
+        region_refs: vec!["region_100".to_string()],
+    };
+
+    let entry_res = storage.append_conditional(req);
+    let expected_armed_proof = mock_proof("agent_alpha", 100, "AttemptArmed");
     assert_eq!(
         entry_res,
         AppendConditionalOutcome::EntryPersisted(expected_armed_proof)
@@ -121,27 +129,39 @@ fn test_hostile_trace_02_duplicate_delivery() {
 fn test_hostile_trace_03_lost_acknowledgement_recovery() {
     let mut storage = PreImplementationDurableStorage::new();
 
-    let entry = CoreEntry::TurnCommitted { turn_id: 105 };
+    // Request with stable entry_id = 200 and complete expected authority tuple
+    let req = AppendConditionalRequest {
+        agent_id: "agent_gamma".to_string(),
+        entry_id: 200,
+        expected_core_epoch: 1,
+        expected_agent_generation: Some(1),
+        expected_turn_id: Some(105),
+        expected_lease_epoch: Some(1),
+        expected_base_projection_digest: Some("proj_hash_200".to_string()),
+        entry: CoreEntry::TurnCommitted { turn_id: 105 },
+        region_refs: vec![],
+    };
+
+    let expected_proof = mock_proof("agent_gamma", 200, "TurnCommitted");
 
     // Initial append (suppose it persisted in storage, but acknowledgement was lost in transit)
-    let append_res = storage.append_conditional("agent_gamma", 1, entry.clone(), &[]);
-    let expected_proof = mock_proof("agent_gamma", 105, "TurnCommitted");
+    let append_res = storage.append_conditional(req.clone());
     assert_eq!(
         append_res,
         AppendConditionalOutcome::EntryPersisted(expected_proof.clone())
     );
 
-    // Retry after lost ACK: storage must return AlreadyPersistedSameEntry
-    let retry_res = storage.append_conditional("agent_gamma", 1, entry, &[]);
+    // Retry after lost ACK reusing the exact same stable entry_id and proposal: storage must return AlreadyPersistedSameEntry
+    let retry_res = storage.append_conditional(req);
     assert_eq!(
         retry_res,
         AppendConditionalOutcome::AlreadyPersistedSameEntry(expected_proof.clone())
     );
 
-    // Journal recovery lookup: read_entry must return the persisted entry proof
+    // Journal recovery lookup: read_entry by agent_id and stable entry_id (200) must return the persisted entry proof
     let recovered_proof = storage
-        .read_entry("agent_gamma", 105)
-        .expect("lost ACK recovery must expose persisted entry proof from journal");
+        .read_entry("agent_gamma", 200)
+        .expect("lost ACK recovery must expose persisted entry proof from journal by entry_id");
     assert_eq!(recovered_proof, expected_proof);
 }
 

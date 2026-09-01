@@ -40,6 +40,17 @@ pub struct AdapterDedupRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectObservationReport {
+    pub agent_id: String,
+    pub action_id: String,
+    pub attempt_id: u64,
+    pub observation_id: String,
+    pub observation_digest: String,
+    pub adapter_id: String,
+    pub evidence_ref: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DeliverOutcome {
     SubmissionObserved {
         accepted_and_durable: bool,
@@ -59,7 +70,7 @@ pub enum DeliverOutcome {
 
 pub trait EffectAdapter {
     fn deliver_armed_attempt(&mut self, command: DispatchCommand) -> DeliverOutcome;
-    fn report_effect_observation(&mut self, attempt_id: u64, observation_digest: &str) -> bool;
+    fn report_effect_observation(&mut self, report: EffectObservationReport) -> bool;
 }
 
 /// Pre-implementation stub for EffectAdapter (fails until Phase 3 implementation)
@@ -77,7 +88,7 @@ impl EffectAdapter for PreImplementationEffectAdapter {
         DeliverOutcome::UnavailableBeforeReservation
     }
 
-    fn report_effect_observation(&mut self, _attempt_id: u64, _observation_digest: &str) -> bool {
+    fn report_effect_observation(&mut self, _report: EffectObservationReport) -> bool {
         false
     }
 }
