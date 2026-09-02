@@ -6,10 +6,11 @@
 //! future Core boundary; they do not assert source layout, transport details,
 //! or an Agent-side mock.
 
+use castor_kernel::c01_storage::{D1DurableStorage, DurableStorage};
 use castor_kernel::c02_execution::{
-    AdvanceTurnRequest, AuthorityTuple, ExecutionAuthority, ExecutionOutcome,
-    PreImplementationExecutionAuthority,
+    AdvanceTurnRequest, AuthorityTuple, D1ExecutionAuthority, ExecutionAuthority, ExecutionOutcome,
 };
+use tempfile::TempDir;
 
 const AGENT_ID: &str = "agent-c02";
 const INCARNATION_ID: &str = "incarnation-i7";
@@ -19,15 +20,19 @@ const TURN_ID: u64 = 17;
 const LEASE_EPOCH: u64 = 9;
 const BASE_DIGEST: &str = "sha256:base-projection-0";
 
-fn authority() -> PreImplementationExecutionAuthority {
-    PreImplementationExecutionAuthority::for_ready_turn(
+fn authority() -> (TempDir, D1ExecutionAuthority) {
+    let root = tempfile::tempdir().expect("temporary D1 root");
+    let storage = D1DurableStorage::open(root.path()).expect("open D1 storage");
+    let authority = D1ExecutionAuthority::for_ready_turn(
+        storage,
         AGENT_ID,
         CORE_EPOCH,
         GENERATION,
         TURN_ID,
         LEASE_EPOCH,
         BASE_DIGEST,
-    )
+    );
+    (root, authority)
 }
 
 fn current_tuple() -> AuthorityTuple {
@@ -42,7 +47,7 @@ fn current_tuple() -> AuthorityTuple {
     }
 }
 
-fn bind_current(authority: &mut PreImplementationExecutionAuthority) {
+fn bind_current(authority: &mut D1ExecutionAuthority) {
     assert_eq!(
         authority.bind_incarnation(INCARNATION_ID, GENERATION),
         ExecutionOutcome::IncarnationBound {
@@ -52,7 +57,7 @@ fn bind_current(authority: &mut PreImplementationExecutionAuthority) {
     );
 }
 
-fn grant_current(authority: &mut PreImplementationExecutionAuthority) {
+fn grant_current(authority: &mut D1ExecutionAuthority) {
     assert_eq!(
         authority.grant_execution_lease(current_tuple(), 100),
         ExecutionOutcome::LeaseGranted {
@@ -65,7 +70,7 @@ fn grant_current(authority: &mut PreImplementationExecutionAuthority) {
 
 #[test]
 fn test_c02_normal_bound_lease_to_advance() {
-    let mut authority = authority();
+    let (_root, mut authority) = authority();
     bind_current(&mut authority);
     grant_current(&mut authority);
 
@@ -81,11 +86,25 @@ fn test_c02_normal_bound_lease_to_advance() {
             successor_projection_digest: "sha256:base-projection-1".to_string(),
         }
     );
+    assert_eq!(
+        authority
+            .storage()
+            .read_entry(AGENT_ID, 100)
+            .map(|proof| proof.entry_kind),
+        Some("LeaseGranted".to_string())
+    );
+    assert_eq!(
+        authority
+            .storage()
+            .read_entry(AGENT_ID, 101)
+            .map(|proof| proof.entry_kind),
+        Some("TurnCommitted".to_string())
+    );
 }
 
 #[test]
 fn test_c02_at_most_one_current_lease() {
-    let mut authority = authority();
+    let (_root, mut authority) = authority();
     bind_current(&mut authority);
     grant_current(&mut authority);
 
@@ -97,7 +116,7 @@ fn test_c02_at_most_one_current_lease() {
 
 #[test]
 fn test_c02_durable_fence_vs_stale_advance() {
-    let mut authority = authority();
+    let (_root, mut authority) = authority();
     bind_current(&mut authority);
     grant_current(&mut authority);
 
@@ -124,7 +143,7 @@ fn test_c02_durable_fence_vs_stale_advance() {
 
 #[test]
 fn test_c02_no_direct_agent_durable_or_effect_authority() {
-    let mut authority = authority();
+    let (_root, mut authority) = authority();
     bind_current(&mut authority);
     grant_current(&mut authority);
 
@@ -137,7 +156,7 @@ fn test_c02_no_direct_agent_durable_or_effect_authority() {
 
 #[test]
 fn test_c02_tuple_tampering_rejection() {
-    let mut authority = authority();
+    let (_root, mut authority) = authority();
     bind_current(&mut authority);
     grant_current(&mut authority);
 
@@ -176,7 +195,7 @@ fn test_c02_tuple_tampering_rejection() {
 
 #[test]
 fn test_c02_stale_carrier_replay_without_rebind_fails() {
-    let mut authority = authority();
+    let (_root, mut authority) = authority();
     bind_current(&mut authority);
     grant_current(&mut authority);
 
@@ -195,7 +214,7 @@ fn test_c02_stale_carrier_replay_without_rebind_fails() {
 
 #[test]
 fn test_c02_lost_ack_retry_idempotency() {
-    let mut authority = authority();
+    let (_root, mut authority) = authority();
     bind_current(&mut authority);
 
     assert_eq!(
