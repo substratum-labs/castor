@@ -288,7 +288,11 @@ fn hostile_trace_lost_acknowledgement_recovers_same_entry_from_disk() {
         expected_turn_id: Some(105),
         expected_lease_epoch: Some(1),
         expected_base_projection_digest: Some("proj_hash_200".to_string()),
-        entry: CoreEntry::TurnCommitted { turn_id: 105 },
+        entry: CoreEntry::TurnCommitted {
+            turn_id: 105,
+            successor_projection_digest: None,
+            action_manifest_digest: None,
+        },
         region_refs: vec![],
     };
     let mut storage = D1DurableStorage::open(core.path()).expect("open core store");

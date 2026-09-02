@@ -50,6 +50,12 @@ pub struct PersistedEntryProof {
 pub enum CoreEntry {
     TurnCommitted {
         turn_id: u64,
+        successor_projection_digest: Option<String>,
+        action_manifest_digest: Option<String>,
+    },
+    LeaseGranted {
+        turn_id: u64,
+        lease_epoch: u64,
     },
     AttemptArmed {
         action_id: String,
@@ -149,10 +155,33 @@ impl AuthorityState {
     }
 
     fn apply(&mut self, request: &AppendConditionalRequest, proof: &PersistedEntryProof) {
-        if let CoreEntry::FenceRevoked { generation } = request.entry {
-            self.agent_generation = Some(generation);
+        match &request.entry {
+            CoreEntry::LeaseGranted {
+                turn_id,
+                lease_epoch,
+            } => {
+                self.turn_id = Some(*turn_id);
+                self.lease_epoch = Some(*lease_epoch);
+            }
+            CoreEntry::TurnCommitted {
+                successor_projection_digest,
+                ..
+            } => {
+                self.turn_id = None;
+                self.lease_epoch = None;
+                self.projection_digest = successor_projection_digest
+                    .clone()
+                    .or_else(|| Some(proof.entry_digest.clone()));
+            }
+            CoreEntry::FenceRevoked { generation } => {
+                self.agent_generation = Some(*generation);
+                self.turn_id = None;
+                self.lease_epoch = None;
+            }
+            CoreEntry::AttemptArmed { .. } | CoreEntry::DispatchAttempt { .. } => {
+                self.projection_digest = Some(proof.entry_digest.clone());
+            }
         }
-        self.projection_digest = Some(proof.entry_digest.clone());
     }
 }
 
@@ -529,6 +558,7 @@ fn request_digest(request: &AppendConditionalRequest) -> io::Result<String> {
 fn entry_kind(entry: &CoreEntry) -> &'static str {
     match entry {
         CoreEntry::TurnCommitted { .. } => "TurnCommitted",
+        CoreEntry::LeaseGranted { .. } => "LeaseGranted",
         CoreEntry::AttemptArmed { .. } => "AttemptArmed",
         CoreEntry::DispatchAttempt { .. } => "DispatchAttempt",
         CoreEntry::FenceRevoked { .. } => "FenceRevoked",

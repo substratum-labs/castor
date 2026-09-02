@@ -255,7 +255,11 @@ fn same_entry_retry_and_read_refine_lost_ack_recovery() {
     );
 
     let mut conflicting_request = request.clone();
-    conflicting_request.entry = CoreEntry::TurnCommitted { turn_id: 99 };
+    conflicting_request.entry = CoreEntry::TurnCommitted {
+        turn_id: 99,
+        successor_projection_digest: None,
+        action_manifest_digest: None,
+    };
 
     assert!(matches!(
         reopened.append_conditional(conflicting_request),
@@ -328,7 +332,11 @@ fn uncertain_journal_write_poisoning_requires_reopen_before_more_transitions() {
         expected_turn_id: Some(1),
         expected_lease_epoch: Some(1),
         expected_base_projection_digest: Some("projection-before-uncertain".to_string()),
-        entry: CoreEntry::TurnCommitted { turn_id: 1 },
+        entry: CoreEntry::TurnCommitted {
+            turn_id: 1,
+            successor_projection_digest: None,
+            action_manifest_digest: None,
+        },
         region_refs: vec![],
     };
     storage.inject_failure_after_next_journal_write();
