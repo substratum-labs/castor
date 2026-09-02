@@ -235,3 +235,62 @@ fn test_c02_lost_ack_retry_idempotency() {
         "a lost acknowledgement must recover the same entry rather than infer absence"
     );
 }
+
+#[test]
+fn test_c02_fence_prevents_recovery_of_a_superseded_lease_entry() {
+    let (_root, mut authority) = authority();
+    bind_current(&mut authority);
+    grant_current(&mut authority);
+
+    assert_eq!(
+        authority.revoke_or_fence_execution(CORE_EPOCH, GENERATION, GENERATION + 1, 600),
+        ExecutionOutcome::GenerationFenced {
+            persisted_entry_id: 600,
+            agent_generation: GENERATION + 1,
+        }
+    );
+
+    assert_eq!(
+        authority.grant_execution_lease(current_tuple(), 100),
+        ExecutionOutcome::RejectedStaleAuthority {
+            current_generation: GENERATION + 1,
+            current_lease_epoch: None,
+        },
+        "a stable lease entry from before a durable fence must never restore the old lease"
+    );
+    assert_eq!(authority.current_lease_permissions(), None);
+}
+
+#[test]
+fn test_c02_fence_prevents_recovery_of_a_superseded_turn_entry() {
+    let (_root, mut authority) = authority();
+    bind_current(&mut authority);
+    grant_current(&mut authority);
+
+    let committed = AdvanceTurnRequest {
+        tuple: current_tuple(),
+        entry_id: 601,
+        successor_projection_digest: "sha256:base-projection-1".to_string(),
+        action_manifest_digest: None,
+    };
+    assert!(matches!(
+        authority.advance_turn(committed.clone()),
+        ExecutionOutcome::TurnCommitted { .. }
+    ));
+    assert_eq!(
+        authority.revoke_or_fence_execution(CORE_EPOCH, GENERATION, GENERATION + 1, 602),
+        ExecutionOutcome::GenerationFenced {
+            persisted_entry_id: 602,
+            agent_generation: GENERATION + 1,
+        }
+    );
+
+    assert_eq!(
+        authority.advance_turn(committed),
+        ExecutionOutcome::RejectedStaleAuthority {
+            current_generation: GENERATION + 1,
+            current_lease_epoch: None,
+        },
+        "a stable turn entry from before a durable fence must never restore its old projection"
+    );
+}

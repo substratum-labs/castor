@@ -227,6 +227,9 @@ impl ExecutionAuthority for D1ExecutionAuthority {
 
     fn grant_execution_lease(&mut self, tuple: AuthorityTuple, entry_id: u64) -> ExecutionOutcome {
         let request = self.lease_request(&tuple, entry_id);
+        if !self.tuple_matches_common(&tuple) {
+            return self.stale();
+        }
         if let Some(proof) = self.matching_persisted_entry(&request) {
             self.active_turn_id = Some(tuple.turn_id);
             self.active_lease_epoch = Some(tuple.lease_epoch);
@@ -236,9 +239,6 @@ impl ExecutionAuthority for D1ExecutionAuthority {
                 permits_direct_durable_write: false,
                 permits_direct_effect_dispatch: false,
             };
-        }
-        if !self.tuple_matches_common(&tuple) {
-            return self.stale();
         }
         if self.lease_state != LeaseState::Bound
             || tuple.turn_id != self.ready_turn_id
@@ -323,6 +323,13 @@ impl ExecutionAuthority for D1ExecutionAuthority {
             },
             region_refs: vec![],
         };
+        if !self.tuple_matches_common(&request.tuple)
+            || self.lease_state != LeaseState::Leased
+            || self.active_turn_id != Some(request.tuple.turn_id)
+            || self.active_lease_epoch != Some(request.tuple.lease_epoch)
+        {
+            return self.stale();
+        }
         if let Some(proof) = self.matching_persisted_entry(&entry) {
             self.base_projection_digest = request.successor_projection_digest.clone();
             self.active_turn_id = None;
@@ -333,14 +340,6 @@ impl ExecutionAuthority for D1ExecutionAuthority {
                 successor_projection_digest: request.successor_projection_digest,
             };
         }
-        if !self.tuple_matches_common(&request.tuple)
-            || self.lease_state != LeaseState::Leased
-            || self.active_turn_id != Some(request.tuple.turn_id)
-            || self.active_lease_epoch != Some(request.tuple.lease_epoch)
-        {
-            return self.stale();
-        }
-
         match self.append_or_recover(entry) {
             Ok(proof) => {
                 self.base_projection_digest = request.successor_projection_digest.clone();
