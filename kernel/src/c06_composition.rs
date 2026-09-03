@@ -117,7 +117,6 @@ struct Turn {
     status: TurnStatus,
     requested: HashSet<String>,
     interactions: HashMap<String, String>,
-    consumed: HashSet<String>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AttemptStatus {
@@ -260,9 +259,6 @@ impl D1GovernedTurnAuthority {
     }
     fn replay(&mut self) {
         let requests = self.storage().journal_requests();
-        if requests.is_empty() {
-            return;
-        }
         self.generation = 1;
         self.agent_id = None;
         self.projection_digest = None;
@@ -270,8 +266,10 @@ impl D1GovernedTurnAuthority {
         self.committed_actions.clear();
         self.registered_actions.clear();
         self.attempts.clear();
+        self.revoked_capabilities.clear();
         self.next_entry_id = 1;
         self.next_attempt_id = 1;
+        self.provider_submissions = 0;
         for request in requests {
             let proof_digest = self
                 .storage()
@@ -303,7 +301,6 @@ impl D1GovernedTurnAuthority {
                             status: TurnStatus::Ready,
                             requested: HashSet::new(),
                             interactions: HashMap::new(),
-                            consumed: HashSet::new(),
                         });
                     }
                 }
@@ -477,7 +474,6 @@ impl D1GovernedTurnAuthority {
             status: TurnStatus::Ready,
             requested: HashSet::new(),
             interactions: HashMap::new(),
-            consumed: HashSet::new(),
         });
         GovernedTurnOutcome::Admitted
     }
@@ -577,7 +573,6 @@ impl D1GovernedTurnAuthority {
         let turn = self.turn.as_mut().expect("turn exists");
         turn.last_lease = request.lease_epoch;
         turn.active_lease = Some(request.lease_epoch);
-        turn.consumed.insert(request.interaction_id);
         GovernedTurnOutcome::InteractionConsumed
     }
     pub fn commit_turn(&mut self, request: CommitTurnRequest) -> GovernedTurnOutcome {
@@ -587,7 +582,7 @@ impl D1GovernedTurnAuthority {
         if turn.status != TurnStatus::Ready
             || turn.active_lease != Some(request.lease_epoch)
             || turn.base_digest != request.base_projection_digest
-            || turn.consumed.is_empty()
+            || turn.interactions.is_empty()
         {
             return GovernedTurnOutcome::RejectedStaleAuthority;
         }

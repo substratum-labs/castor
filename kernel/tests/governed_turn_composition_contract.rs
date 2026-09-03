@@ -247,6 +247,50 @@ fn test_comp_observation_consumed_only_under_strictly_monotonic_fresh_lease() {
     );
 }
 #[test]
+fn test_comp_replay_restores_durable_ready_lease_for_turn_commit() {
+    let mut c = Fixture::new();
+    c.ready_to_commit();
+    assert_eq!(
+        c.authority.reconstruct_after_crash(),
+        GovernedTurnOutcome::Reconstructed
+    );
+    assert_eq!(
+        c.authority.commit_turn(commit()),
+        GovernedTurnOutcome::TurnCommitted
+    );
+}
+#[test]
+fn test_comp_turn_commit_requires_durably_bound_interaction() {
+    let mut c = Fixture::new();
+    assert_eq!(
+        c.authority.admit_turn(admit()),
+        GovernedTurnOutcome::Admitted
+    );
+    let mut initial_lease_commit = commit();
+    initial_lease_commit.lease_epoch = 0;
+    assert_eq!(
+        c.authority.commit_turn(initial_lease_commit),
+        GovernedTurnOutcome::RejectedStaleAuthority
+    );
+}
+#[test]
+fn test_comp_turn_commit_rejects_sha256_digest_mismatches() {
+    let mut c = Fixture::new();
+    c.ready_to_commit();
+    let mut wrong_successor = commit();
+    wrong_successor.successor_digest = digest(b"different successor bytes");
+    assert_eq!(
+        c.authority.commit_turn(wrong_successor),
+        GovernedTurnOutcome::IntegrityOrProtocolFault
+    );
+    let mut wrong_manifest = commit();
+    wrong_manifest.action_manifest_digest = digest(b"different manifest bytes");
+    assert_eq!(
+        c.authority.commit_turn(wrong_manifest),
+        GovernedTurnOutcome::IntegrityOrProtocolFault
+    );
+}
+#[test]
 fn test_comp_unpersisted_successor_or_action_region_blocks_turn_commit() {
     let mut c = Fixture::new();
     c.ready_to_commit();
@@ -362,6 +406,30 @@ fn test_comp_duplicate_deliver_armed_attempt_calls_provider_only_once() {
         GovernedTurnOutcome::DuplicateDelivery
     );
     assert_eq!(c.authority.provider_submission_count(), 1);
+}
+#[test]
+fn test_comp_scenario_12_crash_after_submission_resets_count_and_blocks_retry() {
+    let mut c = Fixture::new();
+    c.dispatched_action();
+    let request = DeliverArmedAttemptRequest {
+        attempt_id: 1,
+        dispatch_identity: "dispatch-1".into(),
+    };
+    assert_eq!(
+        c.authority.deliver_armed_attempt(request.clone()),
+        GovernedTurnOutcome::Delivered
+    );
+    assert_eq!(c.authority.provider_submission_count(), 1);
+    assert_eq!(
+        c.authority.reconstruct_after_crash(),
+        GovernedTurnOutcome::Reconstructed
+    );
+    assert_eq!(c.authority.provider_submission_count(), 0);
+    assert_eq!(
+        c.authority.deliver_armed_attempt(request),
+        GovernedTurnOutcome::DuplicateDelivery
+    );
+    assert_eq!(c.authority.provider_submission_count(), 0);
 }
 #[test]
 fn test_comp_crash_after_dispatch_with_missing_dedup_fails_closed_as_ambiguous() {
@@ -501,6 +569,40 @@ fn test_comp_quarantined_dispute_blocks_different_action_on_same_scope() {
     other.action_id = "action-2".into();
     assert_eq!(
         c.authority.present_admission_certificate(other),
+        GovernedTurnOutcome::RejectedCurrentState
+    );
+}
+#[test]
+fn test_comp_crash_after_quarantine_keeps_different_action_locked_on_same_scope() {
+    let mut c = Fixture::new();
+    c.dispatched_action();
+    assert_eq!(
+        c.authority.present_settlement_certificate(settlement()),
+        GovernedTurnOutcome::Settled {
+            resolution: "Confirmed".into()
+        }
+    );
+    let mut conflicting = settlement();
+    conflicting.evidence_region_id = "region://conflicting-evidence".into();
+    conflicting.evidence_digest = digest(b"conflicting settlement evidence");
+    assert_eq!(
+        c.authority.present_settlement_certificate(conflicting),
+        GovernedTurnOutcome::QuarantinedDispute
+    );
+    assert_eq!(
+        c.authority.register_action(ActionRegistrationRequest {
+            action_id: "action-2".into()
+        }),
+        GovernedTurnOutcome::ActionRegistered
+    );
+    assert_eq!(
+        c.authority.reconstruct_after_crash(),
+        GovernedTurnOutcome::Reconstructed
+    );
+    let mut different_action = admission();
+    different_action.action_id = "action-2".into();
+    assert_eq!(
+        c.authority.present_admission_certificate(different_action),
         GovernedTurnOutcome::RejectedCurrentState
     );
 }
