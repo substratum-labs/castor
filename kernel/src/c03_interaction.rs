@@ -137,7 +137,7 @@ pub struct D1InteractionAuthority {
     storage: D1DurableStorage,
     agent_id: String,
     turn_id: u64,
-    initial_lease_epoch: u64,
+    last_granted_lease_epoch: u64,
     active_lease_epoch: Option<u64>,
     base_projection_digest: String,
     turn_open: bool,
@@ -151,22 +151,23 @@ impl D1InteractionAuthority {
         turn_id: u64,
         lease_epoch: u64,
         base_projection_digest: &str,
-    ) -> Self {
+    ) -> Result<Self, InteractionOutcome> {
         let sequence = INTERACTION_STORAGE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let root =
             std::env::temp_dir().join(format!("castor-c03-{}-{sequence}", std::process::id()));
-        let storage = D1DurableStorage::open(root).expect("private C-03 C-01 store must open");
-        Self {
+        let storage = D1DurableStorage::open(root)
+            .map_err(|_| InteractionOutcome::IntegrityOrProtocolFault)?;
+        Ok(Self {
             storage,
             agent_id: agent_id.to_string(),
             turn_id,
-            initial_lease_epoch: lease_epoch,
+            last_granted_lease_epoch: lease_epoch,
             active_lease_epoch: Some(lease_epoch),
             base_projection_digest: base_projection_digest.to_string(),
             turn_open: true,
             awaiting_interaction: false,
             interactions: HashMap::new(),
-        }
+        })
     }
 
     fn append(
@@ -273,13 +274,16 @@ impl InteractionContinuation for D1InteractionAuthority {
         result_digest: &str,
         result_bytes: &[u8],
     ) -> InteractionOutcome {
+        let storage_digest = format!("sha256:{:x}", Sha256::digest(result_bytes));
+        if result_digest != storage_digest {
+            return InteractionOutcome::IntegrityOrProtocolFault;
+        }
         let Some(record) = self.interactions.get_mut(interaction_id) else {
             return InteractionOutcome::RejectedPrecondition;
         };
         if agent_id != self.agent_id || record.status != InteractionStatus::Requested {
             return InteractionOutcome::RejectedPrecondition;
         }
-        let storage_digest = format!("sha256:{:x}", Sha256::digest(result_bytes));
         match self.storage.ensure_region(
             region_id,
             &storage_digest,
@@ -290,10 +294,10 @@ impl InteractionContinuation for D1InteractionAuthority {
             | EnsureRegionOutcome::AlreadyPersistedSameContent(_) => {
                 record.status = InteractionStatus::RegionPersisted;
                 record.result_region_id = Some(region_id.to_string());
-                record.result_digest = Some(result_digest.to_string());
+                record.result_digest = Some(storage_digest.clone());
                 InteractionOutcome::ResultRegionStored {
                     region_id: region_id.to_string(),
-                    result_digest: result_digest.to_string(),
+                    result_digest: storage_digest,
                 }
             }
             EnsureRegionOutcome::RejectedIdentityConflict | EnsureRegionOutcome::IntegrityFault => {
@@ -317,8 +321,11 @@ impl InteractionContinuation for D1InteractionAuthority {
             if record.result_region_id.as_deref() == Some(report.region_id.as_str())
                 && record.result_digest.as_deref() == Some(report.result_digest.as_str())
             {
-                return InteractionOutcome::AlreadyBoundSameOutcome {
-                    persisted_entry_id: record.bound_entry_id.expect("bound record has entry"),
+                return match record.bound_entry_id {
+                    Some(persisted_entry_id) => {
+                        InteractionOutcome::AlreadyBoundSameOutcome { persisted_entry_id }
+                    }
+                    None => InteractionOutcome::IntegrityOrProtocolFault,
                 };
             }
             let entry = CoreEntry::ConflictingInteractionOutcomeAppended {
@@ -345,8 +352,13 @@ impl InteractionContinuation for D1InteractionAuthority {
         if record.status != InteractionStatus::RegionPersisted
             || record.result_region_id.as_deref() != Some(report.region_id.as_str())
             || record.result_digest.as_deref() != Some(report.result_digest.as_str())
-            || self.storage.read_region(&report.region_id).is_none()
         {
+            return InteractionOutcome::IntegrityOrProtocolFault;
+        }
+        let Some(region_bytes) = self.storage.read_region(&report.region_id) else {
+            return InteractionOutcome::IntegrityOrProtocolFault;
+        };
+        if format!("sha256:{:x}", Sha256::digest(region_bytes)) != report.result_digest {
             return InteractionOutcome::IntegrityOrProtocolFault;
         }
         let entry = CoreEntry::InteractionBound {
@@ -366,10 +378,9 @@ impl InteractionContinuation for D1InteractionAuthority {
             Ok(entry_id) => entry_id,
             Err(outcome) => return outcome,
         };
-        let record = self
-            .interactions
-            .get_mut(&report.identity.interaction_id)
-            .expect("validated interaction remains present");
+        let Some(record) = self.interactions.get_mut(&report.identity.interaction_id) else {
+            return InteractionOutcome::IntegrityOrProtocolFault;
+        };
         record.status = InteractionStatus::Bound;
         record.bound_entry_id = Some(persisted_entry_id);
         self.awaiting_interaction = false;
@@ -390,7 +401,7 @@ impl InteractionContinuation for D1InteractionAuthority {
                 .interactions
                 .values()
                 .any(|record| record.status == InteractionStatus::Bound)
-            || lease_epoch <= self.initial_lease_epoch
+            || lease_epoch <= self.last_granted_lease_epoch
             || self.active_lease_epoch.is_some()
         {
             return InteractionOutcome::RejectedStaleAuthority;
@@ -405,6 +416,7 @@ impl InteractionContinuation for D1InteractionAuthority {
                 Err(outcome) => return outcome,
             };
         self.active_lease_epoch = Some(lease_epoch);
+        self.last_granted_lease_epoch = lease_epoch;
         InteractionOutcome::FreshLeaseGranted {
             persisted_entry_id,
             lease_epoch,
@@ -423,12 +435,12 @@ impl InteractionContinuation for D1InteractionAuthority {
         {
             return InteractionOutcome::RejectedStaleAuthority;
         }
-        InteractionOutcome::InteractionConsumed {
-            interaction_id: interaction_id.to_string(),
-            region_id: record
-                .result_region_id
-                .clone()
-                .expect("bound record has durable Region"),
+        match record.result_region_id.clone() {
+            Some(region_id) => InteractionOutcome::InteractionConsumed {
+                interaction_id: interaction_id.to_string(),
+                region_id,
+            },
+            None => InteractionOutcome::IntegrityOrProtocolFault,
         }
     }
 

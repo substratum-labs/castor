@@ -16,7 +16,9 @@ const FRESH_LEASE_EPOCH: u64 = 12;
 const INTERACTION_ID: &str = "interaction-iris";
 const REQUEST_DIGEST: &str = "sha256:request-iris";
 const RESULT_REGION: &str = "region:result-iris";
-const RESULT_DIGEST: &str = "sha256:result-iris";
+const RESULT_BYTES: &[u8] = b"observation bytes";
+const RESULT_DIGEST: &str =
+    "sha256:6570871d884fe4de6143077bbac541c1f708753b567c32d60b78c206cc7831cf";
 const SERVICE_ID: &str = "service:observer";
 
 fn interaction() -> (TempDir, D1InteractionAuthority) {
@@ -28,7 +30,8 @@ fn interaction() -> (TempDir, D1InteractionAuthority) {
             TURN_ID,
             LEASE_EPOCH,
             "sha256:base-projection-0",
-        ),
+        )
+        .expect("temporary C-03 authority"),
     )
 }
 
@@ -74,7 +77,7 @@ fn request_and_persist(authority: &mut D1InteractionAuthority) {
             INTERACTION_ID,
             RESULT_REGION,
             RESULT_DIGEST,
-            b"observation bytes",
+            RESULT_BYTES,
         ),
         InteractionOutcome::ResultRegionStored {
             region_id: RESULT_REGION.to_string(),
@@ -237,5 +240,109 @@ fn test_c03_unpersisted_region_binding_rejected() {
     assert_eq!(
         authority.report_interaction_outcome(report(161)),
         InteractionOutcome::IntegrityOrProtocolFault
+    );
+}
+
+#[test]
+fn test_c03_result_digest_mismatch_is_rejected_before_region_persistence() {
+    let (_root, mut authority) = interaction();
+    assert_eq!(
+        authority.request_interaction(request(170)),
+        InteractionOutcome::InteractionRequestedAck {
+            interaction_id: INTERACTION_ID.to_string(),
+            persisted_entry_id: 170,
+        }
+    );
+    assert_eq!(
+        authority.persist_interaction_result_region(
+            AGENT_ID,
+            INTERACTION_ID,
+            RESULT_REGION,
+            "sha256:caller-lie",
+            RESULT_BYTES,
+        ),
+        InteractionOutcome::IntegrityOrProtocolFault,
+        "the caller-provided digest must attest to the exact Region bytes"
+    );
+    assert_eq!(
+        authority.persist_interaction_result_region(
+            AGENT_ID,
+            INTERACTION_ID,
+            RESULT_REGION,
+            RESULT_DIGEST,
+            RESULT_BYTES,
+        ),
+        InteractionOutcome::ResultRegionStored {
+            region_id: RESULT_REGION.to_string(),
+            result_digest: RESULT_DIGEST.to_string(),
+        },
+        "a rejected digest mismatch must not advance the interaction projection"
+    );
+}
+
+#[test]
+fn test_c03_fresh_lease_epoch_cannot_be_reused_after_a_later_interaction() {
+    let (_root, mut authority) = interaction();
+    bind(&mut authority);
+    assert_eq!(
+        authority.grant_fresh_execution_lease(FRESH_LEASE_EPOCH, 180),
+        InteractionOutcome::FreshLeaseGranted {
+            persisted_entry_id: 180,
+            lease_epoch: FRESH_LEASE_EPOCH,
+        }
+    );
+
+    let second_identity = InteractionIdentity {
+        interaction_id: "interaction-lotus".to_string(),
+        ..identity()
+    };
+    assert_eq!(
+        authority.request_interaction(InteractionRequest {
+            identity: second_identity.clone(),
+            lease_epoch: FRESH_LEASE_EPOCH,
+            entry_id: 181,
+        }),
+        InteractionOutcome::InteractionRequestedAck {
+            interaction_id: second_identity.interaction_id.clone(),
+            persisted_entry_id: 181,
+        }
+    );
+    assert_eq!(
+        authority.persist_interaction_result_region(
+            AGENT_ID,
+            &second_identity.interaction_id,
+            "region:result-lotus",
+            RESULT_DIGEST,
+            RESULT_BYTES,
+        ),
+        InteractionOutcome::ResultRegionStored {
+            region_id: "region:result-lotus".to_string(),
+            result_digest: RESULT_DIGEST.to_string(),
+        }
+    );
+    assert_eq!(
+        authority.report_interaction_outcome(InteractionResultReport {
+            identity: second_identity,
+            region_id: "region:result-lotus".to_string(),
+            result_digest: RESULT_DIGEST.to_string(),
+            disposition: "completed".to_string(),
+            entry_id: 182,
+        }),
+        InteractionOutcome::Bound {
+            persisted_entry_id: 182,
+            region_id: "region:result-lotus".to_string(),
+        }
+    );
+    assert_eq!(
+        authority.grant_fresh_execution_lease(FRESH_LEASE_EPOCH, 183),
+        InteractionOutcome::RejectedStaleAuthority,
+        "a stale carrier must not regain the same lease epoch after a later interaction"
+    );
+    assert_eq!(
+        authority.grant_fresh_execution_lease(FRESH_LEASE_EPOCH + 1, 184),
+        InteractionOutcome::FreshLeaseGranted {
+            persisted_entry_id: 184,
+            lease_epoch: FRESH_LEASE_EPOCH + 1,
+        }
     );
 }
