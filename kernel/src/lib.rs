@@ -11,6 +11,7 @@ pub mod c01_storage;
 pub mod c02_execution;
 pub mod c03_interaction;
 pub mod c04_adapter;
+pub mod c05_settlement;
 pub mod castord;
 pub mod runtime;
 pub mod spec;
