@@ -16,6 +16,7 @@ pub mod c06_composition;
 pub mod castord;
 pub mod host;
 pub mod runtime;
+pub mod sandbox;
 pub mod spec;
 
 #[pyclass]
