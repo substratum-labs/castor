@@ -10,8 +10,10 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 
-const IPC_SOCKET_PATH: &str = "/run/castor/ipc.sock";
+pub const DEFAULT_SANDBOX_IMAGE: &str = "python:3.12-slim";
+pub const IPC_SOCKET_PATH: &str = "/run/castor/ipc.sock";
 const STORAGE_LOCK_MARKER: &str = ".c01-writer.lock";
 
 /// The Castor identity data carried with every physical lifecycle operation.
@@ -99,6 +101,135 @@ pub fn build_castor_untrusted_agent_config(
         network_allowlist: Vec::new(),
         fs_paths: Vec::new(),
     })
+}
+
+/// Docker-backed physical carrier for the deliberately narrow Castor profile.
+///
+/// This is intentionally separate from Roche's generic `destroy` lifecycle:
+/// fencing needs `docker kill`, rather than its graceful five-second stop.
+#[derive(Debug, Clone)]
+pub struct RocheSandboxRunner {
+    config: SandboxConfig,
+}
+
+impl RocheSandboxRunner {
+    pub fn new(config: SandboxConfig) -> Self {
+        Self { config }
+    }
+
+    /// Starts `command` as PID 1 in a networkless, read-only container.
+    pub fn start(&self, command: &str) -> std::io::Result<RocheProcessSupervisor> {
+        if self.config.provider != "docker"
+            || self.config.network
+            || self.config.writable
+            || self.config.mounts.len() != 1
+            || self.config.mounts[0].container_path != IPC_SOCKET_PATH
+            || !self.config.mounts[0].readonly
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid Castor Roche sandbox profile",
+            ));
+        }
+
+        let mount = &self.config.mounts[0];
+        let mut docker = Command::new("docker");
+        docker
+            .args(["run", "--detach", "--network", "none", "--read-only"])
+            .arg("--mount")
+            .arg(format!(
+                "type=bind,src={},dst={},readonly",
+                mount.host_path, mount.container_path
+            ));
+        if let Some(memory) = &self.config.memory {
+            docker.arg("--memory").arg(memory);
+        }
+        if let Some(cpus) = self.config.cpus {
+            docker.arg("--cpus").arg(cpus.to_string());
+        }
+        for (key, value) in &self.config.env {
+            docker.arg("--env").arg(format!("{key}={value}"));
+        }
+        let output = docker
+            .arg(&self.config.image)
+            .args(["sh", "-c", command])
+            .output()?;
+        if !output.status.success() {
+            return Err(std::io::Error::other(
+                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            ));
+        }
+        Ok(RocheProcessSupervisor {
+            container_id: String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        })
+    }
+}
+
+/// Supervision handle for one Docker carrier.  It never grants Castor
+/// authority; it only exposes physical observations and termination.
+#[derive(Debug, Clone)]
+pub struct RocheProcessSupervisor {
+    container_id: String,
+}
+
+impl RocheProcessSupervisor {
+    pub fn container_id(&self) -> &str {
+        &self.container_id
+    }
+
+    /// SIGKILL the carrier with no graceful-stop interval.
+    pub fn kill_immediate(&self) -> std::io::Result<()> {
+        docker_success(&["kill", &self.container_id]).map(|_| ())
+    }
+
+    /// Reads the host-visible PID supplied by Docker's authoritative inspect
+    /// state.  A stopped carrier returns zero.
+    pub fn inspect_pid(&self) -> std::io::Result<u32> {
+        let output =
+            docker_success(&["inspect", "--format", "{{.State.Pid}}", &self.container_id])?;
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse()
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    }
+
+    /// Sum transmit packet counters for every non-loopback interface in the
+    /// carrier's network namespace.  `--network none` must keep this at zero.
+    pub fn inspect_netns_tx(&self) -> std::io::Result<u64> {
+        let output = docker_success(&["exec", &self.container_id, "cat", "/proc/net/dev"])?;
+        let mut total = 0_u64;
+        for line in String::from_utf8_lossy(&output.stdout).lines().skip(2) {
+            let Some((interface, counters)) = line.split_once(':') else {
+                continue;
+            };
+            if interface.trim() == "lo" {
+                continue;
+            }
+            let fields: Vec<_> = counters.split_whitespace().collect();
+            let packets = fields.get(9).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid /proc/net/dev")
+            })?;
+            total += packets
+                .parse::<u64>()
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        }
+        Ok(total)
+    }
+
+    pub fn remove(&self) -> std::io::Result<()> {
+        docker_success(&["rm", "--force", &self.container_id]).map(|_| ())
+    }
+}
+
+fn docker_success(args: &[&str]) -> std::io::Result<std::process::Output> {
+    let output = Command::new("docker").args(args).output()?;
+    if output.status.success() {
+        Ok(output)
+    } else {
+        Err(std::io::Error::other(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ))
+    }
 }
 
 fn validate_socket_isolation(socket_host_path: &Path) -> Result<PathBuf, SandboxConfigError> {

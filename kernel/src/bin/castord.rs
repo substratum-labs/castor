@@ -4,6 +4,10 @@ use castor_kernel::c06_composition::*;
 use castor_kernel::host::{
     read_framed, write_framed, GatewayError, SyscallRequest, SyscallResponse,
 };
+use castor_kernel::sandbox::{
+    build_castor_untrusted_agent_config, RocheProcessSupervisor, RocheSandboxRunner,
+    DEFAULT_SANDBOX_IMAGE,
+};
 use serde_json::{json, Value};
 use std::env;
 use std::fs;
@@ -17,13 +21,40 @@ use std::thread;
 use std::time::Duration;
 
 fn usage() -> &'static str {
-    "usage: castord --storage-root PATH --socket PATH [--child CMD]"
+    "usage: castord --storage-root PATH --socket PATH [--child CMD] [--sandbox roche|none] [--sandbox-image IMAGE]"
 }
 
 struct Config {
     storage_root: PathBuf,
     socket: PathBuf,
     child: Option<String>,
+    sandbox: SandboxMode,
+    sandbox_image: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SandboxMode {
+    None,
+    Roche,
+}
+
+enum SupervisedChild {
+    Bare(Child),
+    Roche(RocheProcessSupervisor),
+}
+
+impl SupervisedChild {
+    fn kill_immediate(&mut self) {
+        match self {
+            Self::Bare(child) => {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            Self::Roche(supervisor) => {
+                let _ = supervisor.kill_immediate();
+            }
+        }
+    }
 }
 
 fn parse_args() -> Result<Config, String> {
@@ -31,6 +62,8 @@ fn parse_args() -> Result<Config, String> {
     let mut storage_root = None;
     let mut socket = None;
     let mut child = None;
+    let mut sandbox = SandboxMode::None;
+    let mut sandbox_image = DEFAULT_SANDBOX_IMAGE.to_owned();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--storage-root" => {
@@ -51,6 +84,22 @@ fn parse_args() -> Result<Config, String> {
                         .ok_or_else(|| "--child requires a command".to_string())?,
                 )
             }
+            "--sandbox" => {
+                sandbox = match args
+                    .next()
+                    .ok_or_else(|| "--sandbox requires roche or none".to_string())?
+                    .as_str()
+                {
+                    "none" => SandboxMode::None,
+                    "roche" => SandboxMode::Roche,
+                    other => return Err(format!("unsupported sandbox mode: {other}")),
+                }
+            }
+            "--sandbox-image" => {
+                sandbox_image = args
+                    .next()
+                    .ok_or_else(|| "--sandbox-image requires an image".to_string())?
+            }
             _ => return Err(format!("unknown argument: {arg}")),
         }
     }
@@ -58,6 +107,8 @@ fn parse_args() -> Result<Config, String> {
         storage_root: storage_root.ok_or_else(|| "--storage-root is required".to_string())?,
         socket: socket.ok_or_else(|| "--socket is required".to_string())?,
         child,
+        sandbox,
+        sandbox_image,
     })
 }
 
@@ -256,7 +307,7 @@ fn dispatch(
 fn serve_connection(
     mut stream: UnixStream,
     authority: Arc<Mutex<D1GovernedTurnAuthority>>,
-    child: Arc<Mutex<Option<Child>>>,
+    child: Arc<Mutex<Option<SupervisedChild>>>,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     loop {
@@ -301,8 +352,10 @@ fn serve_connection(
         );
         if fenced {
             if let Some(mut child) = child.lock().expect("child mutex poisoned").take() {
-                let _ = child.kill();
-                let _ = child.wait();
+                // `persist_fence` does the C-01 append and sync before this
+                // branch is reached.  A Roche carrier therefore gets SIGKILL
+                // with no grace window after the durable fence.
+                child.kill_immediate();
             }
         }
     }
@@ -316,13 +369,25 @@ fn run(config: Config) -> io::Result<()> {
     )?));
     let listener = bind_socket(&config.socket)?;
     let child = Arc::new(Mutex::new(match config.child {
-        Some(command) => Some(
+        Some(command) if config.sandbox == SandboxMode::Roche => {
+            let profile = build_castor_untrusted_agent_config(
+                config.sandbox_image,
+                &config.socket,
+                None,
+                None,
+            )
+            .map_err(|error| io::Error::new(ErrorKind::InvalidInput, error))?;
+            Some(SupervisedChild::Roche(
+                RocheSandboxRunner::new(profile).start(&command)?,
+            ))
+        }
+        Some(command) => Some(SupervisedChild::Bare(
             Command::new("sh")
                 .arg("-c")
                 .arg(command)
                 .env("CASTOR_IPC_SOCKET", &config.socket)
                 .spawn()?,
-        ),
+        )),
         None => None,
     }));
     for stream in listener.incoming() {
