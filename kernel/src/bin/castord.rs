@@ -261,6 +261,7 @@ fn dispatch(
                 .unwrap_or_default()
                 .into(),
             numeric_parameters: Default::default(),
+            exact_parameters: Default::default(),
         }),
         "PresentAdmissionCertificate" => {
             authority.present_admission_certificate(PresentAdmissionCertificateRequest {
@@ -291,7 +292,12 @@ fn dispatch(
             })
         }
         "PersistFence" => authority.persist_fence(number(p, "generation")?),
-        "RevokeCapability" => authority.revoke_capability(&string(p, "capability_id")?),
+        "RevokeCapability" => authority.revoke_capability_with_authorization(
+            p.get("authorization_capability_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            &string(p, "capability_id")?,
+        ),
         "Replay" => authority.reconstruct_after_crash(),
         "EnsureRegion" => {
             let content = p

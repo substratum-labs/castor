@@ -94,6 +94,7 @@ impl Fixture {
             cap_id: cap_id.into(),
             target_scope: scope.into(),
             numeric_parameters: BTreeMap::from([("bytes".into(), bytes)]),
+            exact_parameters: BTreeMap::new(),
         })
     }
 }
@@ -115,7 +116,7 @@ fn grant(cap_id: &str, subject: &str, rights: Vec<CapabilityRight>) -> Capabilit
 fn derive(parent_cap_id: &str, child_rights: Vec<CapabilityRight>) -> DeriveCapabilityRequest {
     DeriveCapabilityRequest {
         parent_cap_id: parent_cap_id.into(),
-        child_subject: "agent-child".into(),
+        child_subject: "agent-a".into(),
         child_rights,
         child_object_ref: "c04:http_get".into(),
         child_constraints: vec![],
@@ -347,27 +348,57 @@ fn test_cap_revocation_before_commit_blocks_turn_commit() {
 
 #[test]
 fn test_cap_cascading_provenance_tree_revocation() {
-    let mut c = Fixture::new();
-    c.grant(grant(
-        "cap-1",
-        "agent-a",
-        vec![
-            CapabilityRight::AdmitTurn,
-            CapabilityRight::RegisterAction,
-            CapabilityRight::Derive,
-        ],
-    ));
-    let child = expect_derived(c.authority.derive_capability(derive(
-        "cap-1",
-        vec![CapabilityRight::AdmitTurn, CapabilityRight::RegisterAction],
-    )));
+    let child_for = |c: &mut Fixture| {
+        c.grant(grant(
+            "cap-1",
+            "agent-a",
+            vec![
+                CapabilityRight::AdmitTurn,
+                CapabilityRight::RegisterAction,
+                CapabilityRight::Derive,
+            ],
+        ));
+        expect_derived(c.authority.derive_capability(derive(
+            "cap-1",
+            vec![CapabilityRight::AdmitTurn, CapabilityRight::RegisterAction],
+        )))
+    };
+
+    let mut admit = Fixture::new();
+    let child = child_for(&mut admit);
     assert_eq!(
-        c.authority.revoke_capability("cap-1"),
+        admit.authority.revoke_capability("cap-1"),
         GovernedTurnOutcome::CapabilityRevoked
     );
-    c.ready_to_commit("agent-a", &child);
     assert_eq!(
-        c.register(&child, "c04:http_get", "workspace/src", 1),
+        admit.admit("agent-a", Some(&child)),
+        GovernedTurnOutcome::RejectedCapabilityRevoked
+    );
+
+    let mut turn_commit = Fixture::new();
+    let child = child_for(&mut turn_commit);
+    assert_eq!(
+        turn_commit.admit("agent-a", Some(&child)),
+        GovernedTurnOutcome::Admitted
+    );
+    assert_eq!(
+        turn_commit.authority.revoke_capability("cap-1"),
+        GovernedTurnOutcome::CapabilityRevoked
+    );
+    assert_eq!(
+        turn_commit.authority.commit_turn(commit(&child)),
+        GovernedTurnOutcome::RejectedCapabilityRevoked
+    );
+
+    let mut register = Fixture::new();
+    let child = child_for(&mut register);
+    register.ready_to_commit("agent-a", &child);
+    assert_eq!(
+        register.authority.revoke_capability("cap-1"),
+        GovernedTurnOutcome::CapabilityRevoked
+    );
+    assert_eq!(
+        register.register(&child, "c04:http_get", "workspace/src", 1),
         GovernedTurnOutcome::RejectedCapabilityRevoked
     );
 }
@@ -460,4 +491,149 @@ fn expect_derived(outcome: CapabilityDeriveOutcome) -> String {
         CapabilityDeriveOutcome::Derived { cap_id } => cap_id,
         CapabilityDeriveOutcome::Rejected(outcome) => panic!("derive rejected: {outcome:?}"),
     }
+}
+
+#[test]
+fn test_cap_unknown_id_register_rejected_fail_closed() {
+    let mut c = Fixture::new();
+    c.grant(grant(
+        "cap-admit",
+        "agent-a",
+        vec![CapabilityRight::AdmitTurn],
+    ));
+    c.ready_to_commit("agent-a", "cap-admit");
+    assert_eq!(
+        c.register("cap-invented", "c04:http_get", "workspace/src", 1),
+        GovernedTurnOutcome::RejectedPrecondition
+    );
+}
+
+#[test]
+fn test_cap_unminted_id_at_arming_rejected_fail_closed() {
+    let mut c = Fixture::new();
+    c.grant(grant(
+        "cap-1",
+        "agent-a",
+        vec![CapabilityRight::AdmitTurn, CapabilityRight::RegisterAction],
+    ));
+    c.ready_to_commit("agent-a", "cap-1");
+    assert_eq!(
+        c.register("cap-1", "c04:http_get", "workspace/src", 1),
+        GovernedTurnOutcome::ActionRegistered
+    );
+    assert_eq!(
+        c.authority
+            .present_admission_certificate(certificate("cap-invented")),
+        GovernedTurnOutcome::RejectedPrecondition
+    );
+}
+
+#[test]
+fn test_cap_swapped_id_at_arming_rejected_after_crash_recovery() {
+    let mut c = Fixture::new();
+    c.grant(grant(
+        "cap-1",
+        "agent-a",
+        vec![CapabilityRight::AdmitTurn, CapabilityRight::RegisterAction],
+    ));
+    c.grant(grant("cap-2", "agent-a", vec![CapabilityRight::AdmitTurn]));
+    c.ready_to_commit("agent-a", "cap-1");
+    assert_eq!(
+        c.register("cap-1", "c04:http_get", "workspace/src", 1),
+        GovernedTurnOutcome::ActionRegistered
+    );
+    assert_eq!(
+        c.authority.reconstruct_after_crash(),
+        GovernedTurnOutcome::Reconstructed
+    );
+    assert_eq!(
+        c.authority
+            .present_admission_certificate(certificate("cap-2")),
+        GovernedTurnOutcome::RejectedPrecondition
+    );
+}
+
+#[test]
+fn test_cap_exact_match_constraint_is_enforced_at_exercise() {
+    let mut c = Fixture::new();
+    let mut cap = grant(
+        "cap-1",
+        "agent-a",
+        vec![CapabilityRight::AdmitTurn, CapabilityRight::RegisterAction],
+    );
+    cap.constraints = vec![Constraint::ExactMatch {
+        key: "method".into(),
+        value: "GET".into(),
+    }];
+    c.grant(cap);
+    c.ready_to_commit("agent-a", "cap-1");
+    assert_eq!(
+        c.authority.register_action(ActionRegistrationRequest {
+            action_id: "action-1".into(),
+            agent_id: "agent-a".into(),
+            action_family: "c04:http_get".into(),
+            cap_id: "cap-1".into(),
+            target_scope: "workspace/src".into(),
+            numeric_parameters: BTreeMap::new(),
+            exact_parameters: BTreeMap::from([("method".into(), "POST".into())]),
+        }),
+        GovernedTurnOutcome::RejectedPrecondition
+    );
+}
+
+#[test]
+fn test_cap_max_turns_is_exhausted_by_commit_and_blocks_next_admission() {
+    let mut c = Fixture::new();
+    let mut cap = grant("cap-1", "agent-a", vec![CapabilityRight::AdmitTurn]);
+    cap.max_turns = Some(1);
+    c.grant(cap);
+    c.ready_to_commit("agent-a", "cap-1");
+    assert_eq!(
+        c.authority.admit_turn(AdmitTurnRequest {
+            agent_id: "agent-a".into(),
+            turn_id: 2,
+            lease_epoch: 0,
+            base_projection_digest: digest(b"H1"),
+            cap_id: Some("cap-1".into()),
+        }),
+        GovernedTurnOutcome::RejectedPrecondition
+    );
+}
+
+#[test]
+fn test_cap_derive_cannot_omit_parent_exact_match_constraint() {
+    let mut c = Fixture::new();
+    let mut cap = grant("cap-1", "agent-a", vec![CapabilityRight::Derive]);
+    cap.constraints = vec![Constraint::ExactMatch {
+        key: "environment".into(),
+        value: "production".into(),
+    }];
+    c.grant(cap);
+    assert_eq!(
+        c.authority
+            .derive_capability(derive("cap-1", vec![CapabilityRight::Derive])),
+        CapabilityDeriveOutcome::Rejected(GovernedTurnOutcome::RejectedPrecondition)
+    );
+}
+
+#[test]
+fn test_cap_revocation_authorization_requires_revoke_right_and_target_coverage() {
+    let mut c = Fixture::new();
+    c.grant(grant("target", "agent-a", vec![CapabilityRight::AdmitTurn]));
+    c.grant(grant("outsider", "agent-a", vec![CapabilityRight::Revoke]));
+    assert_eq!(
+        c.authority
+            .revoke_capability_with_authorization("outsider", "target"),
+        GovernedTurnOutcome::RejectedPrecondition
+    );
+    c.grant(grant(
+        "self-revoker",
+        "agent-a",
+        vec![CapabilityRight::Revoke],
+    ));
+    assert_eq!(
+        c.authority
+            .revoke_capability_with_authorization("self-revoker", "self-revoker"),
+        GovernedTurnOutcome::CapabilityRevoked
+    );
 }

@@ -293,6 +293,7 @@ fn hostile_trace_lost_acknowledgement_recovers_same_entry_from_disk() {
             successor_projection_digest: None,
             action_manifest_digest: None,
             action_manifest: vec![],
+            cap_id: None,
         },
         region_refs: vec![],
     };

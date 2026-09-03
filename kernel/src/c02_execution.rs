@@ -321,6 +321,7 @@ impl ExecutionAuthority for D1ExecutionAuthority {
                 successor_projection_digest: Some(request.successor_projection_digest.clone()),
                 action_manifest_digest: request.action_manifest_digest.clone(),
                 action_manifest: vec![],
+                cap_id: None,
             },
             region_refs: vec![],
         };

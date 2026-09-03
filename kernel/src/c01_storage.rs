@@ -54,6 +54,12 @@ pub enum CoreEntry {
         action_manifest_digest: Option<String>,
         #[serde(default)]
         action_manifest: Vec<String>,
+        #[serde(default)]
+        cap_id: Option<String>,
+    },
+    ActionRegistered {
+        action_id: String,
+        cap_id: String,
     },
     LeaseGranted {
         turn_id: u64,
@@ -236,6 +242,7 @@ impl AuthorityState {
                 self.lease_epoch = None;
             }
             CoreEntry::AttemptArmed { .. }
+            | CoreEntry::ActionRegistered { .. }
             | CoreEntry::DispatchAttempt { .. }
             | CoreEntry::AttemptSettled { .. }
             | CoreEntry::QuarantinedDispute { .. }
@@ -659,6 +666,7 @@ fn entry_kind(entry: &CoreEntry) -> &'static str {
         CoreEntry::TurnCommitted { .. } => "TurnCommitted",
         CoreEntry::LeaseGranted { .. } => "LeaseGranted",
         CoreEntry::AttemptArmed { .. } => "AttemptArmed",
+        CoreEntry::ActionRegistered { .. } => "ActionRegistered",
         CoreEntry::DispatchAttempt { .. } => "DispatchAttempt",
         CoreEntry::AttemptSettled { .. } => "AttemptSettled",
         CoreEntry::QuarantinedDispute { .. } => "QuarantinedDispute",
