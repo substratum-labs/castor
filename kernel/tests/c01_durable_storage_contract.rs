@@ -259,6 +259,7 @@ fn same_entry_retry_and_read_refine_lost_ack_recovery() {
         turn_id: 99,
         successor_projection_digest: None,
         action_manifest_digest: None,
+        action_manifest: vec![],
     };
 
     assert!(matches!(
@@ -336,6 +337,7 @@ fn uncertain_journal_write_poisoning_requires_reopen_before_more_transitions() {
             turn_id: 1,
             successor_projection_digest: None,
             action_manifest_digest: None,
+            action_manifest: vec![],
         },
         region_refs: vec![],
     };

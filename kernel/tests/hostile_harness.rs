@@ -292,6 +292,7 @@ fn hostile_trace_lost_acknowledgement_recovers_same_entry_from_disk() {
             turn_id: 105,
             successor_projection_digest: None,
             action_manifest_digest: None,
+            action_manifest: vec![],
         },
         region_refs: vec![],
     };

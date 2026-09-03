@@ -320,6 +320,7 @@ impl ExecutionAuthority for D1ExecutionAuthority {
                 turn_id: request.tuple.turn_id,
                 successor_projection_digest: Some(request.successor_projection_digest.clone()),
                 action_manifest_digest: request.action_manifest_digest.clone(),
+                action_manifest: vec![],
             },
             region_refs: vec![],
         };
