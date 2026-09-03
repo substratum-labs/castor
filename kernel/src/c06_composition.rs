@@ -1,7 +1,8 @@
 //! Single-store D1 governed-turn composition.
 
 use crate::c01_storage::{
-    AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, D1DurableStorage, DurableStorage,
+    AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, D1DurableStorage,
+    DurabilityProfile, DurableStorage, EnsureRegionOutcome,
 };
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -184,6 +185,32 @@ impl D1GovernedTurnAuthority {
     }
     pub fn provider_submission_count(&self) -> u64 {
         self.provider_submissions
+    }
+
+    /// Models loss of the host adapter's non-durable dedup projection.  A
+    /// dispatch record remains durable, but the host must fail closed rather
+    /// than risk repeating provider I/O.
+    pub fn lose_adapter_dedup_state(&mut self) {
+        for attempt in self.attempts.values_mut() {
+            if attempt.status == AttemptStatus::Dispatched && !attempt.delivered {
+                attempt.ambiguous_delivery = true;
+            }
+        }
+    }
+
+    /// Persists a Region through the authority's exclusively owned C-01 store.
+    ///
+    /// This is the host gateway mechanism entry point; it does not open a
+    /// second storage handle or introduce an additional semantic writer.
+    pub fn ensure_region(
+        &mut self,
+        region_ref: &str,
+        content_digest: &str,
+        content: &[u8],
+        profile: DurabilityProfile,
+    ) -> EnsureRegionOutcome {
+        self.storage_mut()
+            .ensure_region(region_ref, content_digest, content, profile)
     }
 
     fn storage_mut(&mut self) -> &mut D1DurableStorage {
@@ -439,11 +466,9 @@ impl D1GovernedTurnAuthority {
     }
 
     pub fn admit_turn(&mut self, request: AdmitTurnRequest) -> GovernedTurnOutcome {
-        if self
-            .turn
-            .as_ref()
-            .is_some_and(|turn| turn.status != TurnStatus::Closed)
-            || request.lease_epoch != 0
+        if self.turn.as_ref().is_some_and(|turn| {
+            turn.status != TurnStatus::Closed || request.turn_id <= turn.turn_id
+        }) || request.lease_epoch != 0
             || request.agent_id.is_empty()
             || self
                 .agent_id
@@ -668,7 +693,7 @@ impl D1GovernedTurnAuthority {
             || self
                 .attempts
                 .values()
-                .any(|a| a.action_id == request.action_id)
+                .any(|a| a.action_id == request.action_id && a.status != AttemptStatus::Settled)
         {
             return GovernedTurnOutcome::RejectedCurrentState;
         }

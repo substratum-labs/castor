@@ -7,6 +7,10 @@ edition = "2021"
 name = "castor_kernel"
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "castord"
+path = "src/bin/castord.rs"
+
 [features]
 default = []
 extension-module = ["pyo3/extension-module"]
