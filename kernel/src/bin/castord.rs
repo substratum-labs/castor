@@ -200,6 +200,7 @@ fn dispatch(
             turn_id: number(p, "turn_id")?,
             lease_epoch: number(p, "lease_epoch")?,
             base_projection_digest: string(p, "base_projection_digest")?,
+            cap_id: p.get("cap_id").and_then(Value::as_str).map(str::to_owned),
         }),
         "RequestInteraction" => authority.request_interaction(RequestInteractionRequest {
             interaction_id: string(p, "interaction_id")?,
@@ -235,9 +236,31 @@ fn dispatch(
                         .ok_or_else(|| "action_manifest entries must be strings".to_string())
                 })
                 .collect::<Result<_, _>>()?,
+            cap_id: p.get("cap_id").and_then(Value::as_str).map(str::to_owned),
         }),
         "RegisterAction" => authority.register_action(ActionRegistrationRequest {
             action_id: string(p, "action_id")?,
+            agent_id: p
+                .get("agent_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .into(),
+            action_family: p
+                .get("action_family")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .into(),
+            cap_id: p
+                .get("cap_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .into(),
+            target_scope: p
+                .get("target_scope")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .into(),
+            numeric_parameters: Default::default(),
         }),
         "PresentAdmissionCertificate" => {
             authority.present_admission_certificate(PresentAdmissionCertificateRequest {

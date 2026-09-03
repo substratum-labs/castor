@@ -4,8 +4,9 @@ use crate::c01_storage::{
     AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, D1DurableStorage,
     DurabilityProfile, DurableStorage, EnsureRegionOutcome,
 };
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -24,6 +25,7 @@ pub enum GovernedTurnOutcome {
     Settled { resolution: String },
     QuarantinedDispute,
     GenerationFenced { generation: u64 },
+    CapabilityGranted,
     CapabilityRevoked,
     Reconstructed,
     Ambiguous,
@@ -38,12 +40,65 @@ pub enum GovernedTurnOutcome {
     UnavailableBeforeAck,
 }
 
+/// The closed D1 authorization vocabulary. New rights require an RFC change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CapabilityRight {
+    AdmitTurn,
+    RegisterAction,
+    Revoke,
+    Derive,
+}
+
+/// Finite, Core-decidable constraints accepted in D1 grants.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Constraint {
+    ExactMatch { key: String, value: String },
+    ScopePrefix { prefix: String },
+    NumericUpperBound { metric: String, limit: u64 },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityGrant {
+    pub cap_id: String,
+    pub subject: String,
+    pub object_ref: String,
+    pub rights: Vec<CapabilityRight>,
+    pub constraints: Vec<Constraint>,
+    pub parent_cap_id: Option<String>,
+    pub revocation_domain: Option<String>,
+    pub delegation_allowed: bool,
+    pub max_turns: Option<u64>,
+}
+
+/// Privileged control-plane input; this is deliberately not an AISA request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GrantCapabilityRequest {
+    pub grant: CapabilityGrant,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeriveCapabilityRequest {
+    pub parent_cap_id: String,
+    pub child_subject: String,
+    pub child_rights: Vec<CapabilityRight>,
+    pub child_object_ref: String,
+    pub child_constraints: Vec<Constraint>,
+    pub child_delegation_allowed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CapabilityDeriveOutcome {
+    Derived { cap_id: String },
+    Rejected(GovernedTurnOutcome),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AdmitTurnRequest {
     pub agent_id: String,
     pub turn_id: u64,
     pub lease_epoch: u64,
     pub base_projection_digest: String,
+    pub cap_id: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RequestInteractionRequest {
@@ -71,10 +126,16 @@ pub struct CommitTurnRequest {
     pub action_manifest_region_id: String,
     pub action_manifest_digest: String,
     pub action_manifest: Vec<String>,
+    pub cap_id: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActionRegistrationRequest {
     pub action_id: String,
+    pub agent_id: String,
+    pub action_family: String,
+    pub cap_id: String,
+    pub target_scope: String,
+    pub numeric_parameters: BTreeMap<String, u64>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PresentAdmissionCertificateRequest {
@@ -157,6 +218,21 @@ pub struct D1GovernedTurnAuthority {
 }
 
 impl D1GovernedTurnAuthority {
+    /// Phase 2 scaffold: grants fail closed until their durable projection is
+    /// implemented in T-304-C.
+    pub fn grant_capability(&mut self, _request: GrantCapabilityRequest) -> GovernedTurnOutcome {
+        GovernedTurnOutcome::RejectedPrecondition
+    }
+
+    /// Phase 2 scaffold: derivation cannot mint authority before the complete
+    /// attenuation and durable-idempotence implementation exists.
+    pub fn derive_capability(
+        &mut self,
+        _request: DeriveCapabilityRequest,
+    ) -> CapabilityDeriveOutcome {
+        CapabilityDeriveOutcome::Rejected(GovernedTurnOutcome::RejectedPrecondition)
+    }
+
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
         D1DurableStorage::open(path).map(Self::for_test)
     }

@@ -8,6 +8,7 @@ use castor_kernel::c06_composition::{
     PresentSettlementCertificateRequest, RecordDispatchAttemptRequest, RequestInteractionRequest,
 };
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use tempfile::TempDir;
 
 fn digest(bytes: &[u8]) -> String {
@@ -75,9 +76,7 @@ impl Fixture {
             GovernedTurnOutcome::TurnCommitted
         );
         assert_eq!(
-            self.authority.register_action(ActionRegistrationRequest {
-                action_id: "action-1".into()
-            }),
+            self.authority.register_action(action("action-1")),
             GovernedTurnOutcome::ActionRegistered
         );
     }
@@ -105,6 +104,7 @@ fn admit() -> AdmitTurnRequest {
         turn_id: 1,
         lease_epoch: 0,
         base_projection_digest: digest(b"H0"),
+        cap_id: None,
     }
 }
 fn request_interaction() -> RequestInteractionRequest {
@@ -136,6 +136,17 @@ fn commit() -> CommitTurnRequest {
         action_manifest_region_id: "region://action-manifest".into(),
         action_manifest_digest: digest(b"action-1\naction-2"),
         action_manifest: vec!["action-1".into(), "action-2".into()],
+        cap_id: None,
+    }
+}
+fn action(action_id: &str) -> ActionRegistrationRequest {
+    ActionRegistrationRequest {
+        action_id: action_id.into(),
+        agent_id: "agent-1".into(),
+        action_family: String::new(),
+        cap_id: String::new(),
+        target_scope: String::new(),
+        numeric_parameters: BTreeMap::new(),
     }
 }
 fn admission() -> PresentAdmissionCertificateRequest {
@@ -320,9 +331,7 @@ fn test_comp_fence_prevents_stale_carrier_commit_and_action_publication() {
         GovernedTurnOutcome::RejectedStaleAuthority
     );
     assert_eq!(
-        c.authority.register_action(ActionRegistrationRequest {
-            action_id: "action-1".into()
-        }),
+        c.authority.register_action(action("action-1")),
         GovernedTurnOutcome::RejectedPrecondition
     );
 }
@@ -364,9 +373,7 @@ fn test_comp_armed_unknown_blocks_overlapping_action_scope_admission() {
     let mut c = Fixture::new();
     c.armed_action();
     assert_eq!(
-        c.authority.register_action(ActionRegistrationRequest {
-            action_id: "action-2".into()
-        }),
+        c.authority.register_action(action("action-2")),
         GovernedTurnOutcome::ActionRegistered
     );
     let mut other = admission();
@@ -482,9 +489,7 @@ fn test_comp_weak_timeout_rejected_and_preserves_armed_unknown_blocking_mutex() 
         GovernedTurnOutcome::RejectedInvalidProofClass
     );
     assert_eq!(
-        c.authority.register_action(ActionRegistrationRequest {
-            action_id: "action-2".into()
-        }),
+        c.authority.register_action(action("action-2")),
         GovernedTurnOutcome::ActionRegistered
     );
     let mut other = admission();
@@ -509,9 +514,7 @@ fn test_comp_pre_dispatch_not_applied_with_verifiable_non_execution_settles_and_
         }
     );
     assert_eq!(
-        c.authority.register_action(ActionRegistrationRequest {
-            action_id: "action-2".into()
-        }),
+        c.authority.register_action(action("action-2")),
         GovernedTurnOutcome::ActionRegistered
     );
     let mut other = admission();
@@ -560,9 +563,7 @@ fn test_comp_quarantined_dispute_blocks_different_action_on_same_scope() {
         GovernedTurnOutcome::QuarantinedDispute
     );
     assert_eq!(
-        c.authority.register_action(ActionRegistrationRequest {
-            action_id: "action-2".into()
-        }),
+        c.authority.register_action(action("action-2")),
         GovernedTurnOutcome::ActionRegistered
     );
     let mut other = admission();
@@ -590,9 +591,7 @@ fn test_comp_crash_after_quarantine_keeps_different_action_locked_on_same_scope(
         GovernedTurnOutcome::QuarantinedDispute
     );
     assert_eq!(
-        c.authority.register_action(ActionRegistrationRequest {
-            action_id: "action-2".into()
-        }),
+        c.authority.register_action(action("action-2")),
         GovernedTurnOutcome::ActionRegistered
     );
     assert_eq!(
