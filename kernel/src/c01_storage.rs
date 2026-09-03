@@ -72,6 +72,27 @@ pub enum CoreEntry {
     FenceRevoked {
         generation: u64,
     },
+    InteractionRequested {
+        turn_id: u64,
+        interaction_id: String,
+        request_digest: String,
+        service_id: String,
+    },
+    InteractionBound {
+        turn_id: u64,
+        interaction_id: String,
+        region_id: String,
+        result_digest: String,
+        disposition: String,
+    },
+    ConflictingInteractionOutcomeAppended {
+        interaction_id: String,
+        conflicting_region_id: String,
+        conflicting_digest: String,
+    },
+    InteractionTurnClosed {
+        turn_id: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,9 +199,19 @@ impl AuthorityState {
                 self.turn_id = None;
                 self.lease_epoch = None;
             }
+            CoreEntry::InteractionRequested { turn_id, .. } => {
+                self.turn_id = Some(*turn_id);
+                self.lease_epoch = None;
+            }
+            CoreEntry::InteractionTurnClosed { .. } => {
+                self.turn_id = None;
+                self.lease_epoch = None;
+            }
             CoreEntry::AttemptArmed { .. } | CoreEntry::DispatchAttempt { .. } => {
                 self.projection_digest = Some(proof.entry_digest.clone());
             }
+            CoreEntry::InteractionBound { .. }
+            | CoreEntry::ConflictingInteractionOutcomeAppended { .. } => {}
         }
     }
 }
@@ -264,6 +295,10 @@ impl D1DurableStorage {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    pub fn journal_entries(&self) -> usize {
+        self.entries.len()
     }
 
     pub fn is_healthy(&self) -> bool {
@@ -562,6 +597,12 @@ fn entry_kind(entry: &CoreEntry) -> &'static str {
         CoreEntry::AttemptArmed { .. } => "AttemptArmed",
         CoreEntry::DispatchAttempt { .. } => "DispatchAttempt",
         CoreEntry::FenceRevoked { .. } => "FenceRevoked",
+        CoreEntry::InteractionRequested { .. } => "InteractionRequested",
+        CoreEntry::InteractionBound { .. } => "InteractionBound",
+        CoreEntry::ConflictingInteractionOutcomeAppended { .. } => {
+            "ConflictingInteractionOutcomeAppended"
+        }
+        CoreEntry::InteractionTurnClosed { .. } => "InteractionTurnClosed",
     }
 }
 
