@@ -52,6 +52,8 @@ pub enum CoreEntry {
         turn_id: u64,
         successor_projection_digest: Option<String>,
         action_manifest_digest: Option<String>,
+        #[serde(default)]
+        action_manifest: Vec<String>,
     },
     LeaseGranted {
         turn_id: u64,
@@ -69,8 +71,49 @@ pub enum CoreEntry {
         attempt_id: u64,
         adapter_id: String,
     },
+    AttemptSettled {
+        action_id: String,
+        attempt_id: u64,
+        resolution: String,
+        evidence_region_id: String,
+        evidence_digest: String,
+    },
+    QuarantinedDispute {
+        action_id: String,
+        attempt_id: u64,
+    },
+    CapabilityRevoked {
+        capability_id: String,
+    },
+    AdapterReservation {
+        attempt_id: u64,
+    },
+    AdapterSubmissionRecorded {
+        attempt_id: u64,
+    },
     FenceRevoked {
         generation: u64,
+    },
+    InteractionRequested {
+        turn_id: u64,
+        interaction_id: String,
+        request_digest: String,
+        service_id: String,
+    },
+    InteractionBound {
+        turn_id: u64,
+        interaction_id: String,
+        region_id: String,
+        result_digest: String,
+        disposition: String,
+    },
+    ConflictingInteractionOutcomeAppended {
+        interaction_id: String,
+        conflicting_region_id: String,
+        conflicting_digest: String,
+    },
+    InteractionTurnClosed {
+        turn_id: u64,
     },
 }
 
@@ -178,9 +221,25 @@ impl AuthorityState {
                 self.turn_id = None;
                 self.lease_epoch = None;
             }
-            CoreEntry::AttemptArmed { .. } | CoreEntry::DispatchAttempt { .. } => {
+            CoreEntry::InteractionRequested { turn_id, .. } => {
+                self.turn_id = Some(*turn_id);
+                self.lease_epoch = None;
+            }
+            CoreEntry::InteractionTurnClosed { .. } => {
+                self.turn_id = None;
+                self.lease_epoch = None;
+            }
+            CoreEntry::AttemptArmed { .. }
+            | CoreEntry::DispatchAttempt { .. }
+            | CoreEntry::AttemptSettled { .. }
+            | CoreEntry::QuarantinedDispute { .. }
+            | CoreEntry::CapabilityRevoked { .. }
+            | CoreEntry::AdapterReservation { .. }
+            | CoreEntry::AdapterSubmissionRecorded { .. } => {
                 self.projection_digest = Some(proof.entry_digest.clone());
             }
+            CoreEntry::InteractionBound { .. }
+            | CoreEntry::ConflictingInteractionOutcomeAppended { .. } => {}
         }
     }
 }
@@ -264,6 +323,25 @@ impl D1DurableStorage {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    pub fn journal_entries(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Ordered replay input for the sole Core projection owner.
+    pub fn journal_requests(&self) -> Vec<AppendConditionalRequest> {
+        let mut requests: Vec<_> = self
+            .entries
+            .values()
+            .map(|record| record.request.clone())
+            .collect();
+        requests.sort_by(|left, right| {
+            left.agent_id
+                .cmp(&right.agent_id)
+                .then(left.entry_id.cmp(&right.entry_id))
+        });
+        requests
     }
 
     pub fn is_healthy(&self) -> bool {
@@ -561,7 +639,18 @@ fn entry_kind(entry: &CoreEntry) -> &'static str {
         CoreEntry::LeaseGranted { .. } => "LeaseGranted",
         CoreEntry::AttemptArmed { .. } => "AttemptArmed",
         CoreEntry::DispatchAttempt { .. } => "DispatchAttempt",
+        CoreEntry::AttemptSettled { .. } => "AttemptSettled",
+        CoreEntry::QuarantinedDispute { .. } => "QuarantinedDispute",
+        CoreEntry::CapabilityRevoked { .. } => "CapabilityRevoked",
+        CoreEntry::AdapterReservation { .. } => "AdapterReservation",
+        CoreEntry::AdapterSubmissionRecorded { .. } => "AdapterSubmissionRecorded",
         CoreEntry::FenceRevoked { .. } => "FenceRevoked",
+        CoreEntry::InteractionRequested { .. } => "InteractionRequested",
+        CoreEntry::InteractionBound { .. } => "InteractionBound",
+        CoreEntry::ConflictingInteractionOutcomeAppended { .. } => {
+            "ConflictingInteractionOutcomeAppended"
+        }
+        CoreEntry::InteractionTurnClosed { .. } => "InteractionTurnClosed",
     }
 }
 
