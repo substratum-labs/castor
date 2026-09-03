@@ -135,7 +135,17 @@ impl RocheSandboxRunner {
         let mount = &self.config.mounts[0];
         let mut docker = Command::new("docker");
         docker
-            .args(["run", "--detach", "--network", "none", "--read-only"])
+            .args([
+                "run",
+                "--detach",
+                "--network",
+                "none",
+                "--read-only",
+                "--pids-limit",
+                "256",
+                "--security-opt",
+                "no-new-privileges",
+            ])
             .arg("--mount")
             .arg(format!(
                 "type=bind,src={},dst={},readonly",
