@@ -14,6 +14,7 @@ pub mod c04_adapter;
 pub mod c05_settlement;
 pub mod c06_composition;
 pub mod castord;
+pub mod host;
 pub mod runtime;
 pub mod spec;
 
