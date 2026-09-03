@@ -85,6 +85,12 @@ pub enum CoreEntry {
     CapabilityRevoked {
         capability_id: String,
     },
+    CapabilityGranted {
+        capability_id: String,
+        /// Canonical JSON for the grant.  C-01 treats this as opaque durable
+        /// payload; C-06 owns its schema and reconstructs the projection.
+        grant_json: String,
+    },
     AdapterReservation {
         attempt_id: u64,
     },
@@ -233,6 +239,7 @@ impl AuthorityState {
             | CoreEntry::DispatchAttempt { .. }
             | CoreEntry::AttemptSettled { .. }
             | CoreEntry::QuarantinedDispute { .. }
+            | CoreEntry::CapabilityGranted { .. }
             | CoreEntry::CapabilityRevoked { .. }
             | CoreEntry::AdapterReservation { .. }
             | CoreEntry::AdapterSubmissionRecorded { .. } => {
@@ -485,11 +492,13 @@ impl DurableStorage for D1DurableStorage {
             }
         }
 
-        if let Some(current) = self.authority.get(&request.agent_id) {
-            if !current.accepts(&request) {
-                return AppendConditionalOutcome::RejectedPrecondition {
-                    current_projection_hint: current.projection_digest.clone(),
-                };
+        if !is_capability_control_entry(&request.entry) {
+            if let Some(current) = self.authority.get(&request.agent_id) {
+                if !current.accepts(&request) {
+                    return AppendConditionalOutcome::RejectedPrecondition {
+                        current_projection_hint: current.projection_digest.clone(),
+                    };
+                }
             }
         }
 
@@ -515,11 +524,13 @@ impl DurableStorage for D1DurableStorage {
             return AppendConditionalOutcome::UnavailableBeforeAck;
         }
 
-        let state = self
-            .authority
-            .entry(request.agent_id.clone())
-            .or_insert_with(|| AuthorityState::from_request(&request));
-        state.apply(&request, &proof);
+        if !is_capability_control_entry(&request.entry) {
+            let state = self
+                .authority
+                .entry(request.agent_id.clone())
+                .or_insert_with(|| AuthorityState::from_request(&request));
+            state.apply(&request, &proof);
+        }
         self.entries.insert(key, record);
         AppendConditionalOutcome::EntryPersisted(proof)
     }
@@ -617,6 +628,9 @@ fn apply_record_authority(
     authority: &mut HashMap<String, AuthorityState>,
     record: &JournalRecord,
 ) -> io::Result<()> {
+    if is_capability_control_entry(&record.request.entry) {
+        return Ok(());
+    }
     let state = authority
         .entry(record.request.agent_id.clone())
         .or_insert_with(|| AuthorityState::from_request(&record.request));
@@ -625,6 +639,13 @@ fn apply_record_authority(
     }
     state.apply(&record.request, &record.proof);
     Ok(())
+}
+
+fn is_capability_control_entry(entry: &CoreEntry) -> bool {
+    matches!(
+        entry,
+        CoreEntry::CapabilityGranted { .. } | CoreEntry::CapabilityRevoked { .. }
+    )
 }
 
 fn request_digest(request: &AppendConditionalRequest) -> io::Result<String> {
@@ -641,6 +662,7 @@ fn entry_kind(entry: &CoreEntry) -> &'static str {
         CoreEntry::DispatchAttempt { .. } => "DispatchAttempt",
         CoreEntry::AttemptSettled { .. } => "AttemptSettled",
         CoreEntry::QuarantinedDispute { .. } => "QuarantinedDispute",
+        CoreEntry::CapabilityGranted { .. } => "CapabilityGranted",
         CoreEntry::CapabilityRevoked { .. } => "CapabilityRevoked",
         CoreEntry::AdapterReservation { .. } => "AdapterReservation",
         CoreEntry::AdapterSubmissionRecorded { .. } => "AdapterSubmissionRecorded",
