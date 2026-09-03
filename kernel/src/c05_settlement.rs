@@ -127,7 +127,16 @@ struct Attempt {
     admission_entry_id: u64,
     status: AttemptStatus,
     dispatch_identity: Option<String>,
+    dispatch_entry_id: Option<u64>,
     resolution: Option<ResolutionClass>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AppendedCertificate {
+    agent_id: String,
+    evidence_region_id: String,
+    certificate: SettlementCertificate,
+    entry_id: u64,
 }
 
 /// In-memory Profile-D1 implementation of the admission and settlement
@@ -139,7 +148,7 @@ pub struct D1Settlement {
     attempts: HashMap<u64, Attempt>,
     attempt_by_action: HashMap<String, u64>,
     persisted_evidence: HashMap<String, String>,
-    certificate_entries: HashMap<String, u64>,
+    appended_certificates: HashMap<String, AppendedCertificate>,
     revoked_capabilities: HashSet<String>,
     roche_isolation_unknown: bool,
 }
@@ -153,19 +162,26 @@ impl D1Settlement {
             attempts: HashMap::new(),
             attempt_by_action: HashMap::new(),
             persisted_evidence: HashMap::new(),
-            certificate_entries: HashMap::new(),
+            appended_certificates: HashMap::new(),
             revoked_capabilities: HashSet::new(),
             roche_isolation_unknown: false,
         }
     }
 
-    fn has_active_attempt(&self) -> bool {
+    fn has_active_attempt_in_scope(&self, target_scope: &str) -> bool {
         self.attempts.values().any(|attempt| {
-            matches!(
-                attempt.status,
-                AttemptStatus::ArmedUnknown | AttemptStatus::Dispatched
-            )
+            attempt.target_scope == target_scope
+                && matches!(
+                    attempt.status,
+                    AttemptStatus::ArmedUnknown | AttemptStatus::Dispatched
+                )
         })
+    }
+}
+
+impl Default for D1Settlement {
+    fn default() -> Self {
+        Self::for_test("", 0)
     }
 }
 
@@ -199,7 +215,7 @@ impl AdmissionSettlement for D1Settlement {
             }
             return SettlementOutcome::RejectedCurrentState;
         }
-        if self.roche_isolation_unknown || self.has_active_attempt() {
+        if self.roche_isolation_unknown || self.has_active_attempt_in_scope(&request.target_scope) {
             return SettlementOutcome::RejectedCurrentState;
         }
 
@@ -215,6 +231,7 @@ impl AdmissionSettlement for D1Settlement {
                 admission_entry_id: request.entry_id,
                 status: AttemptStatus::ArmedUnknown,
                 dispatch_identity: None,
+                dispatch_entry_id: None,
                 resolution: None,
             },
         );
@@ -236,17 +253,20 @@ impl AdmissionSettlement for D1Settlement {
         let Some(attempt) = self.attempts.get_mut(&attempt_id) else {
             return SettlementOutcome::RejectedCurrentState;
         };
-        match &attempt.dispatch_identity {
-            Some(identity) if identity == dispatch_identity => {
+        match (&attempt.dispatch_identity, attempt.dispatch_entry_id) {
+            (Some(identity), Some(original_entry_id))
+                if identity == dispatch_identity && original_entry_id == entry_id =>
+            {
                 SettlementOutcome::DispatchRecordedAck { entry_id }
             }
-            Some(_) => SettlementOutcome::IntegrityOrProtocolFault,
-            None if attempt.status == AttemptStatus::ArmedUnknown => {
+            (Some(_), _) => SettlementOutcome::IntegrityOrProtocolFault,
+            (None, _) if attempt.status == AttemptStatus::ArmedUnknown => {
                 attempt.dispatch_identity = Some(dispatch_identity.into());
+                attempt.dispatch_entry_id = Some(entry_id);
                 attempt.status = AttemptStatus::Dispatched;
                 SettlementOutcome::DispatchRecordedAck { entry_id }
             }
-            None => SettlementOutcome::RejectedCurrentState,
+            (None, _) => SettlementOutcome::RejectedCurrentState,
         }
     }
 
@@ -254,20 +274,35 @@ impl AdmissionSettlement for D1Settlement {
         if evidence.region_id.is_empty() || evidence.digest.is_empty() {
             return SettlementOutcome::IntegrityOrProtocolFault;
         }
-        self.persisted_evidence
-            .insert(evidence.region_id, evidence.digest);
-        SettlementOutcome::EvidencePersisted
+        match self.persisted_evidence.get(&evidence.region_id) {
+            Some(digest) if digest != &evidence.digest => {
+                SettlementOutcome::IntegrityOrProtocolFault
+            }
+            _ => {
+                self.persisted_evidence
+                    .insert(evidence.region_id, evidence.digest);
+                SettlementOutcome::EvidencePersisted
+            }
+        }
     }
 
     fn present_settlement_certificate(&mut self, request: SettlementRequest) -> SettlementOutcome {
         if request.agent_id != self.agent_id {
             return SettlementOutcome::IntegrityOrProtocolFault;
         }
-        if let Some(&entry_id) = self
-            .certificate_entries
+        if let Some(appended) = self
+            .appended_certificates
             .get(&request.certificate.certificate_id)
         {
-            return SettlementOutcome::AlreadyAppendedSameCertificate { entry_id };
+            if appended.agent_id == request.agent_id
+                && appended.evidence_region_id == request.evidence_region_id
+                && appended.certificate == request.certificate
+            {
+                return SettlementOutcome::AlreadyAppendedSameCertificate {
+                    entry_id: appended.entry_id,
+                };
+            }
+            return SettlementOutcome::IntegrityOrProtocolFault;
         }
         if self.persisted_evidence.get(&request.evidence_region_id)
             != Some(&request.certificate.evidence_bundle_digest)
@@ -299,8 +334,15 @@ impl AdmissionSettlement for D1Settlement {
             return SettlementOutcome::RejectedCurrentState;
         }
         if attempt.status == AttemptStatus::Settled {
-            self.certificate_entries
-                .insert(request.certificate.certificate_id, request.entry_id);
+            self.appended_certificates.insert(
+                request.certificate.certificate_id.clone(),
+                AppendedCertificate {
+                    agent_id: request.agent_id,
+                    evidence_region_id: request.evidence_region_id,
+                    certificate: request.certificate,
+                    entry_id: request.entry_id,
+                },
+            );
             attempt.status = AttemptStatus::QuarantinedDispute;
             return SettlementOutcome::ConflictingEvidenceAppended;
         }
@@ -310,8 +352,15 @@ impl AdmissionSettlement for D1Settlement {
 
         attempt.status = AttemptStatus::Settled;
         attempt.resolution = Some(request.certificate.proposed_resolution);
-        self.certificate_entries
-            .insert(request.certificate.certificate_id, request.entry_id);
+        self.appended_certificates.insert(
+            request.certificate.certificate_id.clone(),
+            AppendedCertificate {
+                agent_id: request.agent_id,
+                evidence_region_id: request.evidence_region_id,
+                certificate: request.certificate.clone(),
+                entry_id: request.entry_id,
+            },
+        );
         SettlementOutcome::AcceptedAndAppended {
             entry_id: request.entry_id,
             resolution: request.certificate.proposed_resolution,
