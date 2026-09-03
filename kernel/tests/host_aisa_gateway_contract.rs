@@ -12,7 +12,7 @@ use castor_kernel::host::{
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -281,14 +281,60 @@ fn scenario_01_end_to_end_governed_turn_over_socket() {
 #[test]
 fn scenario_02_reference_runtime_receives_castor_ipc_socket() {
     let harness = ContractHarness::new();
-    let _client = harness.client();
-    let status = Command::new("python3")
-        .arg("-c")
-        .arg("import os; assert os.environ['CASTOR_IPC_SOCKET']")
-        .env("CASTOR_IPC_SOCKET", &harness.socket)
-        .status()
-        .expect("run Phase 3 reference runtime");
-    assert!(status.success(), "reference runtime must exit cleanly");
+    let other_root = tempfile::tempdir().expect("temporary child runtime root");
+    let other_socket = other_root.path().join("child-runtime.sock");
+    let status_file = other_root.path().join("child-runtime.status");
+    let child = format!(
+        "python3 -c '{}' ; echo $? > {}",
+        r#"import json, os, socket, struct
+def recv_exact(sock, size):
+    chunks = []
+    while size:
+        chunk = sock.recv(size)
+        assert chunk
+        chunks.append(chunk)
+        size -= len(chunk)
+    return bytes().join(chunks)
+
+s = socket.socket(socket.AF_UNIX)
+s.connect(os.environ["CASTOR_IPC_SOCKET"])
+request = {"request_id": "child-turn", "op": "AdmitTurn", "payload": {"agent_id": "test-agent", "turn_id": 1, "lease_epoch": 0, "base_projection_digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
+body = json.dumps(request, separators=(",", ":")).encode()
+s.sendall(struct.pack(">I", len(body)) + body)
+size = struct.unpack(">I", recv_exact(s, 4))[0]
+response = json.loads(recv_exact(s, size))
+assert response["outcome"]["type"] == "Admitted""#,
+        status_file.display(),
+    );
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_castord"))
+        .args([
+            "--storage-root",
+            other_root.path().to_str().unwrap(),
+            "--socket",
+            other_socket.to_str().unwrap(),
+            "--child",
+            &child,
+        ])
+        .spawn()
+        .expect("launch castord with reference runtime child");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !status_file.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "reference runtime child must complete within startup timeout"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        fs::read_to_string(&status_file)
+            .expect("read reference runtime exit status")
+            .trim(),
+        "0",
+        "reference runtime child must exit cleanly after admission"
+    );
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    drop(harness);
 }
 
 #[test]
@@ -574,12 +620,12 @@ fn scenario_14_second_daemon_is_excluded_by_storage_writer_lock() {
 #[test]
 fn scenario_15_live_socket_collision_never_unlinks_active_socket() {
     let harness = ContractHarness::new();
-    let _client = harness.client();
+    let other_root = tempfile::tempdir().expect("separate colliding daemon root");
     let socket_metadata_before = fs::metadata(&harness.socket).expect("active socket inode");
     let output = Command::new(env!("CARGO_BIN_EXE_castord"))
         .args([
             "--storage-root",
-            harness.storage_root().to_str().unwrap(),
+            other_root.path().to_str().unwrap(),
             "--socket",
             harness.socket.to_str().unwrap(),
         ])
@@ -591,6 +637,15 @@ fn scenario_15_live_socket_collision_never_unlinks_active_socket() {
             .expect("socket retained")
             .ino(),
         socket_metadata_before.ino()
+    );
+    assert_outcome(
+        call(
+            &mut harness.client(),
+            "active-daemon-still-responds",
+            "__ProviderSubmissionCount",
+            json!({}),
+        ),
+        "ProviderSubmissionCount",
     );
 }
 
@@ -611,6 +666,18 @@ fn scenario_16_framing_bounds_fail_closed() {
     assert!(
         MAX_FRAME_BYTES < u32::MAX as usize,
         "oversized length must be rejected before allocation"
+    );
+    let mut oversized = UnixStream::connect(&harness.socket).expect("connect oversized probe");
+    oversized
+        .write_all(&((MAX_FRAME_BYTES as u32 + 1024).to_be_bytes()))
+        .expect("send oversized frame header");
+    let oversized_response: SyscallResponse = serde_json::from_slice(
+        &read_framed(&mut oversized).expect("read oversized-frame rejection response"),
+    )
+    .expect("decode oversized-frame rejection response");
+    assert_eq!(oversized_response.error.unwrap().code, "MalformedRequest");
+    assert!(
+        matches!(read_framed(&mut oversized), Err(error) if error.kind() == ErrorKind::UnexpectedEof)
     );
     let mut malformed = UnixStream::connect(&harness.socket).expect("connect malformed probe");
     malformed
@@ -643,32 +710,72 @@ fn scenario_17_lost_ack_after_commit_does_not_mint_a_second_turn() {
 #[test]
 fn scenario_18_supervisor_persists_fence_before_child_termination_and_reap() {
     let harness = ContractHarness::new();
-    let mut client = harness.client();
+    let other_root = tempfile::tempdir().expect("temporary supervisor root");
+    let other_socket = other_root.path().join("supervisor.sock");
+    let pid_file = other_root.path().join("supervised-child.pid");
+    let child = format!("echo $$ > {}; exec sleep 60", pid_file.display());
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_castord"))
+        .args([
+            "--storage-root",
+            other_root.path().to_str().unwrap(),
+            "--socket",
+            other_socket.to_str().unwrap(),
+            "--child",
+            &child,
+        ])
+        .spawn()
+        .expect("launch supervised castord");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while UnixStream::connect(&other_socket).is_err() || !pid_file.exists() {
+        assert!(Instant::now() < deadline, "supervised daemon must start");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let child_pid = fs::read_to_string(&pid_file)
+        .expect("read supervised child pid")
+        .trim()
+        .parse::<u32>()
+        .expect("child pid must be numeric");
+    let mut client = GatewayClient::connect(&other_socket).expect("connect supervised daemon");
+    commit_ready_turn(&mut client, &["action-1"]);
     assert_outcome(
         call(
             &mut client,
-            "admit",
-            "AdmitTurn",
-            json!({ "agent_id": "agent-1", "turn_id": 1, "lease_epoch": 0, "base_projection_digest": DIGEST }),
+            "register",
+            "RegisterAction",
+            json!({ "action_id": "action-1" }),
         ),
-        "Admitted",
+        "ActionRegistered",
     );
-    assert_outcome(
+    assert_eq!(
         call(
             &mut client,
             "fence",
             "PersistFence",
-            json!({ "generation": 2 }),
-        ),
-        "GenerationFenced",
+            json!({ "generation": 2 })
+        )
+        .outcome,
+        Some(json!({ "type": "GenerationFenced", "generation": 2 }))
     );
-    assert_outcome(
-        call(
-            &mut client,
-            "replacement",
-            "AdmitTurn",
-            json!({ "agent_id": "agent-1", "turn_id": 2, "lease_epoch": 1, "base_projection_digest": DIGEST }),
-        ),
-        "RejectedPrecondition",
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let output = Command::new("ps")
+            .args(["-p", &child_pid.to_string(), "-o", "stat="])
+            .output()
+            .expect("inspect supervised child");
+        if output.stdout.is_empty() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "supervisor must kill and reap child"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        call(&mut client, "stale-certificate", "PresentAdmissionCertificate", json!({ "action_id": "action-1", "target_scope": "scope-1", "capability_id": "capability-1", "generation": 1 })).outcome,
+        Some(json!({ "type": "RejectedStaleGeneration", "current_generation": 2 }))
     );
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    drop(harness);
 }

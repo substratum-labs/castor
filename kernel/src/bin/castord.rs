@@ -295,14 +295,10 @@ fn serve_connection(
             },
             Err(error) => malformed(request.request_id, error),
         };
-        if write_framed(
+        let _ = write_framed(
             &mut stream,
             &serde_json::to_vec(&response).expect("response JSON"),
-        )
-        .is_err()
-        {
-            return;
-        }
+        );
         if fenced {
             if let Some(mut child) = child.lock().expect("child mutex poisoned").take() {
                 let _ = child.kill();
