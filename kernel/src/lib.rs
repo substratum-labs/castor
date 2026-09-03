@@ -13,6 +13,7 @@ pub mod c03_interaction;
 pub mod c04_adapter;
 pub mod c05_settlement;
 pub mod castord;
+pub mod governed_turn_composition;
 pub mod runtime;
 pub mod spec;
 
