@@ -4,8 +4,9 @@ use crate::c01_storage::{
     AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, D1DurableStorage,
     DurabilityProfile, DurableStorage, EnsureRegionOutcome,
 };
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -24,6 +25,7 @@ pub enum GovernedTurnOutcome {
     Settled { resolution: String },
     QuarantinedDispute,
     GenerationFenced { generation: u64 },
+    CapabilityGranted,
     CapabilityRevoked,
     Reconstructed,
     Ambiguous,
@@ -38,12 +40,65 @@ pub enum GovernedTurnOutcome {
     UnavailableBeforeAck,
 }
 
+/// The closed D1 authorization vocabulary. New rights require an RFC change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CapabilityRight {
+    AdmitTurn,
+    RegisterAction,
+    Revoke,
+    Derive,
+}
+
+/// Finite, Core-decidable constraints accepted in D1 grants.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Constraint {
+    ExactMatch { key: String, value: String },
+    ScopePrefix { prefix: String },
+    NumericUpperBound { metric: String, limit: u64 },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityGrant {
+    pub cap_id: String,
+    pub subject: String,
+    pub object_ref: String,
+    pub rights: Vec<CapabilityRight>,
+    pub constraints: Vec<Constraint>,
+    pub parent_cap_id: Option<String>,
+    pub revocation_domain: Option<String>,
+    pub delegation_allowed: bool,
+    pub max_turns: Option<u64>,
+}
+
+/// Privileged control-plane input; this is deliberately not an AISA request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GrantCapabilityRequest {
+    pub grant: CapabilityGrant,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeriveCapabilityRequest {
+    pub parent_cap_id: String,
+    pub child_subject: String,
+    pub child_rights: Vec<CapabilityRight>,
+    pub child_object_ref: String,
+    pub child_constraints: Vec<Constraint>,
+    pub child_delegation_allowed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CapabilityDeriveOutcome {
+    Derived { cap_id: String },
+    Rejected(GovernedTurnOutcome),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AdmitTurnRequest {
     pub agent_id: String,
     pub turn_id: u64,
     pub lease_epoch: u64,
     pub base_projection_digest: String,
+    pub cap_id: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RequestInteractionRequest {
@@ -71,10 +126,17 @@ pub struct CommitTurnRequest {
     pub action_manifest_region_id: String,
     pub action_manifest_digest: String,
     pub action_manifest: Vec<String>,
+    pub cap_id: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActionRegistrationRequest {
     pub action_id: String,
+    pub agent_id: String,
+    pub action_family: String,
+    pub cap_id: String,
+    pub target_scope: String,
+    pub numeric_parameters: BTreeMap<String, u64>,
+    pub exact_parameters: BTreeMap<String, String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PresentAdmissionCertificateRequest {
@@ -149,6 +211,10 @@ pub struct D1GovernedTurnAuthority {
     turn: Option<Turn>,
     committed_actions: HashMap<String, (String, String)>,
     registered_actions: HashSet<String>,
+    capabilities: HashMap<String, CapabilityGrant>,
+    capability_generations: HashMap<String, u64>,
+    action_capabilities: HashMap<String, String>,
+    capability_turns: HashMap<String, u64>,
     attempts: HashMap<u64, Attempt>,
     revoked_capabilities: HashSet<String>,
     next_entry_id: u64,
@@ -157,6 +223,83 @@ pub struct D1GovernedTurnAuthority {
 }
 
 impl D1GovernedTurnAuthority {
+    /// Records a privileged grant in the single durable journal and projection.
+    pub fn grant_capability(&mut self, request: GrantCapabilityRequest) -> GovernedTurnOutcome {
+        let grant = request.grant;
+        if grant.cap_id.is_empty()
+            || grant.subject.is_empty()
+            || grant.object_ref.is_empty()
+            || grant.rights.is_empty()
+        {
+            return GovernedTurnOutcome::RejectedPrecondition;
+        }
+        if let Some(existing) = self.capabilities.get(&grant.cap_id) {
+            return if existing == &grant {
+                GovernedTurnOutcome::CapabilityGranted
+            } else {
+                GovernedTurnOutcome::RejectedPrecondition
+            };
+        }
+        if self.agent_id.is_none() {
+            self.agent_id = Some(grant.subject.clone());
+        }
+        let grant_json = match serde_json::to_string(&grant) {
+            Ok(json) => json,
+            Err(_) => return GovernedTurnOutcome::IntegrityOrProtocolFault,
+        };
+        if let Err(outcome) = self.append(
+            CoreEntry::CapabilityGranted {
+                capability_id: grant.cap_id.clone(),
+                grant_json,
+            },
+            vec![],
+            None,
+            None,
+            self.projection_digest.clone(),
+        ) {
+            return outcome;
+        }
+        let capability_id = grant.cap_id.clone();
+        self.capabilities.insert(capability_id.clone(), grant);
+        self.capability_generations
+            .insert(capability_id, self.generation);
+        GovernedTurnOutcome::CapabilityGranted
+    }
+
+    pub fn derive_capability(
+        &mut self,
+        request: DeriveCapabilityRequest,
+    ) -> CapabilityDeriveOutcome {
+        let parent = match self.active_capability(&request.parent_cap_id) {
+            Ok(parent) => parent.clone(),
+            Err(outcome) => return CapabilityDeriveOutcome::Rejected(outcome),
+        };
+        if !parent.delegation_allowed
+            || !parent.rights.contains(&CapabilityRight::Derive)
+            || !rights_are_subset(&request.child_rights, &parent.rights)
+            || request.child_object_ref != parent.object_ref
+            || !constraints_attenuate(&request.child_constraints, &parent.constraints)
+        {
+            return CapabilityDeriveOutcome::Rejected(GovernedTurnOutcome::RejectedPrecondition);
+        }
+        let child = CapabilityGrant {
+            cap_id: derived_capability_id(&request),
+            subject: request.child_subject,
+            object_ref: request.child_object_ref,
+            rights: request.child_rights,
+            constraints: request.child_constraints,
+            parent_cap_id: Some(parent.cap_id),
+            revocation_domain: parent.revocation_domain,
+            delegation_allowed: request.child_delegation_allowed,
+            max_turns: parent.max_turns,
+        };
+        let cap_id = child.cap_id.clone();
+        match self.grant_capability(GrantCapabilityRequest { grant: child }) {
+            GovernedTurnOutcome::CapabilityGranted => CapabilityDeriveOutcome::Derived { cap_id },
+            outcome => CapabilityDeriveOutcome::Rejected(outcome),
+        }
+    }
+
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
         D1DurableStorage::open(path).map(Self::for_test)
     }
@@ -171,6 +314,10 @@ impl D1GovernedTurnAuthority {
             turn: None,
             committed_actions: HashMap::new(),
             registered_actions: HashSet::new(),
+            capabilities: HashMap::new(),
+            capability_generations: HashMap::new(),
+            action_capabilities: HashMap::new(),
+            capability_turns: HashMap::new(),
             attempts: HashMap::new(),
             revoked_capabilities: HashSet::new(),
             next_entry_id: 1,
@@ -230,6 +377,7 @@ impl D1GovernedTurnAuthority {
         let updates_projection = matches!(
             &entry,
             CoreEntry::AttemptArmed { .. }
+                | CoreEntry::ActionRegistered { .. }
                 | CoreEntry::DispatchAttempt { .. }
                 | CoreEntry::AttemptSettled { .. }
                 | CoreEntry::QuarantinedDispute { .. }
@@ -284,6 +432,73 @@ impl D1GovernedTurnAuthority {
                 )
         })
     }
+    fn active_capability(
+        &self,
+        capability_id: &str,
+    ) -> Result<&CapabilityGrant, GovernedTurnOutcome> {
+        let mut current = capability_id;
+        let mut seen = HashSet::new();
+        loop {
+            if !seen.insert(current) {
+                return Err(GovernedTurnOutcome::RejectedPrecondition);
+            }
+            if self.revoked_capabilities.contains(current) {
+                return Err(GovernedTurnOutcome::RejectedCapabilityRevoked);
+            }
+            let capability = self
+                .capabilities
+                .get(current)
+                .ok_or(GovernedTurnOutcome::RejectedPrecondition)?;
+            match capability.parent_cap_id.as_deref() {
+                Some(parent) => current = parent,
+                None => {
+                    return self
+                        .capabilities
+                        .get(capability_id)
+                        .ok_or(GovernedTurnOutcome::RejectedPrecondition)
+                }
+            }
+        }
+    }
+    fn validate_capability(
+        &self,
+        capability_id: &str,
+        subject: Option<&str>,
+        right: CapabilityRight,
+        object_ref: Option<&str>,
+    ) -> Result<&CapabilityGrant, GovernedTurnOutcome> {
+        let capability = self.active_capability(capability_id)?;
+        if !capability.rights.contains(&right)
+            || subject.is_some_and(|subject| capability.subject != subject)
+            || object_ref.is_some_and(|object| capability.object_ref != object)
+        {
+            return Err(GovernedTurnOutcome::RejectedPrecondition);
+        }
+        Ok(capability)
+    }
+    fn validate_turn_capability(
+        &self,
+        capability_id: &str,
+        agent_id: &str,
+    ) -> Result<(), GovernedTurnOutcome> {
+        let capability = self.active_capability(capability_id)?;
+        if self.capability_generations.get(capability_id) != Some(&self.generation) {
+            return Err(GovernedTurnOutcome::RejectedStaleAuthority);
+        }
+        if !capability.rights.contains(&CapabilityRight::AdmitTurn)
+            || capability.subject != agent_id
+            || capability.max_turns.is_some_and(|max_turns| {
+                self.capability_turns
+                    .get(capability_id)
+                    .copied()
+                    .unwrap_or_default()
+                    >= max_turns
+            })
+        {
+            return Err(GovernedTurnOutcome::RejectedPrecondition);
+        }
+        Ok(())
+    }
     fn replay(&mut self) {
         let requests = self.storage().journal_requests();
         self.generation = 1;
@@ -292,6 +507,10 @@ impl D1GovernedTurnAuthority {
         self.turn = None;
         self.committed_actions.clear();
         self.registered_actions.clear();
+        self.capabilities.clear();
+        self.capability_generations.clear();
+        self.action_capabilities.clear();
+        self.capability_turns.clear();
         self.attempts.clear();
         self.revoked_capabilities.clear();
         self.next_entry_id = 1;
@@ -361,6 +580,7 @@ impl D1GovernedTurnAuthority {
                     successor_projection_digest,
                     action_manifest,
                     action_manifest_digest,
+                    cap_id,
                     ..
                 } => {
                     self.projection_digest = successor_projection_digest;
@@ -376,6 +596,16 @@ impl D1GovernedTurnAuthority {
                                 .insert(action, (region.clone(), digest.clone()));
                         }
                     }
+                    if let Some(cap_id) = cap_id {
+                        *self.capability_turns.entry(cap_id).or_default() += 1;
+                    }
+                }
+                CoreEntry::ActionRegistered { action_id, cap_id } => {
+                    self.registered_actions.insert(action_id.clone());
+                    if !cap_id.is_empty() {
+                        self.action_capabilities.insert(action_id, cap_id);
+                    }
+                    self.projection_digest = proof_digest;
                 }
                 CoreEntry::AttemptArmed {
                     action_id,
@@ -456,6 +686,13 @@ impl D1GovernedTurnAuthority {
                         turn.status = TurnStatus::Closed;
                     }
                 }
+                CoreEntry::CapabilityGranted { grant_json, .. } => {
+                    if let Ok(grant) = serde_json::from_str::<CapabilityGrant>(&grant_json) {
+                        self.capability_generations
+                            .insert(grant.cap_id.clone(), self.generation);
+                        self.capabilities.insert(grant.cap_id.clone(), grant);
+                    }
+                }
                 CoreEntry::CapabilityRevoked { capability_id } => {
                     self.revoked_capabilities.insert(capability_id);
                 }
@@ -476,6 +713,11 @@ impl D1GovernedTurnAuthority {
                 .is_some_and(|agent| agent != request.agent_id)
         {
             return GovernedTurnOutcome::RejectedPrecondition;
+        }
+        if let Some(capability_id) = request.cap_id.as_deref() {
+            if let Err(outcome) = self.validate_turn_capability(capability_id, &request.agent_id) {
+                return outcome;
+            }
         }
         self.agent_id = Some(request.agent_id.clone());
         self.projection_digest = Some(request.base_projection_digest.clone());
@@ -604,10 +846,18 @@ impl D1GovernedTurnAuthority {
         let Some(turn) = self.turn.as_ref() else {
             return GovernedTurnOutcome::RejectedStaleAuthority;
         };
+        if let Some(capability_id) = request.cap_id.as_deref() {
+            if let Err(outcome) = self.validate_turn_capability(
+                capability_id,
+                self.agent_id.as_deref().unwrap_or_default(),
+            ) {
+                return outcome;
+            }
+        }
         if turn.status != TurnStatus::Ready
             || turn.active_lease != Some(request.lease_epoch)
             || turn.base_digest != request.base_projection_digest
-            || turn.interactions.is_empty()
+            || (request.cap_id.is_none() && turn.interactions.is_empty())
         {
             return GovernedTurnOutcome::RejectedStaleAuthority;
         }
@@ -644,6 +894,7 @@ impl D1GovernedTurnAuthority {
                 successor_projection_digest: Some(request.successor_digest.clone()),
                 action_manifest_digest: Some(request.action_manifest_digest.clone()),
                 action_manifest: request.action_manifest.clone(),
+                cap_id: request.cap_id.clone(),
             },
             vec![request.successor_region_id, manifest_region],
             Some(id),
@@ -653,6 +904,9 @@ impl D1GovernedTurnAuthority {
             return outcome;
         }
         self.projection_digest = Some(request.successor_digest);
+        if let Some(capability_id) = request.cap_id {
+            *self.capability_turns.entry(capability_id).or_default() += 1;
+        }
         for action in request.action_manifest {
             self.committed_actions.insert(
                 action,
@@ -671,6 +925,44 @@ impl D1GovernedTurnAuthority {
         if !self.committed_actions.contains_key(&request.action_id) {
             return GovernedTurnOutcome::RejectedPrecondition;
         }
+        if !request.cap_id.is_empty() {
+            let capability = match self.validate_capability(
+                &request.cap_id,
+                Some(&request.agent_id),
+                CapabilityRight::RegisterAction,
+                Some(&request.action_family),
+            ) {
+                Ok(capability) => capability,
+                Err(outcome) => return outcome,
+            };
+            if self.capability_generations.get(&request.cap_id) != Some(&self.generation) {
+                return GovernedTurnOutcome::RejectedStaleAuthority;
+            }
+            if !constraints_allow(
+                capability,
+                &request.target_scope,
+                &request.numeric_parameters,
+                &request.exact_parameters,
+            ) {
+                return GovernedTurnOutcome::RejectedPrecondition;
+            }
+        }
+        if let Err(outcome) = self.append(
+            CoreEntry::ActionRegistered {
+                action_id: request.action_id.clone(),
+                cap_id: request.cap_id.clone(),
+            },
+            vec![],
+            None,
+            None,
+            self.projection_digest.clone(),
+        ) {
+            return outcome;
+        }
+        if !request.cap_id.is_empty() {
+            self.action_capabilities
+                .insert(request.action_id.clone(), request.cap_id);
+        }
         self.registered_actions.insert(request.action_id);
         GovernedTurnOutcome::ActionRegistered
     }
@@ -686,7 +978,17 @@ impl D1GovernedTurnAuthority {
                 current_generation: self.generation,
             };
         }
-        if self.revoked_capabilities.contains(&request.capability_id) {
+        if let Some(bound_capability_id) = self.action_capabilities.get(&request.action_id) {
+            if bound_capability_id != &request.capability_id {
+                return GovernedTurnOutcome::RejectedPrecondition;
+            }
+            if self.capability_generations.get(bound_capability_id) != Some(&self.generation) {
+                return GovernedTurnOutcome::RejectedStaleAuthority;
+            }
+            if let Err(outcome) = self.active_capability(bound_capability_id) {
+                return outcome;
+            }
+        } else if self.revoked_capabilities.contains(&request.capability_id) {
             return GovernedTurnOutcome::RejectedCapabilityRevoked;
         }
         if self.scope_locked(&request.target_scope)
@@ -960,6 +1262,33 @@ impl D1GovernedTurnAuthority {
         self.revoked_capabilities.insert(capability_id.into());
         GovernedTurnOutcome::CapabilityRevoked
     }
+    pub fn revoke_capability_with_authorization(
+        &mut self,
+        authorization_capability_id: &str,
+        target_capability_id: &str,
+    ) -> GovernedTurnOutcome {
+        let authorizer = match self.validate_capability(
+            authorization_capability_id,
+            None,
+            CapabilityRight::Revoke,
+            None,
+        ) {
+            Ok(capability) => capability,
+            Err(outcome) => return outcome,
+        };
+        let target = match self.capabilities.get(target_capability_id) {
+            Some(target) => target,
+            None => return GovernedTurnOutcome::RejectedPrecondition,
+        };
+        let covers_target = authorization_capability_id == target_capability_id
+            || capability_descends_from(target, authorization_capability_id, &self.capabilities)
+            || (authorizer.revocation_domain.is_some()
+                && authorizer.revocation_domain == target.revocation_domain);
+        if !covers_target {
+            return GovernedTurnOutcome::RejectedPrecondition;
+        }
+        self.revoke_capability(target_capability_id)
+    }
     pub fn reconstruct_after_crash(&mut self) -> GovernedTurnOutcome {
         let old = self.storage.take();
         drop(old);
@@ -973,4 +1302,87 @@ impl D1GovernedTurnAuthority {
             Err(_) => GovernedTurnOutcome::IntegrityOrProtocolFault,
         }
     }
+}
+
+fn rights_are_subset(child: &[CapabilityRight], parent: &[CapabilityRight]) -> bool {
+    !child.is_empty() && child.iter().all(|right| parent.contains(right))
+}
+
+fn constraints_attenuate(child: &[Constraint], parent: &[Constraint]) -> bool {
+    parent.iter().all(|parent_constraint| match parent_constraint {
+        Constraint::ExactMatch { key, value } => child.iter().any(|candidate| {
+            matches!(candidate, Constraint::ExactMatch { key: child_key, value: child_value }
+                if child_key == key && child_value == value)
+        }),
+        Constraint::NumericUpperBound { metric, limit } => child.iter().any(|candidate| {
+            matches!(candidate, Constraint::NumericUpperBound { metric: child_metric, limit: child_limit }
+                if child_metric == metric && child_limit <= limit)
+        }),
+        Constraint::ScopePrefix { prefix } => child.iter().any(|candidate| {
+            matches!(candidate, Constraint::ScopePrefix { prefix: child_prefix }
+                if scope_is_within(child_prefix, prefix))
+        }),
+    })
+}
+
+fn scope_is_within(scope: &str, prefix: &str) -> bool {
+    scope == prefix
+        || scope
+            .strip_prefix(prefix)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn constraints_allow(
+    capability: &CapabilityGrant,
+    target_scope: &str,
+    numeric_parameters: &BTreeMap<String, u64>,
+    exact_parameters: &BTreeMap<String, String>,
+) -> bool {
+    !target_scope.split('/').any(|part| part == "..")
+        && capability
+            .constraints
+            .iter()
+            .all(|constraint| match constraint {
+                Constraint::ExactMatch { key, value } => exact_parameters
+                    .get(key)
+                    .is_some_and(|actual| actual == value),
+                Constraint::ScopePrefix { prefix } => scope_is_within(target_scope, prefix),
+                Constraint::NumericUpperBound { metric, limit } => numeric_parameters
+                    .get(metric)
+                    .is_some_and(|value| value <= limit),
+            })
+}
+
+fn capability_descends_from(
+    capability: &CapabilityGrant,
+    ancestor_id: &str,
+    capabilities: &HashMap<String, CapabilityGrant>,
+) -> bool {
+    let mut current = capability.parent_cap_id.as_deref();
+    let mut seen = HashSet::new();
+    while let Some(capability_id) = current {
+        if !seen.insert(capability_id) {
+            return false;
+        }
+        if capability_id == ancestor_id {
+            return true;
+        }
+        current = capabilities
+            .get(capability_id)
+            .and_then(|candidate| candidate.parent_cap_id.as_deref());
+    }
+    false
+}
+
+fn derived_capability_id(request: &DeriveCapabilityRequest) -> String {
+    let canonical = serde_json::to_vec(&(
+        &request.parent_cap_id,
+        &request.child_subject,
+        &request.child_rights,
+        &request.child_object_ref,
+        &request.child_constraints,
+        request.child_delegation_allowed,
+    ))
+    .expect("capability derivation request is serializable");
+    format!("cap:{:x}", Sha256::digest(canonical))
 }

@@ -2,12 +2,14 @@
 
 use castor_kernel::c01_storage::{D1DurableStorage, DurabilityProfile, DurableStorage};
 use castor_kernel::c06_composition::{
-    ActionRegistrationRequest, AdmitTurnRequest, CommitTurnRequest, ConsumeInteractionRequest,
-    D1GovernedTurnAuthority, DeliverArmedAttemptRequest, GovernedTurnOutcome,
+    ActionRegistrationRequest, AdmitTurnRequest, CapabilityGrant, CapabilityRight,
+    CommitTurnRequest, ConsumeInteractionRequest, D1GovernedTurnAuthority,
+    DeliverArmedAttemptRequest, GovernedTurnOutcome, GrantCapabilityRequest,
     InteractionOutcomeReport, PresentAdmissionCertificateRequest,
     PresentSettlementCertificateRequest, RecordDispatchAttemptRequest, RequestInteractionRequest,
 };
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use tempfile::TempDir;
 
 fn digest(bytes: &[u8]) -> String {
@@ -43,9 +45,26 @@ impl Fixture {
                 castor_kernel::c01_storage::EnsureRegionOutcome::Success(_)
             ));
         }
+        let mut authority = D1GovernedTurnAuthority::for_test(storage);
+        assert_eq!(
+            authority.grant_capability(GrantCapabilityRequest {
+                grant: CapabilityGrant {
+                    cap_id: "capability-1".into(),
+                    subject: "agent-1".into(),
+                    object_ref: "c04:generic".into(),
+                    rights: vec![CapabilityRight::AdmitTurn, CapabilityRight::RegisterAction],
+                    constraints: vec![],
+                    parent_cap_id: None,
+                    revocation_domain: None,
+                    delegation_allowed: false,
+                    max_turns: None,
+                }
+            }),
+            GovernedTurnOutcome::CapabilityGranted
+        );
         Self {
             _root: root,
-            authority: D1GovernedTurnAuthority::for_test(storage),
+            authority,
         }
     }
 
@@ -75,9 +94,7 @@ impl Fixture {
             GovernedTurnOutcome::TurnCommitted
         );
         assert_eq!(
-            self.authority.register_action(ActionRegistrationRequest {
-                action_id: "action-1".into()
-            }),
+            self.authority.register_action(action("action-1")),
             GovernedTurnOutcome::ActionRegistered
         );
     }
@@ -105,6 +122,7 @@ fn admit() -> AdmitTurnRequest {
         turn_id: 1,
         lease_epoch: 0,
         base_projection_digest: digest(b"H0"),
+        cap_id: Some("capability-1".into()),
     }
 }
 fn request_interaction() -> RequestInteractionRequest {
@@ -136,6 +154,18 @@ fn commit() -> CommitTurnRequest {
         action_manifest_region_id: "region://action-manifest".into(),
         action_manifest_digest: digest(b"action-1\naction-2"),
         action_manifest: vec!["action-1".into(), "action-2".into()],
+        cap_id: Some("capability-1".into()),
+    }
+}
+fn action(action_id: &str) -> ActionRegistrationRequest {
+    ActionRegistrationRequest {
+        action_id: action_id.into(),
+        agent_id: "agent-1".into(),
+        action_family: "c04:generic".into(),
+        cap_id: "capability-1".into(),
+        target_scope: String::new(),
+        numeric_parameters: BTreeMap::new(),
+        exact_parameters: BTreeMap::new(),
     }
 }
 fn admission() -> PresentAdmissionCertificateRequest {
@@ -262,12 +292,15 @@ fn test_comp_replay_restores_durable_ready_lease_for_turn_commit() {
 #[test]
 fn test_comp_turn_commit_requires_durably_bound_interaction() {
     let mut c = Fixture::new();
+    let mut no_cap_admit = admit();
+    no_cap_admit.cap_id = None;
     assert_eq!(
-        c.authority.admit_turn(admit()),
+        c.authority.admit_turn(no_cap_admit),
         GovernedTurnOutcome::Admitted
     );
     let mut initial_lease_commit = commit();
     initial_lease_commit.lease_epoch = 0;
+    initial_lease_commit.cap_id = None;
     assert_eq!(
         c.authority.commit_turn(initial_lease_commit),
         GovernedTurnOutcome::RejectedStaleAuthority
@@ -320,9 +353,7 @@ fn test_comp_fence_prevents_stale_carrier_commit_and_action_publication() {
         GovernedTurnOutcome::RejectedStaleAuthority
     );
     assert_eq!(
-        c.authority.register_action(ActionRegistrationRequest {
-            action_id: "action-1".into()
-        }),
+        c.authority.register_action(action("action-1")),
         GovernedTurnOutcome::RejectedPrecondition
     );
 }
@@ -364,9 +395,7 @@ fn test_comp_armed_unknown_blocks_overlapping_action_scope_admission() {
     let mut c = Fixture::new();
     c.armed_action();
     assert_eq!(
-        c.authority.register_action(ActionRegistrationRequest {
-            action_id: "action-2".into()
-        }),
+        c.authority.register_action(action("action-2")),
         GovernedTurnOutcome::ActionRegistered
     );
     let mut other = admission();
@@ -482,9 +511,7 @@ fn test_comp_weak_timeout_rejected_and_preserves_armed_unknown_blocking_mutex() 
         GovernedTurnOutcome::RejectedInvalidProofClass
     );
     assert_eq!(
-        c.authority.register_action(ActionRegistrationRequest {
-            action_id: "action-2".into()
-        }),
+        c.authority.register_action(action("action-2")),
         GovernedTurnOutcome::ActionRegistered
     );
     let mut other = admission();
@@ -509,9 +536,7 @@ fn test_comp_pre_dispatch_not_applied_with_verifiable_non_execution_settles_and_
         }
     );
     assert_eq!(
-        c.authority.register_action(ActionRegistrationRequest {
-            action_id: "action-2".into()
-        }),
+        c.authority.register_action(action("action-2")),
         GovernedTurnOutcome::ActionRegistered
     );
     let mut other = admission();
@@ -560,9 +585,7 @@ fn test_comp_quarantined_dispute_blocks_different_action_on_same_scope() {
         GovernedTurnOutcome::QuarantinedDispute
     );
     assert_eq!(
-        c.authority.register_action(ActionRegistrationRequest {
-            action_id: "action-2".into()
-        }),
+        c.authority.register_action(action("action-2")),
         GovernedTurnOutcome::ActionRegistered
     );
     let mut other = admission();
@@ -590,9 +613,7 @@ fn test_comp_crash_after_quarantine_keeps_different_action_locked_on_same_scope(
         GovernedTurnOutcome::QuarantinedDispute
     );
     assert_eq!(
-        c.authority.register_action(ActionRegistrationRequest {
-            action_id: "action-2".into()
-        }),
+        c.authority.register_action(action("action-2")),
         GovernedTurnOutcome::ActionRegistered
     );
     assert_eq!(
