@@ -10,29 +10,68 @@ use castor_kernel::host::{
     read_framed, GatewayClient, SyscallRequest, SyscallResponse, MAX_FRAME_BYTES,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command};
+use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 const DIGEST: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 struct ContractHarness {
+    _serial: MutexGuard<'static, ()>,
     root: TempDir,
     socket: PathBuf,
+    daemon: Mutex<Child>,
 }
 
 impl ContractHarness {
     fn new() -> Self {
+        // Each fixture starts a real process and exercises OS-level writer
+        // locks. Serializing fixtures avoids test-runner process churn from
+        // obscuring those boundaries; clients within a fixture stay concurrent.
+        static FIXTURE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let serial = FIXTURE_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("fixture lock poisoned");
         let root = tempfile::tempdir().expect("temporary host root");
         let socket = root.path().join("castord.sock");
-        // A bound-then-closed socket leaves the exact failure mode expected
-        // before the Phase 3 listener is implemented: ECONNREFUSED.
+        // The daemon's safe-bind algorithm must remove a stale inode without
+        // touching an active listener.
         drop(UnixListener::bind(&socket).expect("create stale socket inode"));
-        Self { root, socket }
+        let daemon = Command::new(env!("CARGO_BIN_EXE_castord"))
+            .args([
+                "--storage-root",
+                root.path().to_str().unwrap(),
+                "--socket",
+                socket.to_str().unwrap(),
+            ])
+            .spawn()
+            .expect("launch castord");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while UnixStream::connect(&socket).is_err() {
+            assert!(
+                Instant::now() < deadline,
+                "castord must listen within startup timeout"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        // Let the daemon accept and retire the readiness probe before a
+        // long-lived stop-and-wait client starts its first frame.
+        thread::sleep(Duration::from_millis(25));
+        Self {
+            _serial: serial,
+            root,
+            socket,
+            daemon: Mutex::new(daemon),
+        }
     }
 
     fn client(&self) -> GatewayClient {
@@ -46,11 +85,31 @@ impl ContractHarness {
     }
 
     fn provider_submission_count(&self) -> usize {
-        panic!("T-302-C must wire this fixture to the real host-side counting provider")
+        let response = call(
+            &mut self.client(),
+            "provider-count",
+            "__ProviderSubmissionCount",
+            json!({}),
+        );
+        response.outcome.unwrap()["count"].as_u64().unwrap() as usize
     }
 
     fn lose_adapter_dedup_state(&self) {
-        panic!("T-302-C must simulate loss of the real host adapter dedup projection")
+        let response = call(
+            &mut self.client(),
+            "lose-dedup",
+            "__LoseAdapterDedupState",
+            json!({}),
+        );
+        assert_outcome(response, "AdapterDedupLost");
+    }
+}
+
+impl Drop for ContractHarness {
+    fn drop(&mut self) {
+        let mut daemon = self.daemon.lock().expect("daemon mutex poisoned");
+        let _ = daemon.kill();
+        let _ = daemon.wait();
     }
 }
 
@@ -69,7 +128,13 @@ fn call(client: &mut GatewayClient, request_id: &str, op: &str, payload: Value) 
 }
 
 fn assert_outcome(response: SyscallResponse, expected: &str) {
-    assert_eq!(response.outcome, Some(json!({ "type": expected })));
+    assert_eq!(
+        response
+            .outcome
+            .as_ref()
+            .and_then(|outcome| outcome.get("type")),
+        Some(&json!(expected))
+    );
 }
 
 fn assert_attempt_armed(response: SyscallResponse, attempt_id: u64) {
@@ -80,6 +145,8 @@ fn assert_attempt_armed(response: SyscallResponse, attempt_id: u64) {
 }
 
 fn commit_ready_turn(client: &mut GatewayClient, action_manifest: &[&str]) {
+    let manifest_content = format!("{}\n", action_manifest.join("\n")).into_bytes();
+    let manifest_digest = format!("sha256:{:x}", Sha256::digest(&manifest_content));
     assert_outcome(
         call(
             client,
@@ -130,7 +197,7 @@ fn commit_ready_turn(client: &mut GatewayClient, action_manifest: &[&str]) {
             client,
             "ensure-manifest",
             "EnsureRegion",
-            json!({ "region_ref": "region://manifest", "content_digest": DIGEST, "content": [], "profile": "D1" }),
+            json!({ "region_ref": "region://manifest", "content_digest": manifest_digest, "content": manifest_content, "profile": "D1" }),
         ),
         "Success",
     );
@@ -139,7 +206,7 @@ fn commit_ready_turn(client: &mut GatewayClient, action_manifest: &[&str]) {
             client,
             "commit",
             "CommitTurn",
-            json!({ "lease_epoch": 1, "base_projection_digest": DIGEST, "successor_region_id": "region://observation", "successor_digest": DIGEST, "action_manifest_region_id": "region://manifest", "action_manifest_digest": DIGEST, "action_manifest": action_manifest }),
+            json!({ "lease_epoch": 1, "base_projection_digest": DIGEST, "successor_region_id": "region://observation", "successor_digest": DIGEST, "action_manifest_region_id": "region://manifest", "action_manifest_digest": manifest_digest, "action_manifest": action_manifest }),
         ),
         "TurnCommitted",
     );
