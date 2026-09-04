@@ -28,6 +28,7 @@ struct ContractHarness {
     _serial: MutexGuard<'static, ()>,
     root: TempDir,
     socket: PathBuf,
+    control_socket: PathBuf,
     daemon: Mutex<Child>,
 }
 
@@ -43,6 +44,7 @@ impl ContractHarness {
             .expect("fixture lock poisoned");
         let root = tempfile::tempdir().expect("temporary host root");
         let socket = root.path().join("castord.sock");
+        let control_socket = root.path().join("control.sock");
         // The daemon's safe-bind algorithm must remove a stale inode without
         // touching an active listener.
         drop(UnixListener::bind(&socket).expect("create stale socket inode"));
@@ -52,11 +54,14 @@ impl ContractHarness {
                 root.path().to_str().unwrap(),
                 "--socket",
                 socket.to_str().unwrap(),
+                "--control-socket",
+                control_socket.to_str().unwrap(),
             ])
             .spawn()
             .expect("launch castord");
         let deadline = Instant::now() + Duration::from_secs(3);
-        while UnixStream::connect(&socket).is_err() {
+        while UnixStream::connect(&socket).is_err() || UnixStream::connect(&control_socket).is_err()
+        {
             assert!(
                 Instant::now() < deadline,
                 "castord must listen within startup timeout"
@@ -70,6 +75,7 @@ impl ContractHarness {
             _serial: serial,
             root,
             socket,
+            control_socket,
             daemon: Mutex::new(daemon),
         }
     }
@@ -78,6 +84,11 @@ impl ContractHarness {
         GatewayClient::connect(&self.socket).expect(
             "T-302-C castord daemon is intentionally absent: this RED contract must fail at socket connect",
         )
+    }
+
+    fn control_client(&self) -> GatewayClient {
+        GatewayClient::connect(&self.control_socket)
+            .expect("control socket must accept host client")
     }
 
     fn storage_root(&self) -> &std::path::Path {
@@ -778,4 +789,35 @@ fn scenario_18_supervisor_persists_fence_before_child_termination_and_reap() {
     let _ = daemon.kill();
     let _ = daemon.wait();
     drop(harness);
+}
+
+#[test]
+fn scenario_19_dual_socket_uses_closed_channel_allowlists() {
+    let harness = ContractHarness::new();
+    let agent_error = call(
+        &mut harness.client(),
+        "agent-grant",
+        "GrantCapability",
+        json!({}),
+    );
+    assert_eq!(agent_error.status, "Error");
+    assert_eq!(agent_error.error.unwrap().code, "UnauthorizedOpcode");
+
+    let control_error = call(
+        &mut harness.control_client(),
+        "control-admit",
+        "AdmitTurn",
+        json!({}),
+    );
+    assert_eq!(control_error.status, "Error");
+    assert_eq!(control_error.error.unwrap().code, "UnauthorizedOpcode");
+
+    let summary = call(
+        &mut harness.control_client(),
+        "control-summary",
+        "GetProjectionSummary",
+        json!({}),
+    );
+    assert_eq!(summary.status, "Ok");
+    assert_eq!(summary.outcome.unwrap()["generation"], json!(1));
 }

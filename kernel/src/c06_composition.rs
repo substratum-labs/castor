@@ -5,6 +5,7 @@ use crate::c01_storage::{
     DurabilityProfile, DurableStorage, EnsureRegionOutcome,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
@@ -12,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GovernedTurnOutcome {
+    EntryPersisted,
     Admitted,
     InteractionRequested,
     InteractionBound,
@@ -35,6 +37,7 @@ pub enum GovernedTurnOutcome {
     RejectedInvalidProofClass,
     RejectedLateOrClosedTurn,
     RejectedCurrentState,
+    RejectedNotFound,
     RejectedPrecondition,
     IntegrityOrProtocolFault,
     UnavailableBeforeAck,
@@ -71,9 +74,24 @@ pub struct CapabilityGrant {
 }
 
 /// Privileged control-plane input; this is deliberately not an AISA request.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GrantCapabilityRequest {
     pub grant: CapabilityGrant,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DisputeResolution {
+    Confirmed,
+    NotApplied,
+    Aborted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolveQuarantinedDisputeRequest {
+    pub attempt_id: u64,
+    pub resolution: DisputeResolution,
+    pub evidence_region_digest: Option<String>,
+    pub operator_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -187,6 +205,8 @@ enum AttemptStatus {
     Dispatched,
     Settled,
     QuarantinedDispute,
+    NotApplied,
+    Aborted,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Attempt {
@@ -386,6 +406,34 @@ impl D1GovernedTurnAuthority {
             && self.revoked_capabilities == other.revoked_capabilities
     }
 
+    pub fn projection_summary(&self) -> serde_json::Value {
+        let locked_scopes: HashSet<_> = self
+            .attempts
+            .values()
+            .filter(|attempt| !attempt_is_terminal(attempt.status))
+            .map(|attempt| attempt.target_scope.as_str())
+            .collect();
+        json!({
+            "generation": self.generation,
+            "active_capabilities": self.capabilities.keys()
+                .filter(|capability_id| !self.revoked_capabilities.contains(*capability_id))
+                .count(),
+            "locked_scopes": locked_scopes.len(),
+            "quarantined_disputes": self.attempts.values()
+                .filter(|attempt| attempt.status == AttemptStatus::QuarantinedDispute)
+                .count(),
+            "journal_entries": self.storage().journal_entries(),
+        })
+    }
+
+    pub fn inspect_journal(&self) -> Vec<CoreEntry> {
+        self.storage()
+            .journal_requests()
+            .into_iter()
+            .map(|request| request.entry)
+            .collect()
+    }
+
     /// Creates a D-04 restart cache.  The blob is not authoritative until
     /// the subsequent `SnapshotIndex` frame is durably appended.
     pub fn create_snapshot(&mut self, snapshot_id: &str) -> Result<(), GovernedTurnOutcome> {
@@ -464,8 +512,16 @@ impl D1GovernedTurnAuthority {
         lease: Option<u64>,
         base: Option<String>,
     ) -> Result<(), GovernedTurnOutcome> {
-        let Some(agent_id) = self.agent_id.clone() else {
-            return Err(GovernedTurnOutcome::RejectedPrecondition);
+        let agent_id = match &self.agent_id {
+            Some(id) => id.clone(),
+            None if matches!(
+                &entry,
+                CoreEntry::FenceRevoked { .. } | CoreEntry::SnapshotIndex { .. }
+            ) =>
+            {
+                "system".to_string()
+            }
+            None => return Err(GovernedTurnOutcome::RejectedPrecondition),
         };
         let updates_projection = matches!(
             &entry,
@@ -474,6 +530,7 @@ impl D1GovernedTurnAuthority {
                 | CoreEntry::DispatchAttempt { .. }
                 | CoreEntry::AttemptSettled { .. }
                 | CoreEntry::QuarantinedDispute { .. }
+                | CoreEntry::QuarantinedDisputeResolved { .. }
                 | CoreEntry::AdapterReservation { .. }
                 | CoreEntry::AdapterSubmissionRecorded { .. }
         );
@@ -776,6 +833,16 @@ impl D1GovernedTurnAuthority {
                 CoreEntry::QuarantinedDispute { attempt_id, .. } => {
                     if let Some(attempt) = self.attempts.get_mut(&attempt_id) {
                         attempt.status = AttemptStatus::QuarantinedDispute;
+                    }
+                    self.projection_digest = proof_digest;
+                }
+                CoreEntry::QuarantinedDisputeResolved {
+                    attempt_id,
+                    resolution,
+                    ..
+                } => {
+                    if let Some(attempt) = self.attempts.get_mut(&attempt_id) {
+                        attempt.status = dispute_resolution_status(&resolution);
                     }
                     self.projection_digest = proof_digest;
                 }
@@ -1131,7 +1198,7 @@ impl D1GovernedTurnAuthority {
             || self
                 .attempts
                 .values()
-                .any(|a| a.action_id == request.action_id && a.status != AttemptStatus::Settled)
+                .any(|a| a.action_id == request.action_id && !attempt_is_terminal(a.status))
         {
             return GovernedTurnOutcome::RejectedCurrentState;
         }
@@ -1354,7 +1421,7 @@ impl D1GovernedTurnAuthority {
         }
     }
     pub fn persist_fence(&mut self, generation: u64) -> GovernedTurnOutcome {
-        if generation <= self.generation || self.agent_id.is_none() {
+        if generation <= self.generation {
             return GovernedTurnOutcome::RejectedPrecondition;
         }
         let (turn, lease, base) = self
@@ -1379,6 +1446,38 @@ impl D1GovernedTurnAuthority {
             turn.status = TurnStatus::Closed;
         }
         GovernedTurnOutcome::GenerationFenced { generation }
+    }
+    pub fn resolve_quarantined_dispute(
+        &mut self,
+        request: ResolveQuarantinedDisputeRequest,
+    ) -> Result<GovernedTurnOutcome, GovernedTurnOutcome> {
+        let Some(attempt) = self.attempts.get(&request.attempt_id) else {
+            return Err(GovernedTurnOutcome::RejectedNotFound);
+        };
+        if attempt.status != AttemptStatus::QuarantinedDispute {
+            return Err(GovernedTurnOutcome::RejectedCurrentState);
+        }
+        if request.operator_id.is_empty() {
+            return Err(GovernedTurnOutcome::RejectedPrecondition);
+        }
+        let resolution = dispute_resolution_name(request.resolution).to_owned();
+        self.append(
+            CoreEntry::QuarantinedDisputeResolved {
+                attempt_id: request.attempt_id,
+                resolution,
+                evidence_region_digest: request.evidence_region_digest,
+                operator_id: request.operator_id,
+            },
+            vec![],
+            None,
+            None,
+            self.projection_digest.clone(),
+        )?;
+        self.attempts
+            .get_mut(&request.attempt_id)
+            .expect("attempt exists")
+            .status = dispute_resolution_status(dispute_resolution_name(request.resolution));
+        Ok(GovernedTurnOutcome::EntryPersisted)
     }
     pub fn revoke_capability(&mut self, capability_id: &str) -> GovernedTurnOutcome {
         if capability_id.is_empty() || self.agent_id.is_none() {
@@ -1449,6 +1548,30 @@ impl D1GovernedTurnAuthority {
             turn.active_lease = None;
         }
     }
+}
+
+fn dispute_resolution_name(resolution: DisputeResolution) -> &'static str {
+    match resolution {
+        DisputeResolution::Confirmed => "Confirmed",
+        DisputeResolution::NotApplied => "NotApplied",
+        DisputeResolution::Aborted => "Aborted",
+    }
+}
+
+fn dispute_resolution_status(resolution: &str) -> AttemptStatus {
+    match resolution {
+        "Confirmed" => AttemptStatus::Settled,
+        "NotApplied" => AttemptStatus::NotApplied,
+        "Aborted" => AttemptStatus::Aborted,
+        _ => AttemptStatus::Aborted,
+    }
+}
+
+fn attempt_is_terminal(status: AttemptStatus) -> bool {
+    matches!(
+        status,
+        AttemptStatus::Settled | AttemptStatus::NotApplied | AttemptStatus::Aborted
+    )
 }
 
 fn rights_are_subset(child: &[CapabilityRight], parent: &[CapabilityRight]) -> bool {

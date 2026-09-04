@@ -21,12 +21,13 @@ use std::thread;
 use std::time::Duration;
 
 fn usage() -> &'static str {
-    "usage: castord --storage-root PATH --socket PATH [--child CMD] [--sandbox roche|none] [--sandbox-image IMAGE]"
+    "usage: castord --storage-root PATH --socket PATH [--control-socket PATH] [--child CMD] [--sandbox roche|none] [--sandbox-image IMAGE]"
 }
 
 struct Config {
     storage_root: PathBuf,
     socket: PathBuf,
+    control_socket: Option<PathBuf>,
     child: Option<String>,
     sandbox: SandboxMode,
     sandbox_image: String,
@@ -36,6 +37,12 @@ struct Config {
 enum SandboxMode {
     None,
     Roche,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SocketChannel {
+    Agent,
+    Control,
 }
 
 enum SupervisedChild {
@@ -61,6 +68,7 @@ fn parse_args() -> Result<Config, String> {
     let mut args = env::args().skip(1);
     let mut storage_root = None;
     let mut socket = None;
+    let mut control_socket = None;
     let mut child = None;
     let mut sandbox = SandboxMode::None;
     let mut sandbox_image = DEFAULT_SANDBOX_IMAGE.to_owned();
@@ -77,6 +85,12 @@ fn parse_args() -> Result<Config, String> {
                     args.next()
                         .ok_or_else(|| "--socket requires a path".to_string())?,
                 ))
+            }
+            "--control-socket" => {
+                control_socket =
+                    Some(PathBuf::from(args.next().ok_or_else(|| {
+                        "--control-socket requires a path".to_string()
+                    })?))
             }
             "--child" => {
                 child = Some(
@@ -106,6 +120,7 @@ fn parse_args() -> Result<Config, String> {
     Ok(Config {
         storage_root: storage_root.ok_or_else(|| "--storage-root is required".to_string())?,
         socket: socket.ok_or_else(|| "--socket is required".to_string())?,
+        control_socket,
         child,
         sandbox,
         sandbox_image,
@@ -154,6 +169,18 @@ fn malformed(request_id: String, message: impl Into<String>) -> SyscallResponse 
     }
 }
 
+fn gateway_error(request_id: String, code: &str, message: impl Into<String>) -> SyscallResponse {
+    SyscallResponse {
+        request_id,
+        status: "Error".into(),
+        outcome: None,
+        error: Some(GatewayError {
+            code: code.into(),
+            message: message.into(),
+        }),
+    }
+}
+
 fn string(payload: &Value, name: &str) -> Result<String, String> {
     payload
         .get(name)
@@ -182,7 +209,7 @@ fn outcome_value(outcome: GovernedTurnOutcome) -> Value {
             json!({"type":"RejectedStaleGeneration","current_generation":current_generation})
         }
         other => json!({"type": match other {
-            GovernedTurnOutcome::Admitted => "Admitted", GovernedTurnOutcome::InteractionRequested => "InteractionRequested", GovernedTurnOutcome::InteractionBound => "InteractionBound", GovernedTurnOutcome::InteractionConsumed => "InteractionConsumed", GovernedTurnOutcome::TurnCommitted => "TurnCommitted", GovernedTurnOutcome::ActionRegistered => "ActionRegistered", GovernedTurnOutcome::DispatchRecorded => "DispatchRecorded", GovernedTurnOutcome::Delivered => "Delivered", GovernedTurnOutcome::DuplicateDelivery => "DuplicateDelivery", GovernedTurnOutcome::QuarantinedDispute => "QuarantinedDispute", GovernedTurnOutcome::CapabilityRevoked => "CapabilityRevoked", GovernedTurnOutcome::Reconstructed => "Reconstructed", GovernedTurnOutcome::Ambiguous => "Ambiguous", GovernedTurnOutcome::RejectedStaleAuthority => "RejectedStaleAuthority", GovernedTurnOutcome::RejectedCapabilityRevoked => "RejectedCapabilityRevoked", GovernedTurnOutcome::RejectedInvalidProofClass => "RejectedInvalidProofClass", GovernedTurnOutcome::RejectedLateOrClosedTurn => "RejectedLateOrClosedTurn", GovernedTurnOutcome::RejectedCurrentState => "RejectedCurrentState", GovernedTurnOutcome::RejectedPrecondition => "RejectedPrecondition", GovernedTurnOutcome::IntegrityOrProtocolFault => "IntegrityOrProtocolFault", GovernedTurnOutcome::UnavailableBeforeAck => "UnavailableBeforeAck", _ => unreachable!() }}),
+            GovernedTurnOutcome::EntryPersisted => "EntryPersisted", GovernedTurnOutcome::Admitted => "Admitted", GovernedTurnOutcome::InteractionRequested => "InteractionRequested", GovernedTurnOutcome::InteractionBound => "InteractionBound", GovernedTurnOutcome::InteractionConsumed => "InteractionConsumed", GovernedTurnOutcome::TurnCommitted => "TurnCommitted", GovernedTurnOutcome::ActionRegistered => "ActionRegistered", GovernedTurnOutcome::DispatchRecorded => "DispatchRecorded", GovernedTurnOutcome::Delivered => "Delivered", GovernedTurnOutcome::DuplicateDelivery => "DuplicateDelivery", GovernedTurnOutcome::QuarantinedDispute => "QuarantinedDispute", GovernedTurnOutcome::CapabilityGranted => "CapabilityGranted", GovernedTurnOutcome::CapabilityRevoked => "CapabilityRevoked", GovernedTurnOutcome::Reconstructed => "Reconstructed", GovernedTurnOutcome::Ambiguous => "Ambiguous", GovernedTurnOutcome::RejectedStaleAuthority => "RejectedStaleAuthority", GovernedTurnOutcome::RejectedCapabilityRevoked => "RejectedCapabilityRevoked", GovernedTurnOutcome::RejectedInvalidProofClass => "RejectedInvalidProofClass", GovernedTurnOutcome::RejectedLateOrClosedTurn => "RejectedLateOrClosedTurn", GovernedTurnOutcome::RejectedCurrentState => "RejectedCurrentState", GovernedTurnOutcome::RejectedNotFound => "RejectedNotFound", GovernedTurnOutcome::RejectedPrecondition => "RejectedPrecondition", GovernedTurnOutcome::IntegrityOrProtocolFault => "IntegrityOrProtocolFault", GovernedTurnOutcome::UnavailableBeforeAck => "UnavailableBeforeAck", _ => unreachable!() }}),
     }
 }
 fn ensure_value(outcome: EnsureRegionOutcome) -> Value {
@@ -192,9 +219,59 @@ fn ensure_value(outcome: EnsureRegionOutcome) -> Value {
 fn dispatch(
     authority: &mut D1GovernedTurnAuthority,
     request: &SyscallRequest,
+    channel: SocketChannel,
 ) -> Result<Value, String> {
+    let agent_allowed = matches!(
+        request.op.as_str(),
+        "AdmitTurn"
+            | "CommitTurn"
+            | "RegisterAction"
+            | "PresentAdmissionCertificate"
+            | "RecordDispatchAttempt"
+            | "DeliverArmedAttempt"
+            | "PresentSettlementCertificate"
+            | "PersistFence"
+            | "RevokeCapability"
+            | "Replay"
+            | "EnsureRegion"
+            | "__ProviderSubmissionCount"
+            | "__LoseAdapterDedupState"
+            | "RequestInteraction"
+            | "ReportOutcome"
+            | "ConsumeInteraction"
+    );
+    let control_allowed = matches!(
+        request.op.as_str(),
+        "GrantCapability"
+            | "RevokeCapability"
+            | "ResolveQuarantinedDispute"
+            | "PersistFence"
+            | "GetProjectionSummary"
+            | "InspectJournal"
+    );
+    if (channel == SocketChannel::Agent && !agent_allowed)
+        || (channel == SocketChannel::Control && !control_allowed)
+    {
+        return Err("UnauthorizedOpcode".into());
+    }
     let p = &request.payload;
     let governed = match request.op.as_str() {
+        "GrantCapability" => {
+            let request: GrantCapabilityRequest =
+                serde_json::from_value(p.clone()).map_err(|error| error.to_string())?;
+            authority.grant_capability(request)
+        }
+        "ResolveQuarantinedDispute" => {
+            let request: ResolveQuarantinedDisputeRequest =
+                serde_json::from_value(p.clone()).map_err(|error| error.to_string())?;
+            return Ok(outcome_value(
+                authority
+                    .resolve_quarantined_dispute(request)
+                    .unwrap_or_else(|outcome| outcome),
+            ));
+        }
+        "GetProjectionSummary" => return Ok(authority.projection_summary()),
+        "InspectJournal" => return Ok(json!({"entries": authority.inspect_journal()})),
         "AdmitTurn" => authority.admit_turn(AdmitTurnRequest {
             agent_id: string(p, "agent_id")?,
             turn_id: number(p, "turn_id")?,
@@ -292,12 +369,15 @@ fn dispatch(
             })
         }
         "PersistFence" => authority.persist_fence(number(p, "generation")?),
-        "RevokeCapability" => authority.revoke_capability_with_authorization(
-            p.get("authorization_capability_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            &string(p, "capability_id")?,
-        ),
+        "RevokeCapability" => match channel {
+            SocketChannel::Agent => authority.revoke_capability_with_authorization(
+                p.get("authorization_capability_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                &string(p, "capability_id")?,
+            ),
+            SocketChannel::Control => authority.revoke_capability(&string(p, "capability_id")?),
+        },
         "Replay" => authority.reconstruct_after_crash(),
         "EnsureRegion" => {
             let content = p
@@ -337,6 +417,7 @@ fn serve_connection(
     mut stream: UnixStream,
     authority: Arc<Mutex<D1GovernedTurnAuthority>>,
     child: Arc<Mutex<Option<SupervisedChild>>>,
+    channel: SocketChannel,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     loop {
@@ -364,6 +445,7 @@ fn serve_connection(
         let outcome = dispatch(
             &mut authority.lock().expect("authority mutex poisoned"),
             &request,
+            channel,
         );
         let fenced = matches!(outcome.as_ref().ok(), Some(value) if value.get("type") == Some(&json!("GenerationFenced")));
         let response = match outcome {
@@ -373,6 +455,9 @@ fn serve_connection(
                 outcome: Some(outcome),
                 error: None,
             },
+            Err(error) if error == "UnauthorizedOpcode" => {
+                gateway_error(request.request_id, "UnauthorizedOpcode", error)
+            }
             Err(error) => malformed(request.request_id, error),
         };
         let _ = write_framed(
@@ -390,6 +475,25 @@ fn serve_connection(
     }
 }
 
+fn serve_listener(
+    listener: UnixListener,
+    authority: Arc<Mutex<D1GovernedTurnAuthority>>,
+    child: Arc<Mutex<Option<SupervisedChild>>>,
+    channel: SocketChannel,
+) -> io::Result<()> {
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                let authority = Arc::clone(&authority);
+                let child = Arc::clone(&child);
+                thread::spawn(move || serve_connection(stream, authority, child, channel));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 fn run(config: Config) -> io::Result<()> {
     fs::create_dir_all(&config.storage_root)?;
     fs::set_permissions(&config.storage_root, fs::Permissions::from_mode(0o700))?;
@@ -397,6 +501,11 @@ fn run(config: Config) -> io::Result<()> {
         &config.storage_root,
     )?));
     let listener = bind_socket(&config.socket)?;
+    let control_listener = config
+        .control_socket
+        .as_deref()
+        .map(bind_socket)
+        .transpose()?;
     let child = Arc::new(Mutex::new(match config.child {
         Some(command) if config.sandbox == SandboxMode::Roche => {
             let profile = build_castor_untrusted_agent_config(
@@ -419,17 +528,14 @@ fn run(config: Config) -> io::Result<()> {
         )),
         None => None,
     }));
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                let authority = Arc::clone(&authority);
-                let child = Arc::clone(&child);
-                thread::spawn(move || serve_connection(stream, authority, child));
-            }
-            Err(error) => return Err(error),
-        }
+    if let Some(control_listener) = control_listener {
+        let authority = Arc::clone(&authority);
+        let child = Arc::clone(&child);
+        thread::spawn(move || {
+            let _ = serve_listener(control_listener, authority, child, SocketChannel::Control);
+        });
     }
-    Ok(())
+    serve_listener(listener, authority, child, SocketChannel::Agent)
 }
 
 /// Compatibility-only read path retained for the earlier vertical-slice
