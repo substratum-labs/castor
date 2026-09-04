@@ -138,7 +138,12 @@ fn test_d2_mid_file_corruption_fails_closed() {
     }
     drop(storage);
     let journal = root.path().join("core-journal.log");
-    fs::write(&journal, [8_u8, 0, 0, 0, b'{', b'x', b'}', 0, 0, 0, 0]).unwrap();
+    let mut bytes = fs::read(&journal).unwrap();
+    let first_payload_len =
+        u32::from_le_bytes(bytes[..4].try_into().expect("first frame length")) as usize;
+    let second_frame = 4 + first_payload_len + 4;
+    bytes[second_frame + 4] ^= 0x01;
+    fs::write(&journal, bytes).unwrap();
     assert!(D1DurableStorage::open(root.path()).is_err());
 }
 

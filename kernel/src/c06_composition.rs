@@ -165,13 +165,13 @@ pub struct PresentSettlementCertificateRequest {
     pub proof_class: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum TurnStatus {
     Ready,
     AwaitingInteraction,
     Closed,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Turn {
     turn_id: u64,
     base_digest: String,
@@ -181,14 +181,14 @@ struct Turn {
     requested: HashSet<String>,
     interactions: HashMap<String, String>,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum AttemptStatus {
     ArmedUnknown,
     Dispatched,
     Settled,
     QuarantinedDispute,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Attempt {
     action_id: String,
     target_scope: String,
@@ -200,11 +200,37 @@ struct Attempt {
     settlement: Option<(String, String, String, String)>,
 }
 
+/// Private on-disk body of a D-04 materialized projection cache.  The live
+/// epoch is recorded for diagnostics but is never restored as authority.
+#[derive(Serialize, Deserialize)]
+struct D1ProjectionSnapshot {
+    snapshot_id: String,
+    last_entry_id: u64,
+    core_epoch: u64,
+    generation: u64,
+    agent_id: Option<String>,
+    projection_digest: Option<String>,
+    turn: Option<Turn>,
+    committed_actions: HashMap<String, (String, String)>,
+    registered_actions: HashSet<String>,
+    capabilities: HashMap<String, CapabilityGrant>,
+    capability_generations: HashMap<String, u64>,
+    action_capabilities: HashMap<String, String>,
+    capability_turns: HashMap<String, u64>,
+    attempts: HashMap<u64, Attempt>,
+    revoked_capabilities: HashSet<String>,
+    next_attempt_id: u64,
+}
+
 /// The only semantic writer. The C-01 handle is never shared mutably with a
 /// slice; all journal entries originate in this projection.
 pub struct D1GovernedTurnAuthority {
     storage: Option<D1DurableStorage>,
     root: PathBuf,
+    /// Live process-incarnation fence.  It is never restored from durable
+    /// projection data: recovery mints the next value and thereby stales
+    /// every pre-crash lease tuple.
+    core_epoch: u64,
     generation: u64,
     agent_id: Option<String>,
     projection_digest: Option<String>,
@@ -301,13 +327,16 @@ impl D1GovernedTurnAuthority {
     }
 
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
-        D1DurableStorage::open(path).map(Self::for_test)
+        let mut authority = D1DurableStorage::open(path).map(Self::for_test)?;
+        authority.finish_recovery_barrier();
+        Ok(authority)
     }
     pub fn for_test(storage: D1DurableStorage) -> Self {
         let root = storage.root().to_path_buf();
         let mut authority = Self {
             storage: Some(storage),
             root,
+            core_epoch: 1,
             generation: 1,
             agent_id: None,
             projection_digest: None,
@@ -332,6 +361,47 @@ impl D1GovernedTurnAuthority {
     }
     pub fn provider_submission_count(&self) -> u64 {
         self.provider_submissions
+    }
+
+    /// Creates a D-04 restart cache.  The blob is not authoritative until
+    /// the subsequent `SnapshotIndex` frame is durably appended.
+    pub fn create_snapshot(&mut self, snapshot_id: &str) -> Result<(), GovernedTurnOutcome> {
+        let last_entry_id = self.next_entry_id.saturating_sub(1);
+        let snapshot = D1ProjectionSnapshot {
+            snapshot_id: snapshot_id.to_owned(),
+            last_entry_id,
+            core_epoch: self.core_epoch,
+            generation: self.generation,
+            agent_id: self.agent_id.clone(),
+            projection_digest: self.projection_digest.clone(),
+            turn: self.turn.clone(),
+            committed_actions: self.committed_actions.clone(),
+            registered_actions: self.registered_actions.clone(),
+            capabilities: self.capabilities.clone(),
+            capability_generations: self.capability_generations.clone(),
+            action_capabilities: self.action_capabilities.clone(),
+            capability_turns: self.capability_turns.clone(),
+            attempts: self.attempts.clone(),
+            revoked_capabilities: self.revoked_capabilities.clone(),
+            next_attempt_id: self.next_attempt_id,
+        };
+        let bytes = serde_json::to_vec(&snapshot)
+            .map_err(|_| GovernedTurnOutcome::IntegrityOrProtocolFault)?;
+        let snapshot_digest = self
+            .storage()
+            .persist_snapshot(snapshot_id, &bytes)
+            .map_err(|_| GovernedTurnOutcome::UnavailableBeforeAck)?;
+        self.append(
+            CoreEntry::SnapshotIndex {
+                snapshot_id: snapshot_id.to_owned(),
+                last_entry_id,
+                snapshot_digest,
+            },
+            vec![],
+            None,
+            None,
+            self.projection_digest.clone(),
+        )
     }
 
     /// Models loss of the host adapter's non-durable dedup projection.  A
@@ -387,7 +457,7 @@ impl D1GovernedTurnAuthority {
         let request = AppendConditionalRequest {
             agent_id,
             entry_id: self.next_entry_id,
-            expected_core_epoch: 1,
+            expected_core_epoch: self.core_epoch,
             expected_agent_generation: Some(self.generation),
             expected_turn_id: turn_id,
             expected_lease_epoch: lease,
@@ -500,22 +570,26 @@ impl D1GovernedTurnAuthority {
         Ok(())
     }
     fn replay(&mut self) {
+        let snapshot = self
+            .storage()
+            .latest_snapshot()
+            .and_then(|(last_entry_id, bytes)| {
+                serde_json::from_slice::<D1ProjectionSnapshot>(&bytes)
+                    .ok()
+                    .filter(|snapshot| snapshot.last_entry_id == last_entry_id)
+                    .map(|snapshot| (last_entry_id, snapshot))
+            });
         let requests = self.storage().journal_requests();
-        self.generation = 1;
-        self.agent_id = None;
-        self.projection_digest = None;
-        self.turn = None;
-        self.committed_actions.clear();
-        self.registered_actions.clear();
-        self.capabilities.clear();
-        self.capability_generations.clear();
-        self.action_capabilities.clear();
-        self.capability_turns.clear();
-        self.attempts.clear();
-        self.revoked_capabilities.clear();
-        self.next_entry_id = 1;
-        self.next_attempt_id = 1;
-        self.provider_submissions = 0;
+        let requests = if let Some((last_entry_id, snapshot)) = snapshot {
+            self.restore_snapshot(snapshot);
+            requests
+                .into_iter()
+                .filter(|request| request.entry_id > last_entry_id)
+                .collect()
+        } else {
+            self.reset_replay_projection();
+            requests
+        };
         for request in requests {
             let proof_digest = self
                 .storage()
@@ -703,6 +777,42 @@ impl D1GovernedTurnAuthority {
                 | CoreEntry::InteractionTurnClosed { .. } => {}
             }
         }
+    }
+
+    fn reset_replay_projection(&mut self) {
+        self.generation = 1;
+        self.agent_id = None;
+        self.projection_digest = None;
+        self.turn = None;
+        self.committed_actions.clear();
+        self.registered_actions.clear();
+        self.capabilities.clear();
+        self.capability_generations.clear();
+        self.action_capabilities.clear();
+        self.capability_turns.clear();
+        self.attempts.clear();
+        self.revoked_capabilities.clear();
+        self.next_entry_id = 1;
+        self.next_attempt_id = 1;
+        self.provider_submissions = 0;
+    }
+
+    fn restore_snapshot(&mut self, snapshot: D1ProjectionSnapshot) {
+        self.generation = snapshot.generation;
+        self.agent_id = snapshot.agent_id;
+        self.projection_digest = snapshot.projection_digest;
+        self.turn = snapshot.turn;
+        self.committed_actions = snapshot.committed_actions;
+        self.registered_actions = snapshot.registered_actions;
+        self.capabilities = snapshot.capabilities;
+        self.capability_generations = snapshot.capability_generations;
+        self.action_capabilities = snapshot.action_capabilities;
+        self.capability_turns = snapshot.capability_turns;
+        self.attempts = snapshot.attempts;
+        self.revoked_capabilities = snapshot.revoked_capabilities;
+        self.next_entry_id = snapshot.last_entry_id.saturating_add(1);
+        self.next_attempt_id = snapshot.next_attempt_id;
+        self.provider_submissions = 0;
     }
 
     pub fn admit_turn(&mut self, request: AdmitTurnRequest) -> GovernedTurnOutcome {
@@ -1298,11 +1408,22 @@ impl D1GovernedTurnAuthority {
         match D1DurableStorage::open(&self.root) {
             Ok(storage) => {
                 self.storage = Some(storage);
-                self.provider_submissions = 0;
                 self.replay();
+                self.finish_recovery_barrier();
                 GovernedTurnOutcome::Reconstructed
             }
             Err(_) => GovernedTurnOutcome::IntegrityOrProtocolFault,
+        }
+    }
+
+    fn finish_recovery_barrier(&mut self) {
+        self.core_epoch = self.core_epoch.saturating_add(1);
+        self.provider_submissions = 0;
+        // Lease grants are historical durable facts, but a carrier must
+        // acquire a new lease in this Core epoch before it can commit an open
+        // turn.
+        if let Some(turn) = self.turn.as_mut() {
+            turn.active_lease = None;
         }
     }
 }

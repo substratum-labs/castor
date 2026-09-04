@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -219,6 +219,20 @@ impl AuthorityState {
             && self.projection_digest == request.expected_base_projection_digest
     }
 
+    /// A restart advances the Core epoch without rewriting old journal
+    /// records.  The only transition allowed to bridge that boundary is a
+    /// fresh lease for the still-open turn; a commit under the old lease is
+    /// deliberately not accepted.
+    fn accepts_recovery_lease(&self, request: &AppendConditionalRequest) -> bool {
+        matches!(request.entry, CoreEntry::LeaseGranted { .. })
+            && request.expected_core_epoch == self.core_epoch + 1
+            && self.agent_generation == request.expected_agent_generation
+            && self.turn_id == request.expected_turn_id
+            && (request.expected_lease_epoch.is_none()
+                || self.lease_epoch == request.expected_lease_epoch)
+            && self.projection_digest == request.expected_base_projection_digest
+    }
+
     fn apply(&mut self, request: &AppendConditionalRequest, proof: &PersistedEntryProof) {
         match &request.entry {
             CoreEntry::SnapshotIndex { .. } => {}
@@ -351,7 +365,10 @@ impl D1DurableStorage {
     }
 
     pub fn journal_entries(&self) -> usize {
-        self.entries.len()
+        self.entries
+            .values()
+            .filter(|record| !matches!(record.request.entry, CoreEntry::SnapshotIndex { .. }))
+            .count()
     }
 
     /// Ordered replay input for the sole Core projection owner.
@@ -367,6 +384,67 @@ impl D1DurableStorage {
                 .then(left.entry_id.cmp(&right.entry_id))
         });
         requests
+    }
+
+    /// Persists a D-04 projection cache before its journal index is appended.
+    /// Until an index refers to this exact digest it is deliberately ignored
+    /// during recovery.
+    pub(crate) fn persist_snapshot(&self, snapshot_id: &str, bytes: &[u8]) -> io::Result<String> {
+        if snapshot_id.is_empty()
+            || snapshot_id.contains('/')
+            || snapshot_id.contains('\\')
+            || snapshot_id.ends_with(".tmp")
+        {
+            return Err(invalid_data("invalid snapshot identity"));
+        }
+        atomic_write(
+            &self
+                .root
+                .join("snapshots")
+                .join(format!("{snapshot_id}.json")),
+            bytes,
+        )?;
+        Ok(digest_label(bytes))
+    }
+
+    /// Returns only the most recent journal-indexed and digest-valid blob.
+    /// Tempfiles and every unpointed file are intentionally invisible here.
+    pub(crate) fn latest_snapshot(&self) -> Option<(u64, Vec<u8>)> {
+        let mut indexes: Vec<_> = self
+            .entries
+            .values()
+            .filter_map(|record| match &record.request.entry {
+                CoreEntry::SnapshotIndex {
+                    snapshot_id,
+                    last_entry_id,
+                    snapshot_digest,
+                } => Some((
+                    record.request.entry_id,
+                    snapshot_id.as_str(),
+                    *last_entry_id,
+                    snapshot_digest.as_str(),
+                )),
+                _ => None,
+            })
+            .collect();
+        indexes.sort_by_key(|(entry_id, ..)| *entry_id);
+        let (_, snapshot_id, last_entry_id, expected_digest) = indexes.pop()?;
+        let path = self
+            .root
+            .join("snapshots")
+            .join(format!("{snapshot_id}.json"));
+        let bytes = match fs::read(path) {
+            Ok(bytes) if digest_label(&bytes) == expected_digest => bytes,
+            Ok(_) => {
+                eprintln!("warning: D-04 snapshot digest mismatch; replaying from genesis");
+                return None;
+            }
+            Err(_) => {
+                eprintln!("warning: D-04 snapshot missing; replaying from genesis");
+                return None;
+            }
+        };
+        Some((last_entry_id, bytes))
     }
 
     pub fn is_healthy(&self) -> bool {
@@ -404,13 +482,17 @@ impl D1DurableStorage {
     }
 
     fn append_record(&mut self, record: &JournalRecord) -> io::Result<()> {
-        let mut encoded = serde_json::to_vec(record).map_err(invalid_json)?;
-        encoded.push(b'\n');
+        let payload = serde_json::to_vec(record).map_err(invalid_json)?;
+        let payload_len = u32::try_from(payload.len())
+            .map_err(|_| invalid_data("journal payload exceeds u32 frame length"))?;
+        let crc = crc32fast::hash(&payload);
         let mut journal = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(self.root.join("core-journal.jsonl"))?;
-        journal.write_all(&encoded)?;
+            .open(self.root.join("core-journal.log"))?;
+        journal.write_all(&payload_len.to_le_bytes())?;
+        journal.write_all(&payload)?;
+        journal.write_all(&crc.to_le_bytes())?;
         if std::mem::take(&mut self.fail_after_journal_write_once) {
             return Err(io::Error::other(
                 "injected failure after journal write and before durable acknowledgement",
@@ -510,9 +592,9 @@ impl DurableStorage for D1DurableStorage {
             }
         }
 
-        if !is_capability_control_entry(&request.entry) {
+        if is_authority_checked_entry(&request.entry) {
             if let Some(current) = self.authority.get(&request.agent_id) {
-                if !current.accepts(&request) {
+                if !current.accepts(&request) && !current.accepts_recovery_lease(&request) {
                     return AppendConditionalOutcome::RejectedPrecondition {
                         current_projection_hint: current.projection_digest.clone(),
                     };
@@ -542,11 +624,14 @@ impl DurableStorage for D1DurableStorage {
             return AppendConditionalOutcome::UnavailableBeforeAck;
         }
 
-        if !is_capability_control_entry(&request.entry) {
+        if is_authority_checked_entry(&request.entry) {
             let state = self
                 .authority
                 .entry(request.agent_id.clone())
                 .or_insert_with(|| AuthorityState::from_request(&request));
+            if state.accepts_recovery_lease(&request) {
+                state.core_epoch = request.expected_core_epoch;
+            }
             state.apply(&request, &proof);
         }
         self.entries.insert(key, record);
@@ -592,20 +677,55 @@ fn load_regions(root: &Path) -> io::Result<HashMap<String, RegionRecord>> {
 }
 
 fn load_journal(root: &Path) -> io::Result<Vec<JournalRecord>> {
-    let path = root.join("core-journal.jsonl");
+    let path = root.join("core-journal.log");
     if !path.exists() {
+        if root.join("core-journal.jsonl").exists() {
+            return Err(invalid_data("legacy JSONL Core journal requires migration"));
+        }
         return Ok(Vec::new());
     }
 
+    let bytes = fs::read(&path)?;
     let mut records = Vec::new();
-    for line in BufReader::new(File::open(path)?).lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
+    let mut offset = 0usize;
+    while offset < bytes.len() {
+        let valid_offset = offset;
+        let remaining = bytes.len() - offset;
+        if remaining < 4 {
+            truncate_incomplete_journal(&path, root, valid_offset)?;
+            break;
         }
-        records.push(serde_json::from_str(&line).map_err(invalid_json)?);
+        let payload_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("slice"));
+        let payload_len = usize::try_from(payload_len).expect("u32 fits usize");
+        offset += 4;
+        let Some(frame_len) = payload_len.checked_add(4) else {
+            return Err(invalid_data("journal frame length overflow"));
+        };
+        if bytes.len() - offset < frame_len {
+            truncate_incomplete_journal(&path, root, valid_offset)?;
+            break;
+        }
+        let payload_end = offset + payload_len;
+        let payload = &bytes[offset..payload_end];
+        let stored_crc = u32::from_le_bytes(
+            bytes[payload_end..payload_end + 4]
+                .try_into()
+                .expect("slice"),
+        );
+        if crc32fast::hash(payload) != stored_crc {
+            return Err(invalid_data("corrupted frame CRC"));
+        }
+        records.push(serde_json::from_slice(payload).map_err(invalid_json)?);
+        offset = payload_end + 4;
     }
     Ok(records)
+}
+
+fn truncate_incomplete_journal(path: &Path, root: &Path, valid_offset: usize) -> io::Result<()> {
+    let journal = OpenOptions::new().write(true).open(path)?;
+    journal.set_len(u64::try_from(valid_offset).expect("usize fits u64"))?;
+    journal.sync_all()?;
+    sync_directory(root)
 }
 
 fn validate_record(
@@ -646,14 +766,17 @@ fn apply_record_authority(
     authority: &mut HashMap<String, AuthorityState>,
     record: &JournalRecord,
 ) -> io::Result<()> {
-    if is_capability_control_entry(&record.request.entry) {
+    if !is_authority_checked_entry(&record.request.entry) {
         return Ok(());
     }
     let state = authority
         .entry(record.request.agent_id.clone())
         .or_insert_with(|| AuthorityState::from_request(&record.request));
-    if !state.accepts(&record.request) {
+    if !state.accepts(&record.request) && !state.accepts_recovery_lease(&record.request) {
         return Err(invalid_data("journal contains stale authority transition"));
+    }
+    if state.accepts_recovery_lease(&record.request) {
+        state.core_epoch = record.request.expected_core_epoch;
     }
     state.apply(&record.request, &record.proof);
     Ok(())
@@ -664,6 +787,10 @@ fn is_capability_control_entry(entry: &CoreEntry) -> bool {
         entry,
         CoreEntry::CapabilityGranted { .. } | CoreEntry::CapabilityRevoked { .. }
     )
+}
+
+fn is_authority_checked_entry(entry: &CoreEntry) -> bool {
+    !is_capability_control_entry(entry) && !matches!(entry, CoreEntry::SnapshotIndex { .. })
 }
 
 fn request_digest(request: &AppendConditionalRequest) -> io::Result<String> {

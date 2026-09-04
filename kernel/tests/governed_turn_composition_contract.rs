@@ -277,15 +277,31 @@ fn test_comp_observation_consumed_only_under_strictly_monotonic_fresh_lease() {
     );
 }
 #[test]
-fn test_comp_replay_restores_durable_ready_lease_for_turn_commit() {
+fn test_comp_recovery_stales_pre_crash_lease_and_allows_fresh_lease_for_turn_commit() {
     let mut c = Fixture::new();
     c.ready_to_commit();
+    let Fixture {
+        _root,
+        authority: old_authority,
+    } = c;
+    let root = _root.path().to_path_buf();
+    drop(old_authority);
+    let mut authority =
+        D1GovernedTurnAuthority::open(&root).expect("recover authority through process open");
     assert_eq!(
-        c.authority.reconstruct_after_crash(),
-        GovernedTurnOutcome::Reconstructed
+        authority.commit_turn(commit()),
+        GovernedTurnOutcome::RejectedStaleAuthority
     );
+    let mut fresh_lease = consume();
+    fresh_lease.lease_epoch = 2;
     assert_eq!(
-        c.authority.commit_turn(commit()),
+        authority.consume_interaction(fresh_lease),
+        GovernedTurnOutcome::InteractionConsumed
+    );
+    let mut fresh_commit = commit();
+    fresh_commit.lease_epoch = 2;
+    assert_eq!(
+        authority.commit_turn(fresh_commit),
         GovernedTurnOutcome::TurnCommitted
     );
 }
