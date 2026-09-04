@@ -21,13 +21,14 @@ use std::thread;
 use std::time::Duration;
 
 fn usage() -> &'static str {
-    "usage: castord --storage-root PATH --socket PATH [--control-socket PATH] [--child CMD] [--sandbox roche|none] [--sandbox-image IMAGE]"
+    "usage: castord --storage-root PATH --socket PATH [--control-socket PATH] [--allow-test-opcodes] [--child CMD] [--sandbox roche|none] [--sandbox-image IMAGE]"
 }
 
 struct Config {
     storage_root: PathBuf,
     socket: PathBuf,
     control_socket: Option<PathBuf>,
+    allow_test_opcodes: bool,
     child: Option<String>,
     sandbox: SandboxMode,
     sandbox_image: String,
@@ -69,6 +70,7 @@ fn parse_args() -> Result<Config, String> {
     let mut storage_root = None;
     let mut socket = None;
     let mut control_socket = None;
+    let mut allow_test_opcodes = false;
     let mut child = None;
     let mut sandbox = SandboxMode::None;
     let mut sandbox_image = DEFAULT_SANDBOX_IMAGE.to_owned();
@@ -92,6 +94,7 @@ fn parse_args() -> Result<Config, String> {
                         "--control-socket requires a path".to_string()
                     })?))
             }
+            "--allow-test-opcodes" => allow_test_opcodes = true,
             "--child" => {
                 child = Some(
                     args.next()
@@ -121,6 +124,7 @@ fn parse_args() -> Result<Config, String> {
         storage_root: storage_root.ok_or_else(|| "--storage-root is required".to_string())?,
         socket: socket.ok_or_else(|| "--socket is required".to_string())?,
         control_socket,
+        allow_test_opcodes,
         child,
         sandbox,
         sandbox_image,
@@ -220,6 +224,7 @@ fn dispatch(
     authority: &mut D1GovernedTurnAuthority,
     request: &SyscallRequest,
     channel: SocketChannel,
+    allow_test_opcodes: bool,
 ) -> Result<Value, String> {
     let agent_allowed = matches!(
         request.op.as_str(),
@@ -232,14 +237,16 @@ fn dispatch(
             | "PresentSettlementCertificate"
             | "PersistFence"
             | "RevokeCapability"
-            | "Replay"
             | "EnsureRegion"
-            | "__ProviderSubmissionCount"
-            | "__LoseAdapterDedupState"
             | "RequestInteraction"
             | "ReportOutcome"
             | "ConsumeInteraction"
     );
+    let test_opcode_allowed = allow_test_opcodes
+        && matches!(
+            request.op.as_str(),
+            "Replay" | "__ProviderSubmissionCount" | "__LoseAdapterDedupState"
+        );
     let control_allowed = matches!(
         request.op.as_str(),
         "GrantCapability"
@@ -249,7 +256,7 @@ fn dispatch(
             | "GetProjectionSummary"
             | "InspectJournal"
     );
-    if (channel == SocketChannel::Agent && !agent_allowed)
+    if (channel == SocketChannel::Agent && !agent_allowed && !test_opcode_allowed)
         || (channel == SocketChannel::Control && !control_allowed)
     {
         return Err("UnauthorizedOpcode".into());
@@ -418,6 +425,7 @@ fn serve_connection(
     authority: Arc<Mutex<D1GovernedTurnAuthority>>,
     child: Arc<Mutex<Option<SupervisedChild>>>,
     channel: SocketChannel,
+    allow_test_opcodes: bool,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     loop {
@@ -446,6 +454,7 @@ fn serve_connection(
             &mut authority.lock().expect("authority mutex poisoned"),
             &request,
             channel,
+            allow_test_opcodes,
         );
         let fenced = matches!(outcome.as_ref().ok(), Some(value) if value.get("type") == Some(&json!("GenerationFenced")));
         let response = match outcome {
@@ -480,13 +489,16 @@ fn serve_listener(
     authority: Arc<Mutex<D1GovernedTurnAuthority>>,
     child: Arc<Mutex<Option<SupervisedChild>>>,
     channel: SocketChannel,
+    allow_test_opcodes: bool,
 ) -> io::Result<()> {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 let authority = Arc::clone(&authority);
                 let child = Arc::clone(&child);
-                thread::spawn(move || serve_connection(stream, authority, child, channel));
+                thread::spawn(move || {
+                    serve_connection(stream, authority, child, channel, allow_test_opcodes)
+                });
             }
             Err(error) => return Err(error),
         }
@@ -532,10 +544,22 @@ fn run(config: Config) -> io::Result<()> {
         let authority = Arc::clone(&authority);
         let child = Arc::clone(&child);
         thread::spawn(move || {
-            let _ = serve_listener(control_listener, authority, child, SocketChannel::Control);
+            let _ = serve_listener(
+                control_listener,
+                authority,
+                child,
+                SocketChannel::Control,
+                config.allow_test_opcodes,
+            );
         });
     }
-    serve_listener(listener, authority, child, SocketChannel::Agent)
+    serve_listener(
+        listener,
+        authority,
+        child,
+        SocketChannel::Agent,
+        config.allow_test_opcodes,
+    )
 }
 
 /// Compatibility-only read path retained for the earlier vertical-slice

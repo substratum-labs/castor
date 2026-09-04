@@ -201,6 +201,27 @@ fn test_sandbox_docker_hardening_options_are_applied() {
 }
 
 #[test]
+fn sandbox_contract_non_root_uid_gid() {
+    let sandbox = Sandbox::new();
+    let output = Command::new("docker")
+        .args([
+            "exec",
+            sandbox.supervisor.container_id(),
+            "sh",
+            "-c",
+            "id -u && id -g",
+        ])
+        .output()
+        .expect("inspect sandbox uid and gid");
+    assert!(
+        output.status.success(),
+        "sandbox identity probe failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "10001\n10001\n");
+}
+
+#[test]
 fn test_sandbox_raw_tcp_egress_fails_closed() {
     let sandbox = Sandbox::new();
     let outcome = sandbox.python(r#"import errno,json,socket

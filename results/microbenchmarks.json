@@ -1,0 +1,25 @@
+{
+  "crc32_journal_framing_and_storage": {
+    "checksum": "IEEE 802.3 CRC-32",
+    "durability": "D1 sync_all per append",
+    "elapsed_ms": 9040.993375,
+    "entries": 2000,
+    "journal_bytes": 1274679,
+    "mb_per_sec": 0.14098882137495206,
+    "records_per_sec": 221.21462952626047
+  },
+  "d02_direct_uds_rtt": {
+    "channel": "control",
+    "iterations": 1000,
+    "operation": "GetProjectionSummary",
+    "p50_us": 10.083,
+    "p95_us": 24.292,
+    "p99_us": 44.375
+  },
+  "environment": {
+    "arch": "aarch64",
+    "build_profile": "release",
+    "os": "macos"
+  },
+  "generated_at_unix_seconds": 1788547037
+}

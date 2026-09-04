@@ -34,6 +34,14 @@ struct ContractHarness {
 
 impl ContractHarness {
     fn new() -> Self {
+        Self::start(true)
+    }
+
+    fn without_test_opcodes() -> Self {
+        Self::start(false)
+    }
+
+    fn start(allow_test_opcodes: bool) -> Self {
         // Each fixture starts a real process and exercises OS-level writer
         // locks. Serializing fixtures avoids test-runner process churn from
         // obscuring those boundaries; clients within a fixture stay concurrent.
@@ -48,17 +56,19 @@ impl ContractHarness {
         // The daemon's safe-bind algorithm must remove a stale inode without
         // touching an active listener.
         drop(UnixListener::bind(&socket).expect("create stale socket inode"));
-        let daemon = Command::new(env!("CARGO_BIN_EXE_castord"))
-            .args([
-                "--storage-root",
-                root.path().to_str().unwrap(),
-                "--socket",
-                socket.to_str().unwrap(),
-                "--control-socket",
-                control_socket.to_str().unwrap(),
-            ])
-            .spawn()
-            .expect("launch castord");
+        let mut command = Command::new(env!("CARGO_BIN_EXE_castord"));
+        command.args([
+            "--storage-root",
+            root.path().to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+            "--control-socket",
+            control_socket.to_str().unwrap(),
+        ]);
+        if allow_test_opcodes {
+            command.arg("--allow-test-opcodes");
+        }
+        let daemon = command.spawn().expect("launch castord");
         let deadline = Instant::now() + Duration::from_secs(3);
         while UnixStream::connect(&socket).is_err() || UnixStream::connect(&control_socket).is_err()
         {
@@ -820,4 +830,39 @@ fn scenario_19_dual_socket_uses_closed_channel_allowlists() {
     );
     assert_eq!(summary.status, "Ok");
     assert_eq!(summary.outcome.unwrap()["generation"], json!(1));
+}
+
+#[test]
+fn opcode_isolation_without_test_flag() {
+    let harness = ContractHarness::without_test_opcodes();
+    let mut client = harness.client();
+
+    for opcode in [
+        "__LoseAdapterDedupState",
+        "__ProviderSubmissionCount",
+        "Replay",
+    ] {
+        let response = call(&mut client, opcode, opcode, json!({}));
+        assert_eq!(response.status, "Error", "{opcode} must be rejected");
+        assert_eq!(
+            response.error.expect("unauthorized error").code,
+            "UnauthorizedOpcode",
+            "{opcode} must fail at the channel allowlist"
+        );
+    }
+
+    assert_outcome(
+        call(
+            &mut client,
+            "normal-admit",
+            "AdmitTurn",
+            json!({
+                "agent_id": "production-agent",
+                "turn_id": 1,
+                "lease_epoch": 0,
+                "base_projection_digest": DIGEST
+            }),
+        ),
+        "Admitted",
+    );
 }

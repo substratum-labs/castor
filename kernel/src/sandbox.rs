@@ -145,6 +145,8 @@ impl RocheSandboxRunner {
                 "256",
                 "--security-opt",
                 "no-new-privileges",
+                "--user",
+                "10001:10001",
             ])
             .arg("--mount")
             .arg(format!(
