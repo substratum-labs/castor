@@ -48,6 +48,16 @@ pub struct PersistedEntryProof {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CoreEntry {
+    /// Journal-authoritative pointer to a D-04 materialized projection cache.
+    ///
+    /// This is deliberately an index fact, rather than a projection
+    /// transition: consumers must not let it alter authority state.  Snapshot
+    /// materialization and selection are introduced by EPIC-29 Phase 3.
+    SnapshotIndex {
+        snapshot_id: String,
+        last_entry_id: u64,
+        snapshot_digest: String,
+    },
     TurnCommitted {
         turn_id: u64,
         successor_projection_digest: Option<String>,
@@ -211,6 +221,7 @@ impl AuthorityState {
 
     fn apply(&mut self, request: &AppendConditionalRequest, proof: &PersistedEntryProof) {
         match &request.entry {
+            CoreEntry::SnapshotIndex { .. } => {}
             CoreEntry::LeaseGranted {
                 turn_id,
                 lease_epoch,
@@ -663,6 +674,7 @@ fn request_digest(request: &AppendConditionalRequest) -> io::Result<String> {
 
 fn entry_kind(entry: &CoreEntry) -> &'static str {
     match entry {
+        CoreEntry::SnapshotIndex { .. } => "SnapshotIndex",
         CoreEntry::TurnCommitted { .. } => "TurnCommitted",
         CoreEntry::LeaseGranted { .. } => "LeaseGranted",
         CoreEntry::AttemptArmed { .. } => "AttemptArmed",

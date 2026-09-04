@@ -524,6 +524,9 @@ impl D1GovernedTurnAuthority {
             self.agent_id = Some(request.agent_id.clone());
             self.next_entry_id = self.next_entry_id.max(request.entry_id + 1);
             match request.entry {
+                // SnapshotIndex is a storage index fact.  It must never
+                // mutate the replayed authority projection.
+                CoreEntry::SnapshotIndex { .. } => {}
                 CoreEntry::LeaseGranted {
                     turn_id,
                     lease_epoch,
