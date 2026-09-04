@@ -512,8 +512,16 @@ impl D1GovernedTurnAuthority {
         lease: Option<u64>,
         base: Option<String>,
     ) -> Result<(), GovernedTurnOutcome> {
-        let Some(agent_id) = self.agent_id.clone() else {
-            return Err(GovernedTurnOutcome::RejectedPrecondition);
+        let agent_id = match &self.agent_id {
+            Some(id) => id.clone(),
+            None if matches!(
+                &entry,
+                CoreEntry::FenceRevoked { .. } | CoreEntry::SnapshotIndex { .. }
+            ) =>
+            {
+                "system".to_string()
+            }
+            None => return Err(GovernedTurnOutcome::RejectedPrecondition),
         };
         let updates_projection = matches!(
             &entry,
@@ -1413,7 +1421,7 @@ impl D1GovernedTurnAuthority {
         }
     }
     pub fn persist_fence(&mut self, generation: u64) -> GovernedTurnOutcome {
-        if generation <= self.generation || self.agent_id.is_none() {
+        if generation <= self.generation {
             return GovernedTurnOutcome::RejectedPrecondition;
         }
         let (turn, lease, base) = self
