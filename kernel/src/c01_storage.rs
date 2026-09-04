@@ -98,6 +98,12 @@ pub enum CoreEntry {
         action_id: String,
         attempt_id: u64,
     },
+    QuarantinedDisputeResolved {
+        attempt_id: u64,
+        resolution: String,
+        evidence_region_digest: Option<String>,
+        operator_id: String,
+    },
     CapabilityRevoked {
         capability_id: String,
     },
@@ -271,6 +277,7 @@ impl AuthorityState {
             | CoreEntry::DispatchAttempt { .. }
             | CoreEntry::AttemptSettled { .. }
             | CoreEntry::QuarantinedDispute { .. }
+            | CoreEntry::QuarantinedDisputeResolved { .. }
             | CoreEntry::CapabilityGranted { .. }
             | CoreEntry::CapabilityRevoked { .. }
             | CoreEntry::AdapterReservation { .. }
@@ -809,6 +816,7 @@ fn entry_kind(entry: &CoreEntry) -> &'static str {
         CoreEntry::DispatchAttempt { .. } => "DispatchAttempt",
         CoreEntry::AttemptSettled { .. } => "AttemptSettled",
         CoreEntry::QuarantinedDispute { .. } => "QuarantinedDispute",
+        CoreEntry::QuarantinedDisputeResolved { .. } => "QuarantinedDisputeResolved",
         CoreEntry::CapabilityGranted { .. } => "CapabilityGranted",
         CoreEntry::CapabilityRevoked { .. } => "CapabilityRevoked",
         CoreEntry::AdapterReservation { .. } => "AdapterReservation",

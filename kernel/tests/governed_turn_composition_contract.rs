@@ -4,9 +4,10 @@ use castor_kernel::c01_storage::{D1DurableStorage, DurabilityProfile, DurableSto
 use castor_kernel::c06_composition::{
     ActionRegistrationRequest, AdmitTurnRequest, CapabilityGrant, CapabilityRight,
     CommitTurnRequest, ConsumeInteractionRequest, D1GovernedTurnAuthority,
-    DeliverArmedAttemptRequest, GovernedTurnOutcome, GrantCapabilityRequest,
+    DeliverArmedAttemptRequest, DisputeResolution, GovernedTurnOutcome, GrantCapabilityRequest,
     InteractionOutcomeReport, PresentAdmissionCertificateRequest,
     PresentSettlementCertificateRequest, RecordDispatchAttemptRequest, RequestInteractionRequest,
+    ResolveQuarantinedDisputeRequest,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -641,5 +642,43 @@ fn test_comp_crash_after_quarantine_keeps_different_action_locked_on_same_scope(
     assert_eq!(
         c.authority.present_admission_certificate(different_action),
         GovernedTurnOutcome::RejectedCurrentState
+    );
+}
+
+#[test]
+fn test_comp_operator_resolution_persists_and_releases_quarantined_scope() {
+    let mut c = Fixture::new();
+    c.dispatched_action();
+    assert!(matches!(
+        c.authority.present_settlement_certificate(settlement()),
+        GovernedTurnOutcome::Settled { .. }
+    ));
+    let mut conflicting = settlement();
+    conflicting.evidence_region_id = "region://conflicting-evidence".into();
+    conflicting.evidence_digest = digest(b"conflicting settlement evidence");
+    assert_eq!(
+        c.authority.present_settlement_certificate(conflicting),
+        GovernedTurnOutcome::QuarantinedDispute
+    );
+
+    assert_eq!(
+        c.authority
+            .resolve_quarantined_dispute(ResolveQuarantinedDisputeRequest {
+                attempt_id: 1,
+                resolution: DisputeResolution::NotApplied,
+                evidence_region_digest: Some(digest(b"operator review evidence")),
+                operator_id: "operator-1".into(),
+            }),
+        Ok(GovernedTurnOutcome::EntryPersisted)
+    );
+    assert_eq!(
+        c.authority.register_action(action("action-2")),
+        GovernedTurnOutcome::ActionRegistered
+    );
+    let mut successor = admission();
+    successor.action_id = "action-2".into();
+    assert_eq!(
+        c.authority.present_admission_certificate(successor),
+        GovernedTurnOutcome::AttemptArmed { attempt_id: 2 }
     );
 }
