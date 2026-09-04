@@ -1,14 +1,20 @@
 //! EPIC-29 D1 durability and recovery hostile contracts.
 //!
 //! These tests deliberately describe the framed-journal and D-04 recovery
-//! boundary accepted in RFC v2.  They are RED until T-305-C supplies that
-//! implementation; no test here changes the current JSONL contract.
+//! boundary accepted in RFC v2.
 
 use castor_kernel::c01_storage::{
     AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, D1DurableStorage,
     DurabilityProfile, DurableStorage, EnsureRegionOutcome,
 };
+use castor_kernel::c06_composition::{
+    AdmitTurnRequest, CapabilityGrant, CapabilityRight, CommitTurnRequest,
+    ConsumeInteractionRequest, D1GovernedTurnAuthority, DeliverArmedAttemptRequest,
+    GovernedTurnOutcome, GrantCapabilityRequest, InteractionOutcomeReport,
+    PresentAdmissionCertificateRequest, RecordDispatchAttemptRequest, RequestInteractionRequest,
+};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -25,6 +31,135 @@ fn open() -> (TempDir, D1DurableStorage) {
     let root = tempfile::tempdir().expect("temporary D1 root");
     let storage = D1DurableStorage::open(root.path()).expect("open D1 storage");
     (root, storage)
+}
+
+fn authority(root: &TempDir) -> D1GovernedTurnAuthority {
+    D1GovernedTurnAuthority::for_test(
+        D1DurableStorage::open(root.path()).expect("open authority storage"),
+    )
+}
+
+fn grant(cap_id: &str, rights: Vec<CapabilityRight>) -> GrantCapabilityRequest {
+    GrantCapabilityRequest {
+        grant: CapabilityGrant {
+            cap_id: cap_id.into(),
+            subject: AGENT.into(),
+            object_ref: "c04:http_get".into(),
+            rights,
+            constraints: vec![],
+            parent_cap_id: None,
+            revocation_domain: None,
+            delegation_allowed: true,
+            max_turns: None,
+        },
+    }
+}
+
+fn admit(cap_id: Option<&str>) -> AdmitTurnRequest {
+    AdmitTurnRequest {
+        agent_id: AGENT.into(),
+        turn_id: 1,
+        lease_epoch: 0,
+        base_projection_digest: BASE.into(),
+        cap_id: cap_id.map(str::to_owned),
+    }
+}
+
+fn persist_region(authority: &mut D1GovernedTurnAuthority, region: &str, bytes: &[u8]) {
+    assert!(matches!(
+        authority.ensure_region(region, &digest(bytes), bytes, DurabilityProfile::D1),
+        EnsureRegionOutcome::Success(_)
+    ));
+}
+
+fn commit_request(lease_epoch: u64) -> CommitTurnRequest {
+    CommitTurnRequest {
+        lease_epoch,
+        base_projection_digest: BASE.into(),
+        successor_region_id: "region://successor".into(),
+        successor_digest: digest(b"successor"),
+        action_manifest_region_id: "region://actions".into(),
+        action_manifest_digest: digest(b"action-1"),
+        action_manifest: vec!["action-1".into()],
+        cap_id: None,
+    }
+}
+
+fn ready_to_commit(authority: &mut D1GovernedTurnAuthority) {
+    persist_region(authority, "region://observation", b"observation");
+    persist_region(authority, "region://successor", b"successor");
+    persist_region(authority, "region://actions", b"action-1");
+    assert_eq!(
+        authority.admit_turn(admit(None)),
+        GovernedTurnOutcome::Admitted
+    );
+    assert_eq!(
+        authority.request_interaction(RequestInteractionRequest {
+            interaction_id: "interaction-1".into(),
+            lease_epoch: 0,
+            request_digest: digest(b"request"),
+        }),
+        GovernedTurnOutcome::InteractionRequested
+    );
+    assert_eq!(
+        authority.report_outcome(InteractionOutcomeReport {
+            interaction_id: "interaction-1".into(),
+            observation_region_id: "region://observation".into(),
+            observation_digest: digest(b"observation"),
+        }),
+        GovernedTurnOutcome::InteractionBound
+    );
+}
+
+fn armed_dispatched_attempt(authority: &mut D1GovernedTurnAuthority) {
+    assert_eq!(
+        authority.grant_capability(grant(
+            "cap-1",
+            vec![CapabilityRight::AdmitTurn, CapabilityRight::RegisterAction],
+        )),
+        GovernedTurnOutcome::CapabilityGranted
+    );
+    persist_region(authority, "region://successor", b"successor");
+    persist_region(authority, "region://actions", b"action-1");
+    assert_eq!(
+        authority.admit_turn(admit(Some("cap-1"))),
+        GovernedTurnOutcome::Admitted
+    );
+    assert_eq!(
+        authority.commit_turn(CommitTurnRequest {
+            cap_id: Some("cap-1".into()),
+            ..commit_request(0)
+        }),
+        GovernedTurnOutcome::TurnCommitted
+    );
+    assert_eq!(
+        authority.register_action(castor_kernel::c06_composition::ActionRegistrationRequest {
+            action_id: "action-1".into(),
+            agent_id: AGENT.into(),
+            action_family: "c04:http_get".into(),
+            cap_id: "cap-1".into(),
+            target_scope: "scope".into(),
+            numeric_parameters: BTreeMap::new(),
+            exact_parameters: BTreeMap::new(),
+        }),
+        GovernedTurnOutcome::ActionRegistered
+    );
+    assert_eq!(
+        authority.present_admission_certificate(PresentAdmissionCertificateRequest {
+            action_id: "action-1".into(),
+            target_scope: "scope".into(),
+            capability_id: "cap-1".into(),
+            generation: 1
+        }),
+        GovernedTurnOutcome::AttemptArmed { attempt_id: 1 }
+    );
+    assert_eq!(
+        authority.record_dispatch_attempt(RecordDispatchAttemptRequest {
+            attempt_id: 1,
+            dispatch_identity: "dispatch-1".into()
+        }),
+        GovernedTurnOutcome::DispatchRecorded
+    );
 }
 
 fn request(entry_id: u64, entry: CoreEntry) -> AppendConditionalRequest {
@@ -164,36 +299,26 @@ fn test_d3_missing_region_fails_closed() {
 
 #[test]
 fn test_d4_crash_advances_core_epoch_staling_pre_crash_lease() {
-    let (root, mut storage) = open();
-    persist(
-        &mut storage,
-        request(
-            1,
-            CoreEntry::LeaseGranted {
-                turn_id: 1,
-                lease_epoch: 1,
-            },
-        ),
+    let root = tempfile::tempdir().unwrap();
+    let mut authority = authority(&root);
+    ready_to_commit(&mut authority);
+    assert_eq!(
+        authority.consume_interaction(ConsumeInteractionRequest {
+            interaction_id: "interaction-1".into(),
+            lease_epoch: 1
+        }),
+        GovernedTurnOutcome::InteractionConsumed
     );
-    drop(storage);
-    let mut recovered = D1DurableStorage::open(root.path()).expect("recover journal");
-    let mut stale = request(
-        2,
-        CoreEntry::TurnCommitted {
-            turn_id: 1,
-            successor_projection_digest: None,
-            action_manifest_digest: None,
-            action_manifest: vec![],
-            cap_id: None,
-        },
+    assert_eq!(authority.core_epoch(), 1);
+    assert_eq!(
+        authority.reconstruct_after_crash(),
+        GovernedTurnOutcome::Reconstructed
     );
-    stale.expected_turn_id = Some(1);
-    stale.expected_lease_epoch = Some(1);
-    stale.expected_core_epoch = 2;
-    assert!(matches!(
-        recovered.append_conditional(stale),
-        AppendConditionalOutcome::RejectedPrecondition { .. }
-    ));
+    assert_eq!(authority.core_epoch(), 2);
+    assert_eq!(
+        authority.commit_turn(commit_request(1)),
+        GovernedTurnOutcome::RejectedStaleAuthority
+    );
 }
 
 #[test]
@@ -251,18 +376,30 @@ fn test_d6_armed_unknown_and_scope_mutex_permanence() {
 
 #[test]
 fn test_d7_provider_dedup_resets_ram_counter_and_duplicate_delivery() {
-    let (root, mut storage) = open();
-    persist(
-        &mut storage,
-        request(1, CoreEntry::AdapterSubmissionRecorded { attempt_id: 1 }),
-    );
-    drop(storage);
-    let recovered = D1DurableStorage::open(root.path()).expect("recover durable submission");
+    let root = tempfile::tempdir().unwrap();
+    let mut authority = authority(&root);
+    armed_dispatched_attempt(&mut authority);
     assert_eq!(
-        recovered.journal_entries(),
-        1,
-        "durable dedup fact survives recovery"
+        authority.deliver_armed_attempt(DeliverArmedAttemptRequest {
+            attempt_id: 1,
+            dispatch_identity: "dispatch-1".into()
+        }),
+        GovernedTurnOutcome::Delivered
     );
+    assert_eq!(authority.provider_submission_count(), 1);
+    assert_eq!(
+        authority.reconstruct_after_crash(),
+        GovernedTurnOutcome::Reconstructed
+    );
+    assert_eq!(authority.provider_submission_count(), 0);
+    assert_eq!(
+        authority.deliver_armed_attempt(DeliverArmedAttemptRequest {
+            attempt_id: 1,
+            dispatch_identity: "dispatch-1".into()
+        }),
+        GovernedTurnOutcome::DuplicateDelivery
+    );
+    assert_eq!(authority.provider_submission_count(), 0);
 }
 
 #[test]
@@ -298,23 +435,6 @@ fn test_d9_fence_generation_permanence_inherited_sentinel() {
     ));
 }
 
-fn snapshot_index(
-    entry_id: u64,
-    snapshot_id: &str,
-    last_entry_id: u64,
-) -> AppendConditionalRequest {
-    let mut request = request(
-        entry_id,
-        CoreEntry::SnapshotIndex {
-            snapshot_id: snapshot_id.into(),
-            last_entry_id,
-            snapshot_digest: "sha256:snapshot".into(),
-        },
-    );
-    request.expected_agent_generation = Some(2);
-    request
-}
-
 fn write_snapshot(root: &Path, name: &str, bytes: &[u8]) {
     let snapshots = root.join("snapshots");
     fs::create_dir_all(&snapshots).unwrap();
@@ -323,38 +443,71 @@ fn write_snapshot(root: &Path, name: &str, bytes: &[u8]) {
 
 #[test]
 fn test_d10_snapshot_plus_tail_replay_reconstructs_state() {
-    let (root, mut storage) = open();
-    persist(&mut storage, fence(1, 2));
-    persist(&mut storage, snapshot_index(2, "snapshot-k", 1));
-    persist(&mut storage, fence(3, 3));
-    write_snapshot(root.path(), "snapshot-k.json", b"snapshot at entry one");
-    drop(storage);
-    let recovered = D1DurableStorage::open(root.path()).expect("recover snapshot plus tail");
-    assert!(matches!(
-        recovered.journal_requests().last().unwrap().entry,
-        CoreEntry::FenceRevoked { generation: 3 }
-    ));
+    let root = tempfile::tempdir().unwrap();
+    let mut authority = authority(&root);
+    assert_eq!(
+        authority.grant_capability(grant("cap-1", vec![CapabilityRight::AdmitTurn])),
+        GovernedTurnOutcome::CapabilityGranted
+    );
+    assert_eq!(
+        authority.persist_fence(2),
+        GovernedTurnOutcome::GenerationFenced { generation: 2 }
+    );
+    authority.create_snapshot("snapshot-k").unwrap();
+    assert_eq!(
+        authority.persist_fence(3),
+        GovernedTurnOutcome::GenerationFenced { generation: 3 }
+    );
+    drop(authority);
+    assert_eq!(
+        D1GovernedTurnAuthority::open(root.path())
+            .unwrap()
+            .generation(),
+        3
+    );
 }
 
 #[test]
 fn test_d11_corrupted_snapshot_falls_back_to_genesis_replay() {
-    let (root, mut storage) = open();
-    persist(&mut storage, fence(1, 2));
-    persist(&mut storage, snapshot_index(2, "bad", 1));
-    write_snapshot(root.path(), "snapshot-bad.json", b"bad checksum");
-    drop(storage);
-    let recovered =
-        D1DurableStorage::open(root.path()).expect("bad snapshot falls back to genesis");
-    assert_eq!(recovered.journal_entries(), 1);
+    let root = tempfile::tempdir().unwrap();
+    let mut authority = authority(&root);
+    assert_eq!(
+        authority.grant_capability(grant("cap-1", vec![CapabilityRight::AdmitTurn])),
+        GovernedTurnOutcome::CapabilityGranted
+    );
+    assert_eq!(
+        authority.persist_fence(2),
+        GovernedTurnOutcome::GenerationFenced { generation: 2 }
+    );
+    authority.create_snapshot("snapshot-corrupt").unwrap();
+    assert_eq!(
+        authority.persist_fence(3),
+        GovernedTurnOutcome::GenerationFenced { generation: 3 }
+    );
+    let snapshot = root.path().join("snapshots/snapshot-corrupt.json");
+    let mut bytes = fs::read(&snapshot).unwrap();
+    let snapshot_id_offset = bytes
+        .windows(b"snapshot-corrupt".len())
+        .position(|window| window == b"snapshot-corrupt")
+        .unwrap();
+    bytes[snapshot_id_offset] = b'S';
+    fs::write(snapshot, bytes).unwrap();
+    drop(authority);
+    assert_eq!(
+        D1GovernedTurnAuthority::open(root.path())
+            .unwrap()
+            .generation(),
+        3
+    );
 }
 
 #[test]
 fn test_d12_leftover_snapshot_tempfile_ignored() {
     let (root, storage) = open();
     write_snapshot(root.path(), ".snapshot-crashed.tmp", b"incomplete snapshot");
+    assert!(storage.latest_snapshot().is_none());
     drop(storage);
-    let recovered = D1DurableStorage::open(root.path()).expect("ignore snapshot tempfile");
-    assert!(recovered.is_empty());
+    D1GovernedTurnAuthority::open(root.path()).expect("ignore snapshot tempfile");
 }
 
 #[test]
@@ -386,74 +539,69 @@ fn test_d14_lost_ack_complete_frame_recovered_h04() {
 
 #[test]
 fn test_d15_fresh_lease_acquired_after_restart_for_open_turn() {
-    let (root, mut storage) = open();
-    persist(
-        &mut storage,
-        request(
-            1,
-            CoreEntry::LeaseGranted {
-                turn_id: 1,
-                lease_epoch: 1,
-            },
-        ),
+    let root = tempfile::tempdir().unwrap();
+    let mut authority = authority(&root);
+    ready_to_commit(&mut authority);
+    drop(authority);
+    let mut recovered = D1GovernedTurnAuthority::open(root.path()).unwrap();
+    assert_eq!(
+        recovered.consume_interaction(ConsumeInteractionRequest {
+            interaction_id: "interaction-1".into(),
+            lease_epoch: 2
+        }),
+        GovernedTurnOutcome::InteractionConsumed
     );
-    drop(storage);
-    let mut recovered = D1DurableStorage::open(root.path()).expect("recover open turn");
-    let mut fresh = request(
-        2,
-        CoreEntry::LeaseGranted {
-            turn_id: 1,
-            lease_epoch: 2,
-        },
+    assert_eq!(
+        recovered.commit_turn(commit_request(2)),
+        GovernedTurnOutcome::TurnCommitted
     );
-    fresh.expected_turn_id = Some(1);
-    fresh.expected_lease_epoch = Some(1);
-    fresh.expected_core_epoch = 2;
-    assert!(matches!(
-        recovered.append_conditional(fresh),
-        AppendConditionalOutcome::EntryPersisted(_)
-    ));
 }
 
 #[test]
 fn test_d16_snapshot_then_fence_preserves_new_generation() {
-    let (root, mut storage) = open();
-    let mut initial_fence = fence(1, 7);
-    initial_fence.expected_agent_generation = Some(1);
-    persist(&mut storage, initial_fence);
-    let mut index = snapshot_index(2, "at-seven", 1);
-    index.expected_agent_generation = Some(7);
-    persist(&mut storage, index);
-    persist(&mut storage, fence(3, 8));
-    write_snapshot(root.path(), "snapshot-at-seven.json", b"generation seven");
-    drop(storage);
-    let mut recovered = D1DurableStorage::open(root.path()).expect("recover snapshot tail fence");
-    assert!(matches!(
-        recovered.append_conditional(fence(4, 7)),
-        AppendConditionalOutcome::RejectedPrecondition { .. }
-    ));
+    let root = tempfile::tempdir().unwrap();
+    let mut authority = authority(&root);
+    assert_eq!(
+        authority.grant_capability(grant("cap-1", vec![CapabilityRight::AdmitTurn])),
+        GovernedTurnOutcome::CapabilityGranted
+    );
+    assert_eq!(
+        authority.persist_fence(7),
+        GovernedTurnOutcome::GenerationFenced { generation: 7 }
+    );
+    authority.create_snapshot("at-seven").unwrap();
+    assert_eq!(
+        authority.persist_fence(8),
+        GovernedTurnOutcome::GenerationFenced { generation: 8 }
+    );
+    drop(authority);
+    assert_eq!(
+        D1GovernedTurnAuthority::open(root.path())
+            .unwrap()
+            .generation(),
+        8
+    );
 }
 
 #[test]
 fn test_d17_snapshot_then_cap_revocation_blocks_exercise() {
-    let (root, mut storage) = open();
-    persist(&mut storage, snapshot_index(1, "cap-valid", 0));
-    persist(
-        &mut storage,
-        request(
-            2,
-            CoreEntry::CapabilityRevoked {
-                capability_id: "cap-1".into(),
-            },
-        ),
-    );
-    write_snapshot(root.path(), "snapshot-cap-valid.json", b"cap-1 valid at K");
-    drop(storage);
-    let recovered = D1DurableStorage::open(root.path()).expect("recover revocation tail");
+    let root = tempfile::tempdir().unwrap();
+    let mut authority = authority(&root);
     assert_eq!(
-        recovered.journal_entries(),
-        1,
-        "D-04 must replay revocation tail only once"
+        authority.grant_capability(grant("cap-1", vec![CapabilityRight::AdmitTurn])),
+        GovernedTurnOutcome::CapabilityGranted
+    );
+    authority.create_snapshot("cap-valid").unwrap();
+    assert_eq!(
+        authority.revoke_capability("cap-1"),
+        GovernedTurnOutcome::CapabilityRevoked
+    );
+    drop(authority);
+    let mut recovered = D1GovernedTurnAuthority::open(root.path()).unwrap();
+    assert!(recovered.is_capability_revoked("cap-1"));
+    assert_eq!(
+        recovered.admit_turn(admit(Some("cap-1"))),
+        GovernedTurnOutcome::RejectedCapabilityRevoked
     );
 }
 
@@ -480,39 +628,75 @@ fn test_d18_action_registered_capability_binding_survives_restart() {
 
 #[test]
 fn test_d19_unpointed_snapshot_blob_ignored() {
-    let (root, mut storage) = open();
-    persist(&mut storage, fence(1, 2));
-    write_snapshot(
-        root.path(),
-        "snapshot-unpointed.json",
-        b"must not become authority",
+    let root = tempfile::tempdir().unwrap();
+    let mut authority = authority(&root);
+    assert_eq!(
+        authority.grant_capability(grant("cap-1", vec![CapabilityRight::AdmitTurn])),
+        GovernedTurnOutcome::CapabilityGranted
     );
+    write_snapshot(root.path(), "unpointed.json", b"must not become authority");
+    drop(authority);
+    let storage = D1DurableStorage::open(root.path()).unwrap();
+    assert!(storage.latest_snapshot().is_none());
     drop(storage);
-    let recovered = D1DurableStorage::open(root.path()).expect("ignore unpointed snapshot");
-    assert_eq!(recovered.journal_entries(), 1);
+    assert_eq!(
+        D1GovernedTurnAuthority::open(root.path())
+            .unwrap()
+            .generation(),
+        1
+    );
 }
 
 #[test]
 fn test_d20_snapshot_plus_tail_projection_equivalence_to_genesis() {
-    let (root, mut storage) = open();
-    persist(&mut storage, fence(1, 2));
-    persist(&mut storage, snapshot_index(2, "equivalent", 1));
-    persist(&mut storage, fence(3, 3));
-    write_snapshot(
-        root.path(),
-        "snapshot-equivalent.json",
-        b"projection at generation two",
-    );
-    drop(storage);
-    let fast_path = D1DurableStorage::open(root.path()).expect("snapshot recovery");
-    fs::remove_file(root.path().join("snapshots/snapshot-equivalent.json")).unwrap();
-    let genesis_path = tempfile::tempdir().unwrap();
-    fs::create_dir_all(genesis_path.path().join("regions")).unwrap();
-    fs::copy(
-        root.path().join("core-journal.log"),
-        genesis_path.path().join("core-journal.log"),
-    )
-    .unwrap();
-    let genesis = D1DurableStorage::open(genesis_path.path()).expect("genesis replay");
-    assert_eq!(fast_path.journal_requests(), genesis.journal_requests());
+    let fast_root = tempfile::tempdir().unwrap();
+    let genesis_root = tempfile::tempdir().unwrap();
+    let mut fast = authority(&fast_root);
+    let mut genesis = authority(&genesis_root);
+    for authority in [&mut fast, &mut genesis] {
+        assert_eq!(
+            authority.grant_capability(grant(
+                "cap-1",
+                vec![CapabilityRight::AdmitTurn, CapabilityRight::Derive]
+            )),
+            GovernedTurnOutcome::CapabilityGranted
+        );
+        assert_eq!(
+            authority.admit_turn(admit(None)),
+            GovernedTurnOutcome::Admitted
+        );
+        assert_eq!(
+            authority.persist_fence(2),
+            GovernedTurnOutcome::GenerationFenced { generation: 2 }
+        );
+        let mut second_turn = admit(None);
+        second_turn.turn_id = 2;
+        assert_eq!(
+            authority.admit_turn(second_turn),
+            GovernedTurnOutcome::Admitted
+        );
+    }
+    fast.create_snapshot("equivalent").unwrap();
+    for authority in [&mut fast, &mut genesis] {
+        assert!(matches!(
+            authority.derive_capability(castor_kernel::c06_composition::DeriveCapabilityRequest {
+                parent_cap_id: "cap-1".into(),
+                child_subject: AGENT.into(),
+                child_rights: vec![CapabilityRight::AdmitTurn],
+                child_object_ref: "c04:http_get".into(),
+                child_constraints: vec![],
+                child_delegation_allowed: false
+            }),
+            castor_kernel::c06_composition::CapabilityDeriveOutcome::Derived { .. }
+        ));
+        assert_eq!(
+            authority.persist_fence(3),
+            GovernedTurnOutcome::GenerationFenced { generation: 3 }
+        );
+    }
+    drop(fast);
+    drop(genesis);
+    let fast_path = D1GovernedTurnAuthority::open(fast_root.path()).unwrap();
+    let genesis_path = D1GovernedTurnAuthority::open(genesis_root.path()).unwrap();
+    assert!(fast_path.projection_equals(&genesis_path));
 }

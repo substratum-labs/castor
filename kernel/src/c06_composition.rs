@@ -188,7 +188,7 @@ enum AttemptStatus {
     Settled,
     QuarantinedDispute,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Attempt {
     action_id: String,
     target_scope: String,
@@ -361,6 +361,29 @@ impl D1GovernedTurnAuthority {
     }
     pub fn provider_submission_count(&self) -> u64 {
         self.provider_submissions
+    }
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+    pub fn core_epoch(&self) -> u64 {
+        self.core_epoch
+    }
+    pub fn is_capability_revoked(&self, cap_id: &str) -> bool {
+        self.revoked_capabilities.contains(cap_id)
+    }
+    pub fn projection_equals(&self, other: &Self) -> bool {
+        self.generation == other.generation
+            && self.agent_id == other.agent_id
+            && self.projection_digest == other.projection_digest
+            && self.turn.as_ref().map(|turn| (turn.turn_id, turn.status))
+                == other.turn.as_ref().map(|turn| (turn.turn_id, turn.status))
+            && self.committed_actions == other.committed_actions
+            && self.registered_actions == other.registered_actions
+            && self.capabilities == other.capabilities
+            && self.capability_generations == other.capability_generations
+            && self.action_capabilities == other.action_capabilities
+            && self.attempts == other.attempts
+            && self.revoked_capabilities == other.revoked_capabilities
     }
 
     /// Creates a D-04 restart cache.  The blob is not authoritative until

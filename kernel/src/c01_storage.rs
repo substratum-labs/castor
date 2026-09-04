@@ -409,7 +409,7 @@ impl D1DurableStorage {
 
     /// Returns only the most recent journal-indexed and digest-valid blob.
     /// Tempfiles and every unpointed file are intentionally invisible here.
-    pub(crate) fn latest_snapshot(&self) -> Option<(u64, Vec<u8>)> {
+    pub fn latest_snapshot(&self) -> Option<(u64, Vec<u8>)> {
         let mut indexes: Vec<_> = self
             .entries
             .values()
