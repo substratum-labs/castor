@@ -147,6 +147,8 @@ impl RocheSandboxRunner {
                 "no-new-privileges",
                 "--user",
                 "10001:10001",
+                "--cap-drop",
+                "ALL",
             ])
             .arg("--mount")
             .arg(format!(

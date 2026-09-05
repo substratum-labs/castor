@@ -222,6 +222,35 @@ fn sandbox_contract_non_root_uid_gid() {
 }
 
 #[test]
+fn sandbox_contract_cap_drop_all() {
+    let sandbox = Sandbox::new();
+    let output = Command::new("docker")
+        .args([
+            "inspect",
+            "--format",
+            "{{json .HostConfig.CapDrop}}",
+            sandbox.supervisor.container_id(),
+        ])
+        .output()
+        .expect("inspect sandbox capability drops");
+    assert!(
+        output.status.success(),
+        "sandbox capability inspection failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let dropped: Value = serde_json::from_slice(&output.stdout)
+        .expect("Docker CapDrop inspection must be a JSON array");
+    assert!(
+        dropped
+            .as_array()
+            .expect("Docker CapDrop must be an array")
+            .iter()
+            .any(|capability| capability == "ALL"),
+        "Roche carrier must drop every Linux capability, got {dropped}"
+    );
+}
+
+#[test]
 fn test_sandbox_raw_tcp_egress_fails_closed() {
     let sandbox = Sandbox::new();
     let outcome = sandbox.python(r#"import errno,json,socket

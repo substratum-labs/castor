@@ -1,25 +1,54 @@
 {
+  "comparative_uds_http_rtt": {
+    "arms": [
+      {
+        "arm": "Arm A",
+        "iterations": 1000,
+        "p50_us": 12.875,
+        "p95_us": 17.584,
+        "p99_us": 26.25,
+        "speedup_factor": 6.786407766990291,
+        "throughput_requests_per_sec": 73104.31554512828,
+        "transport": "Direct UDS (control.sock)"
+      },
+      {
+        "arm": "Arm B",
+        "iterations": 1000,
+        "p50_us": 87.375,
+        "p95_us": 135.375,
+        "p99_us": 154.167,
+        "speedup_factor": 1.0,
+        "throughput_requests_per_sec": 10506.767671726551,
+        "transport": "HTTP/1.1 loopback reverse proxy -> UDS"
+      }
+    ],
+    "iterations_per_arm": 1000,
+    "operation": "GetProjectionSummary",
+    "speedup_definition": "HTTP proxy p50 / direct UDS p50; HTTP is 1.0x baseline"
+  },
   "crc32_journal_framing_and_storage": {
     "checksum": "IEEE 802.3 CRC-32",
     "durability": "D1 sync_all per append",
-    "elapsed_ms": 9040.993375,
+    "elapsed_ms": 8308.051291,
     "entries": 2000,
     "journal_bytes": 1274679,
-    "mb_per_sec": 0.14098882137495206,
-    "records_per_sec": 221.21462952626047
+    "mb_per_sec": 0.15342695360834405,
+    "records_per_sec": 240.73033855322643
   },
   "d02_direct_uds_rtt": {
-    "channel": "control",
+    "arm": "Arm A",
     "iterations": 1000,
-    "operation": "GetProjectionSummary",
-    "p50_us": 10.083,
-    "p95_us": 24.292,
-    "p99_us": 44.375
+    "p50_us": 12.875,
+    "p95_us": 17.584,
+    "p99_us": 26.25,
+    "speedup_factor": 6.786407766990291,
+    "throughput_requests_per_sec": 73104.31554512828,
+    "transport": "Direct UDS (control.sock)"
   },
   "environment": {
     "arch": "aarch64",
     "build_profile": "release",
     "os": "macos"
   },
-  "generated_at_unix_seconds": 1788547037
+  "generated_at_unix_seconds": 1788589611
 }
