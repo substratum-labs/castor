@@ -305,6 +305,11 @@ fn dispatch(
             cap_id: p.get("cap_id").and_then(Value::as_str).map(str::to_owned),
         }),
         "RequestInteraction" => authority.request_interaction(RequestInteractionRequest {
+            query_operation: p
+                .get("descriptor")
+                .and_then(|d| d.get("type"))
+                .and_then(Value::as_str)
+                == Some("QueryOperation"),
             interaction_id: string(p, "interaction_id")?,
             lease_epoch: number(p, "lease_epoch")?,
             request_digest: string(p, "request_digest")?,
@@ -341,6 +346,15 @@ fn dispatch(
             cap_id: p.get("cap_id").and_then(Value::as_str).map(str::to_owned),
         }),
         "RegisterAction" => authority.register_action(ActionRegistrationRequest {
+            stable_operation_id: p
+                .get("stable_operation_id")
+                .filter(|v| !v.is_null())
+                .map(|v| {
+                    v.as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| "stable_operation_id must be a string".to_string())
+                })
+                .transpose()?,
             action_id: string(p, "action_id")?,
             agent_id: p
                 .get("agent_id")

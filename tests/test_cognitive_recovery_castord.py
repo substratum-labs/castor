@@ -317,6 +317,7 @@ class Daemon:
                 "RegisterAction",
                 {
                     "action_id": action,
+                    "stable_operation_id": OP_ID,
                     "agent_id": AGENT,
                     "action_family": ADAPTER,
                     "cap_id": CAP,

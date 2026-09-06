@@ -151,6 +151,7 @@ pub struct AdmitTurnRequest {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RequestInteractionRequest {
+    pub query_operation: bool,
     pub interaction_id: String,
     pub lease_epoch: u64,
     pub request_digest: String,
@@ -179,6 +180,7 @@ pub struct CommitTurnRequest {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActionRegistrationRequest {
+    pub stable_operation_id: Option<String>,
     pub action_id: String,
     pub agent_id: String,
     pub action_family: String,
@@ -268,6 +270,8 @@ struct D1ProjectionSnapshot {
     registered_actions: HashSet<String>,
     #[serde(default)]
     action_scopes: HashMap<String, String>,
+    action_operation_ids: HashMap<String, String>,
+    probe_budget_remaining: u64,
     capabilities: HashMap<String, CapabilityGrant>,
     capability_generations: HashMap<String, u64>,
     action_capabilities: HashMap<String, String>,
@@ -293,6 +297,8 @@ pub struct D1GovernedTurnAuthority {
     committed_actions: HashMap<String, (String, String)>,
     registered_actions: HashSet<String>,
     action_scopes: HashMap<String, String>,
+    action_operation_ids: HashMap<String, String>,
+    probe_budget_remaining: u64,
     capabilities: HashMap<String, CapabilityGrant>,
     capability_generations: HashMap<String, u64>,
     action_capabilities: HashMap<String, String>,
@@ -400,6 +406,8 @@ impl D1GovernedTurnAuthority {
             committed_actions: HashMap::new(),
             registered_actions: HashSet::new(),
             action_scopes: HashMap::new(),
+            action_operation_ids: HashMap::new(),
+            probe_budget_remaining: 3,
             capabilities: HashMap::new(),
             capability_generations: HashMap::new(),
             action_capabilities: HashMap::new(),
@@ -437,6 +445,8 @@ impl D1GovernedTurnAuthority {
             && self.committed_actions == other.committed_actions
             && self.registered_actions == other.registered_actions
             && self.action_scopes == other.action_scopes
+            && self.action_operation_ids == other.action_operation_ids
+            && self.probe_budget_remaining == other.probe_budget_remaining
             && self.capabilities == other.capabilities
             && self.capability_generations == other.capability_generations
             && self.action_capabilities == other.action_capabilities
@@ -452,6 +462,7 @@ impl D1GovernedTurnAuthority {
             .map(|attempt| attempt.target_scope.as_str())
             .collect();
         json!({
+            "recovery": { "probe_budget_remaining": self.probe_budget_remaining },
             "generation": self.generation,
             "active_capabilities": self.capabilities.keys()
                 .filter(|capability_id| !self.revoked_capabilities.contains(*capability_id))
@@ -487,6 +498,8 @@ impl D1GovernedTurnAuthority {
             committed_actions: self.committed_actions.clone(),
             registered_actions: self.registered_actions.clone(),
             action_scopes: self.action_scopes.clone(),
+            action_operation_ids: self.action_operation_ids.clone(),
+            probe_budget_remaining: self.probe_budget_remaining,
             capabilities: self.capabilities.clone(),
             capability_generations: self.capability_generations.clone(),
             action_capabilities: self.action_capabilities.clone(),
@@ -763,8 +776,12 @@ impl D1GovernedTurnAuthority {
                 CoreEntry::InteractionRequested {
                     turn_id,
                     interaction_id,
+                    service_id,
                     ..
                 } => {
+                    if service_id == "QueryOperation" {
+                        self.probe_budget_remaining = self.probe_budget_remaining.saturating_sub(1);
+                    }
                     if let Some(turn) = self.turn.as_mut() {
                         if turn.turn_id == turn_id {
                             turn.active_lease = None;
@@ -814,7 +831,12 @@ impl D1GovernedTurnAuthority {
                     action_id,
                     cap_id,
                     target_scope,
+                    stable_operation_id,
                 } => {
+                    if let Some(operation_id) = stable_operation_id {
+                        self.action_operation_ids
+                            .insert(action_id.clone(), operation_id);
+                    }
                     if let Some(scope) = target_scope {
                         self.action_scopes.insert(action_id.clone(), scope);
                     }
@@ -944,6 +966,8 @@ impl D1GovernedTurnAuthority {
         self.committed_actions.clear();
         self.registered_actions.clear();
         self.action_scopes.clear();
+        self.action_operation_ids.clear();
+        self.probe_budget_remaining = 3;
         self.capabilities.clear();
         self.capability_generations.clear();
         self.action_capabilities.clear();
@@ -963,6 +987,8 @@ impl D1GovernedTurnAuthority {
         self.committed_actions = snapshot.committed_actions;
         self.registered_actions = snapshot.registered_actions;
         self.action_scopes = snapshot.action_scopes;
+        self.action_operation_ids = snapshot.action_operation_ids;
+        self.probe_budget_remaining = snapshot.probe_budget_remaining;
         self.capabilities = snapshot.capabilities;
         self.capability_generations = snapshot.capability_generations;
         self.action_capabilities = snapshot.action_capabilities;
@@ -995,7 +1021,11 @@ impl D1GovernedTurnAuthority {
                     action_id: a.action_id.clone(),
                     target_scope: a.target_scope.clone(),
                     status: status.into(),
-                    stable_op_id: a.dispatch_identity.clone(),
+                    stable_op_id: self
+                        .action_operation_ids
+                        .get(&a.action_id)
+                        .cloned()
+                        .or_else(|| a.dispatch_identity.clone()),
                     lock_state: "WriteLocked_ProbeAllowed".into(),
                     ambiguous_delivery: a.ambiguous_delivery,
                 })
@@ -1090,6 +1120,9 @@ impl D1GovernedTurnAuthority {
         if turn.status != TurnStatus::Ready || turn.active_lease != Some(request.lease_epoch) {
             return GovernedTurnOutcome::RejectedStaleAuthority;
         }
+        if request.query_operation && self.probe_budget_remaining == 0 {
+            return GovernedTurnOutcome::RejectedCurrentState;
+        }
         // A delayed report is identified by interaction_id. Never let a
         // successor Turn reuse that identity and accidentally accept it.
         if self.storage().journal_requests().iter().any(|entry| {
@@ -1105,7 +1138,12 @@ impl D1GovernedTurnAuthority {
                 turn_id: id,
                 interaction_id: request.interaction_id.clone(),
                 request_digest: request.request_digest,
-                service_id: "D1".into(),
+                service_id: if request.query_operation {
+                    "QueryOperation"
+                } else {
+                    "D1"
+                }
+                .into(),
             },
             vec![],
             Some(id),
@@ -1118,6 +1156,9 @@ impl D1GovernedTurnAuthority {
         turn.active_lease = None;
         turn.status = TurnStatus::AwaitingInteraction;
         turn.requested.insert(request.interaction_id);
+        if request.query_operation {
+            self.probe_budget_remaining -= 1;
+        }
         GovernedTurnOutcome::InteractionRequested
     }
     pub fn report_outcome(&mut self, report: InteractionOutcomeReport) -> GovernedTurnOutcome {
@@ -1267,8 +1308,17 @@ impl D1GovernedTurnAuthority {
         GovernedTurnOutcome::TurnCommitted
     }
     pub fn register_action(&mut self, request: ActionRegistrationRequest) -> GovernedTurnOutcome {
+        if request
+            .stable_operation_id
+            .as_ref()
+            .is_some_and(|id| id.is_empty())
+        {
+            return GovernedTurnOutcome::RejectedPrecondition;
+        }
         if let Some(scope) = self.action_scopes.get(&request.action_id) {
-            return if scope == &request.target_scope
+            return if self.action_operation_ids.get(&request.action_id)
+                == request.stable_operation_id.as_ref()
+                && scope == &request.target_scope
                 && self
                     .action_capabilities
                     .get(&request.action_id)
@@ -1311,6 +1361,7 @@ impl D1GovernedTurnAuthority {
                 action_id: request.action_id.clone(),
                 cap_id: request.cap_id.clone(),
                 target_scope: Some(request.target_scope.clone()),
+                stable_operation_id: request.stable_operation_id.clone(),
             },
             vec![],
             None,
@@ -1322,6 +1373,10 @@ impl D1GovernedTurnAuthority {
         if !request.cap_id.is_empty() {
             self.action_capabilities
                 .insert(request.action_id.clone(), request.cap_id);
+        }
+        if let Some(operation_id) = request.stable_operation_id {
+            self.action_operation_ids
+                .insert(request.action_id.clone(), operation_id);
         }
         self.action_scopes
             .insert(request.action_id.clone(), request.target_scope);
@@ -1410,6 +1465,13 @@ impl D1GovernedTurnAuthority {
         let Some(attempt) = self.attempts.get(&request.attempt_id) else {
             return GovernedTurnOutcome::RejectedCurrentState;
         };
+        if self
+            .action_operation_ids
+            .get(&attempt.action_id)
+            .is_some_and(|id| id != &request.dispatch_identity)
+        {
+            return GovernedTurnOutcome::RejectedBindingOrIssuer;
+        }
         if attempt.status != AttemptStatus::ArmedUnknown || request.dispatch_identity.is_empty() {
             return GovernedTurnOutcome::RejectedCurrentState;
         }

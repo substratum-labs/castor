@@ -88,6 +88,7 @@ impl Fixture {
         bytes: u64,
     ) -> GovernedTurnOutcome {
         self.authority.register_action(ActionRegistrationRequest {
+            stable_operation_id: None,
             action_id: "action-1".into(),
             agent_id: "agent-a".into(),
             action_family: family.into(),
@@ -569,6 +570,7 @@ fn test_cap_exact_match_constraint_is_enforced_at_exercise() {
     c.ready_to_commit("agent-a", "cap-1");
     assert_eq!(
         c.authority.register_action(ActionRegistrationRequest {
+            stable_operation_id: None,
             action_id: "action-1".into(),
             agent_id: "agent-a".into(),
             action_family: "c04:http_get".into(),

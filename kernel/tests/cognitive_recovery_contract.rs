@@ -137,6 +137,7 @@ fn test_r11_reconstructed_partial_settlement_dispute_and_alias_lock() {
     );
     assert_eq!(
         core.register_action(ActionRegistrationRequest {
+            stable_operation_id: None,
             action_id: "a3".into(),
             agent_id: "r11-agent".into(),
             action_family: "c04:generic".into(),

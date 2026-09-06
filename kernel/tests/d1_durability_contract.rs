@@ -95,6 +95,7 @@ fn ready_to_commit(authority: &mut D1GovernedTurnAuthority) {
     ));
     assert_eq!(
         authority.request_interaction(RequestInteractionRequest {
+            query_operation: false,
             interaction_id: "interaction-1".into(),
             lease_epoch: 0,
             request_digest: digest(b"request"),
@@ -134,6 +135,7 @@ fn armed_dispatched_attempt(authority: &mut D1GovernedTurnAuthority) {
     );
     assert_eq!(
         authority.register_action(castor_kernel::c06_composition::ActionRegistrationRequest {
+            stable_operation_id: None,
             action_id: "action-1".into(),
             agent_id: AGENT.into(),
             action_family: "c04:http_get".into(),
@@ -613,6 +615,7 @@ fn test_d18_action_registered_capability_binding_survives_restart() {
         request(
             1,
             CoreEntry::ActionRegistered {
+                stable_operation_id: None,
                 target_scope: None,
                 action_id: "action-1".into(),
                 cap_id: "cap-1".into(),

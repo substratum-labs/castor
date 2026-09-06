@@ -68,6 +68,8 @@ pub enum CoreEntry {
         cap_id: Option<String>,
     },
     ActionRegistered {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stable_operation_id: Option<String>,
         action_id: String,
         cap_id: String,
         #[serde(default)]

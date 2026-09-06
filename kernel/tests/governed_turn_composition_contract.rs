@@ -128,6 +128,7 @@ fn admit() -> AdmitTurnRequest {
 }
 fn request_interaction() -> RequestInteractionRequest {
     RequestInteractionRequest {
+        query_operation: false,
         interaction_id: "interaction-1".into(),
         lease_epoch: 0,
         request_digest: digest(b"interaction request"),
@@ -160,6 +161,7 @@ fn commit() -> CommitTurnRequest {
 }
 fn action(action_id: &str) -> ActionRegistrationRequest {
     ActionRegistrationRequest {
+        stable_operation_id: None,
         action_id: action_id.into(),
         agent_id: "agent-1".into(),
         action_family: "c04:generic".into(),
@@ -942,4 +944,149 @@ fn test_c2_successor_cannot_reuse_closed_turn_interaction_identity() {
         c.authority.report_outcome(report_interaction()),
         GovernedTurnOutcome::RejectedLateOrClosedTurn
     );
+}
+
+#[test]
+fn test_c2_registered_operation_survives_snapshot_and_rejects_rebinding() {
+    for snapshot in [false, true] {
+        let mut f = Fixture::new();
+        f.ready_to_commit();
+        assert_eq!(
+            f.authority.commit_turn(commit()),
+            GovernedTurnOutcome::TurnCommitted
+        );
+        let mut registration = action("action-1");
+        registration.stable_operation_id = Some("registered-op".into());
+        assert_eq!(
+            f.authority.register_action(registration.clone()),
+            GovernedTurnOutcome::ActionRegistered
+        );
+        assert_eq!(
+            f.authority.present_admission_certificate(admission()),
+            GovernedTurnOutcome::AttemptArmed { attempt_id: 1 }
+        );
+        let last = f.authority.storage().journal_requests().pop().unwrap();
+        let base = f
+            .authority
+            .storage()
+            .read_entry(&last.agent_id, last.entry_id)
+            .unwrap()
+            .entry_digest;
+        if snapshot {
+            f.authority.create_snapshot("operation-cache").unwrap();
+        }
+        assert_eq!(
+            f.authority.reconstruct_after_crash(),
+            GovernedTurnOutcome::Reconstructed
+        );
+        let before = f.authority.inspect_journal();
+        registration.stable_operation_id = Some("replacement".into());
+        assert_eq!(
+            f.authority.register_action(registration),
+            GovernedTurnOutcome::RejectedPrecondition
+        );
+        assert_eq!(
+            f.authority.record_dispatch_attempt(dispatch()),
+            GovernedTurnOutcome::RejectedBindingOrIssuer
+        );
+        assert_eq!(f.authority.inspect_journal(), before);
+        let mut next = admit();
+        next.turn_id = 2;
+        next.base_projection_digest = base;
+        let GovernedTurnOutcome::Admitted {
+            unsettled_effects_snapshot,
+        } = f.authority.admit_turn(next)
+        else {
+            panic!("admission failed")
+        };
+        assert_eq!(
+            unsettled_effects_snapshot.attempts[0]
+                .stable_op_id
+                .as_deref(),
+            Some("registered-op")
+        );
+        let mut bound = dispatch();
+        bound.dispatch_identity = "registered-op".into();
+        assert_eq!(
+            f.authority.record_dispatch_attempt(bound),
+            GovernedTurnOutcome::DispatchRecorded
+        );
+    }
+}
+
+#[test]
+fn test_c2_probe_budget_survives_snapshot_tail_and_exhaustion() {
+    let mut f = Fixture::new();
+    f.armed_action();
+    let last = f.authority.storage().journal_requests().pop().unwrap();
+    let mut next = admit();
+    next.turn_id = 2;
+    next.base_projection_digest = f
+        .authority
+        .storage()
+        .read_entry(&last.agent_id, last.entry_id)
+        .unwrap()
+        .entry_digest;
+    assert!(matches!(
+        f.authority.admit_turn(next),
+        GovernedTurnOutcome::Admitted { .. }
+    ));
+    for index in 0..3 {
+        let mut request = request_interaction();
+        request.query_operation = true;
+        request.interaction_id = format!("probe-{index}");
+        request.lease_epoch = index;
+        assert_eq!(
+            f.authority.request_interaction(request.clone()),
+            GovernedTurnOutcome::InteractionRequested
+        );
+        assert_eq!(
+            f.authority.projection_summary()["recovery"]["probe_budget_remaining"],
+            2 - index
+        );
+        let before = f.authority.inspect_journal();
+        assert_eq!(
+            f.authority.request_interaction(request),
+            GovernedTurnOutcome::RejectedStaleAuthority
+        );
+        assert_eq!(f.authority.inspect_journal(), before);
+        let mut report = report_interaction();
+        report.interaction_id = format!("probe-{index}");
+        assert_eq!(
+            f.authority.report_outcome(report),
+            GovernedTurnOutcome::InteractionBound
+        );
+        let mut consume = consume();
+        consume.interaction_id = format!("probe-{index}");
+        consume.lease_epoch = index + 1;
+        assert_eq!(
+            f.authority.consume_interaction(consume),
+            GovernedTurnOutcome::InteractionConsumed
+        );
+    }
+    f.authority.create_snapshot("budget-cache").unwrap();
+    assert_eq!(
+        f.authority.reconstruct_after_crash(),
+        GovernedTurnOutcome::Reconstructed
+    );
+    assert_eq!(
+        f.authority.projection_summary()["recovery"]["probe_budget_remaining"],
+        0
+    );
+    let mut fresh_lease = consume();
+    fresh_lease.interaction_id = "probe-2".into();
+    fresh_lease.lease_epoch = 4;
+    assert_eq!(
+        f.authority.consume_interaction(fresh_lease),
+        GovernedTurnOutcome::InteractionConsumed
+    );
+    let before = f.authority.inspect_journal();
+    let mut request = request_interaction();
+    request.query_operation = true;
+    request.lease_epoch = 4;
+    assert_eq!(
+        f.authority.request_interaction(request),
+        GovernedTurnOutcome::RejectedCurrentState
+    );
+    assert_eq!(f.authority.inspect_journal(), before);
 }

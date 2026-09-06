@@ -32,6 +32,7 @@ fn fixture_with_scope(
             cap_id: None,
         },
         CoreEntry::ActionRegistered {
+            stable_operation_id: None,
             action_id: "a2".into(),
             cap_id: String::new(),
             target_scope: scope,
@@ -113,6 +114,7 @@ fn canonical_scope_survives_genesis_and_snapshot_replay() {
         let before = core.inspect_journal();
         assert_eq!(
             core.register_action(ActionRegistrationRequest {
+                stable_operation_id: None,
                 action_id: "a2".into(),
                 agent_id: "agent".into(),
                 action_family: "adapter".into(),
