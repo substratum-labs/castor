@@ -146,7 +146,7 @@ with sqlite3.connect(sys.argv[1]) as db:
             "stable_operation_id": OP_ID,
             "adapter_id": ADAPTER,
             "issuer": "fixture-evidence-service",
-            "request_digest": digest(b"payment(amount=100)"),
+            "request_digest": SCOPE,
             "settlement_schema_version": 1,
             "resolution": resolution,
             "actuator_state": self.query(),
@@ -572,7 +572,7 @@ class CognitiveRecovery(unittest.TestCase):
         self.assertEqual(d.actuator.arrive(), "TerminatedRejected")
         self.assertEqual(d.actuator.count(), 0)
         d.ok("RevokeCapability", {"capability_id": CAP}, "CapabilityRevoked", "control")
-        d.ok("PresentAdmissionCertificate", d.admission("a2"), "RejectedPrecondition")
+        d.ok("PresentAdmissionCertificate", d.admission("a2"), "RejectedCapabilityRevoked")
 
     def test_r6_next_turn_probe_allowed_mutation_locked(self):
         d = self.fixture()
