@@ -1,3 +1,6 @@
+#[path = "castord/evidence.rs"]
+mod evidence;
+
 use castor_kernel::c01_storage::{D1DurableStorage, DurabilityProfile, EnsureRegionOutcome};
 use castor_kernel::c04_adapter::inspect_adapter_store;
 use castor_kernel::c06_composition::*;
@@ -21,13 +24,14 @@ use std::thread;
 use std::time::Duration;
 
 fn usage() -> &'static str {
-    "usage: castord --storage-root PATH --socket PATH [--control-socket PATH] [--allow-test-opcodes] [--child CMD] [--sandbox roche|none] [--sandbox-image IMAGE]"
+    "usage: castord --storage-root PATH --socket PATH [--control-socket PATH] [--evidence-socket PATH] [--allow-test-opcodes] [--child CMD] [--sandbox roche|none] [--sandbox-image IMAGE]"
 }
 
 struct Config {
     storage_root: PathBuf,
     socket: PathBuf,
     control_socket: Option<PathBuf>,
+    evidence_socket: Option<PathBuf>,
     allow_test_opcodes: bool,
     child: Option<String>,
     sandbox: SandboxMode,
@@ -44,6 +48,7 @@ enum SandboxMode {
 enum SocketChannel {
     Agent,
     Control,
+    Evidence,
 }
 
 enum SupervisedChild {
@@ -70,6 +75,7 @@ fn parse_args() -> Result<Config, String> {
     let mut storage_root = None;
     let mut socket = None;
     let mut control_socket = None;
+    let mut evidence_socket = None;
     let mut allow_test_opcodes = false;
     let mut child = None;
     let mut sandbox = SandboxMode::None;
@@ -93,6 +99,11 @@ fn parse_args() -> Result<Config, String> {
                     Some(PathBuf::from(args.next().ok_or_else(|| {
                         "--control-socket requires a path".to_string()
                     })?))
+            }
+            "--evidence-socket" => {
+                evidence_socket = Some(PathBuf::from(
+                    args.next().ok_or("--evidence-socket requires a path")?,
+                ));
             }
             "--allow-test-opcodes" => allow_test_opcodes = true,
             "--child" => {
@@ -124,6 +135,7 @@ fn parse_args() -> Result<Config, String> {
         storage_root: storage_root.ok_or_else(|| "--storage-root is required".to_string())?,
         socket: socket.ok_or_else(|| "--socket is required".to_string())?,
         control_socket,
+        evidence_socket,
         allow_test_opcodes,
         child,
         sandbox,
@@ -213,7 +225,7 @@ fn outcome_value(outcome: GovernedTurnOutcome) -> Value {
             json!({"type":"RejectedStaleGeneration","current_generation":current_generation})
         }
         other => json!({"type": match other {
-            GovernedTurnOutcome::EntryPersisted => "EntryPersisted", GovernedTurnOutcome::Admitted => "Admitted", GovernedTurnOutcome::InteractionRequested => "InteractionRequested", GovernedTurnOutcome::InteractionBound => "InteractionBound", GovernedTurnOutcome::InteractionConsumed => "InteractionConsumed", GovernedTurnOutcome::TurnCommitted => "TurnCommitted", GovernedTurnOutcome::ActionRegistered => "ActionRegistered", GovernedTurnOutcome::DispatchRecorded => "DispatchRecorded", GovernedTurnOutcome::Delivered => "Delivered", GovernedTurnOutcome::DuplicateDelivery => "DuplicateDelivery", GovernedTurnOutcome::QuarantinedDispute => "QuarantinedDispute", GovernedTurnOutcome::CapabilityGranted => "CapabilityGranted", GovernedTurnOutcome::CapabilityRevoked => "CapabilityRevoked", GovernedTurnOutcome::Reconstructed => "Reconstructed", GovernedTurnOutcome::Ambiguous => "Ambiguous", GovernedTurnOutcome::RejectedStaleAuthority => "RejectedStaleAuthority", GovernedTurnOutcome::RejectedCapabilityRevoked => "RejectedCapabilityRevoked", GovernedTurnOutcome::RejectedInvalidProofClass => "RejectedInvalidProofClass", GovernedTurnOutcome::RejectedLateOrClosedTurn => "RejectedLateOrClosedTurn", GovernedTurnOutcome::RejectedCurrentState => "RejectedCurrentState", GovernedTurnOutcome::RejectedNotFound => "RejectedNotFound", GovernedTurnOutcome::RejectedPrecondition => "RejectedPrecondition", GovernedTurnOutcome::IntegrityOrProtocolFault => "IntegrityOrProtocolFault", GovernedTurnOutcome::UnavailableBeforeAck => "UnavailableBeforeAck", _ => unreachable!() }}),
+            GovernedTurnOutcome::EntryPersisted => "EntryPersisted", GovernedTurnOutcome::Admitted => "Admitted", GovernedTurnOutcome::InteractionRequested => "InteractionRequested", GovernedTurnOutcome::InteractionBound => "InteractionBound", GovernedTurnOutcome::InteractionConsumed => "InteractionConsumed", GovernedTurnOutcome::TurnCommitted => "TurnCommitted", GovernedTurnOutcome::ActionRegistered => "ActionRegistered", GovernedTurnOutcome::DispatchRecorded => "DispatchRecorded", GovernedTurnOutcome::Delivered => "Delivered", GovernedTurnOutcome::DuplicateDelivery => "DuplicateDelivery", GovernedTurnOutcome::QuarantinedDispute => "QuarantinedDispute", GovernedTurnOutcome::CapabilityGranted => "CapabilityGranted", GovernedTurnOutcome::CapabilityRevoked => "CapabilityRevoked", GovernedTurnOutcome::Reconstructed => "Reconstructed", GovernedTurnOutcome::Ambiguous => "Ambiguous", GovernedTurnOutcome::RejectedStaleAuthority => "RejectedStaleAuthority", GovernedTurnOutcome::RejectedCapabilityRevoked => "RejectedCapabilityRevoked", GovernedTurnOutcome::RejectedBindingOrIssuer => "RejectedBindingOrIssuer", GovernedTurnOutcome::RejectedInvalidProofClass => "RejectedInvalidProofClass", GovernedTurnOutcome::RejectedLateOrClosedTurn => "RejectedLateOrClosedTurn", GovernedTurnOutcome::RejectedCurrentState => "RejectedCurrentState", GovernedTurnOutcome::RejectedNotFound => "RejectedNotFound", GovernedTurnOutcome::RejectedPrecondition => "RejectedPrecondition", GovernedTurnOutcome::IntegrityOrProtocolFault => "IntegrityOrProtocolFault", GovernedTurnOutcome::UnavailableBeforeAck => "UnavailableBeforeAck", _ => unreachable!() }}),
     }
 }
 fn ensure_value(outcome: EnsureRegionOutcome) -> Value {
@@ -225,6 +237,7 @@ fn dispatch(
     request: &SyscallRequest,
     channel: SocketChannel,
     allow_test_opcodes: bool,
+    trust: Option<&evidence::EvidenceTrust>,
 ) -> Result<Value, String> {
     let agent_allowed = matches!(
         request.op.as_str(),
@@ -234,7 +247,6 @@ fn dispatch(
             | "PresentAdmissionCertificate"
             | "RecordDispatchAttempt"
             | "DeliverArmedAttempt"
-            | "PresentSettlementCertificate"
             | "PersistFence"
             | "RevokeCapability"
             | "EnsureRegion"
@@ -258,6 +270,7 @@ fn dispatch(
     );
     if (channel == SocketChannel::Agent && !agent_allowed && !test_opcode_allowed)
         || (channel == SocketChannel::Control && !control_allowed)
+        || (channel == SocketChannel::Evidence && request.op != "PresentSettlementCertificate")
     {
         return Err("UnauthorizedOpcode".into());
     }
@@ -339,11 +352,17 @@ fn dispatch(
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .into(),
-            target_scope: p
-                .get("target_scope")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .into(),
+            target_scope: match trust {
+                Some(trust) => match trust.canonical_scopes.get(&string(p, "action_id")?) {
+                    Some(scope) => scope.clone(),
+                    None => return Ok(outcome_value(GovernedTurnOutcome::RejectedPrecondition)),
+                },
+                None => p
+                    .get("target_scope")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .into(),
+            },
             numeric_parameters: Default::default(),
             exact_parameters: Default::default(),
         }),
@@ -366,6 +385,10 @@ fn dispatch(
             dispatch_identity: string(p, "dispatch_identity")?,
         }),
         "PresentSettlementCertificate" => {
+            let trust = trust.ok_or("RejectedBindingOrIssuer")?;
+            trust
+                .verify(authority, p)
+                .map_err(|_| "RejectedBindingOrIssuer")?;
             authority.present_settlement_certificate(PresentSettlementCertificateRequest {
                 attempt_id: number(p, "attempt_id")?,
                 dispatch_identity: string(p, "dispatch_identity")?,
@@ -384,6 +407,7 @@ fn dispatch(
                 &string(p, "capability_id")?,
             ),
             SocketChannel::Control => authority.revoke_capability(&string(p, "capability_id")?),
+            SocketChannel::Evidence => return Err("UnauthorizedOpcode".into()),
         },
         "Replay" => authority.reconstruct_after_crash(),
         "EnsureRegion" => {
@@ -426,6 +450,7 @@ fn serve_connection(
     child: Arc<Mutex<Option<SupervisedChild>>>,
     channel: SocketChannel,
     allow_test_opcodes: bool,
+    trust: Arc<Option<evidence::EvidenceTrust>>,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     loop {
@@ -450,12 +475,22 @@ fn serve_connection(
                 return;
             }
         };
-        let outcome = dispatch(
-            &mut authority.lock().expect("authority mutex poisoned"),
-            &request,
-            channel,
-            allow_test_opcodes,
-        );
+        let peer_authorized = channel != SocketChannel::Evidence
+            || trust
+                .as_ref()
+                .as_ref()
+                .is_some_and(|trust| evidence::peer_uid(&stream).ok() == Some(trust.peer_uid));
+        let outcome = if !peer_authorized {
+            Err("RejectedBindingOrIssuer".into())
+        } else {
+            dispatch(
+                &mut authority.lock().expect("authority mutex poisoned"),
+                &request,
+                channel,
+                allow_test_opcodes,
+                trust.as_ref().as_ref(),
+            )
+        };
         let fenced = matches!(outcome.as_ref().ok(), Some(value) if value.get("type") == Some(&json!("GenerationFenced")));
         let response = match outcome {
             Ok(outcome) => SyscallResponse {
@@ -464,8 +499,8 @@ fn serve_connection(
                 outcome: Some(outcome),
                 error: None,
             },
-            Err(error) if error == "UnauthorizedOpcode" => {
-                gateway_error(request.request_id, "UnauthorizedOpcode", error)
+            Err(error) if error == "UnauthorizedOpcode" || error == "RejectedBindingOrIssuer" => {
+                gateway_error(request.request_id, &error, error.clone())
             }
             Err(error) => malformed(request.request_id, error),
         };
@@ -490,14 +525,16 @@ fn serve_listener(
     child: Arc<Mutex<Option<SupervisedChild>>>,
     channel: SocketChannel,
     allow_test_opcodes: bool,
+    trust: Arc<Option<evidence::EvidenceTrust>>,
 ) -> io::Result<()> {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 let authority = Arc::clone(&authority);
                 let child = Arc::clone(&child);
+                let trust = Arc::clone(&trust);
                 thread::spawn(move || {
-                    serve_connection(stream, authority, child, channel, allow_test_opcodes)
+                    serve_connection(stream, authority, child, channel, allow_test_opcodes, trust)
                 });
             }
             Err(error) => return Err(error),
@@ -507,11 +544,24 @@ fn serve_listener(
 }
 
 fn run(config: Config) -> io::Result<()> {
+    let trust = Arc::new(evidence::EvidenceTrust::load()?);
     fs::create_dir_all(&config.storage_root)?;
     fs::set_permissions(&config.storage_root, fs::Permissions::from_mode(0o700))?;
     let authority = Arc::new(Mutex::new(D1GovernedTurnAuthority::open(
         &config.storage_root,
     )?));
+    let evidence_socket = config
+        .evidence_socket
+        .clone()
+        .unwrap_or_else(|| config.socket.parent().unwrap().join("evidence.sock"));
+    if evidence_socket == config.socket || config.control_socket.as_ref() == Some(&evidence_socket)
+    {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            "socket channels require distinct paths",
+        ));
+    }
+    let evidence_listener = bind_socket(&evidence_socket)?;
     let listener = bind_socket(&config.socket)?;
     let control_listener = config
         .control_socket
@@ -540,7 +590,23 @@ fn run(config: Config) -> io::Result<()> {
         )),
         None => None,
     }));
+    {
+        let authority = Arc::clone(&authority);
+        let child = Arc::clone(&child);
+        let trust = Arc::clone(&trust);
+        thread::spawn(move || {
+            let _ = serve_listener(
+                evidence_listener,
+                authority,
+                child,
+                SocketChannel::Evidence,
+                false,
+                trust,
+            );
+        });
+    }
     if let Some(control_listener) = control_listener {
+        let trust = Arc::clone(&trust);
         let authority = Arc::clone(&authority);
         let child = Arc::clone(&child);
         thread::spawn(move || {
@@ -550,6 +616,7 @@ fn run(config: Config) -> io::Result<()> {
                 child,
                 SocketChannel::Control,
                 config.allow_test_opcodes,
+                trust,
             );
         });
     }
@@ -559,6 +626,7 @@ fn run(config: Config) -> io::Result<()> {
         child,
         SocketChannel::Agent,
         config.allow_test_opcodes,
+        trust,
     )
 }
 

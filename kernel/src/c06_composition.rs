@@ -35,6 +35,7 @@ pub enum GovernedTurnOutcome {
     RejectedStaleGeneration { current_generation: u64 },
     RejectedCapabilityRevoked,
     RejectedInvalidProofClass,
+    RejectedBindingOrIssuer,
     RejectedLateOrClosedTurn,
     RejectedCurrentState,
     RejectedNotFound,
@@ -218,6 +219,8 @@ struct Attempt {
     ambiguous_delivery: bool,
     reserved_delivery: bool,
     settlement: Option<(String, String, String, String)>,
+    #[serde(default)]
+    authenticated_settlement: bool,
 }
 
 /// Private on-disk body of a D-04 materialized projection cache.  The live
@@ -233,6 +236,8 @@ struct D1ProjectionSnapshot {
     turn: Option<Turn>,
     committed_actions: HashMap<String, (String, String)>,
     registered_actions: HashSet<String>,
+    #[serde(default)]
+    action_scopes: HashMap<String, String>,
     capabilities: HashMap<String, CapabilityGrant>,
     capability_generations: HashMap<String, u64>,
     action_capabilities: HashMap<String, String>,
@@ -257,6 +262,7 @@ pub struct D1GovernedTurnAuthority {
     turn: Option<Turn>,
     committed_actions: HashMap<String, (String, String)>,
     registered_actions: HashSet<String>,
+    action_scopes: HashMap<String, String>,
     capabilities: HashMap<String, CapabilityGrant>,
     capability_generations: HashMap<String, u64>,
     action_capabilities: HashMap<String, String>,
@@ -363,6 +369,7 @@ impl D1GovernedTurnAuthority {
             turn: None,
             committed_actions: HashMap::new(),
             registered_actions: HashSet::new(),
+            action_scopes: HashMap::new(),
             capabilities: HashMap::new(),
             capability_generations: HashMap::new(),
             action_capabilities: HashMap::new(),
@@ -399,6 +406,7 @@ impl D1GovernedTurnAuthority {
                 == other.turn.as_ref().map(|turn| (turn.turn_id, turn.status))
             && self.committed_actions == other.committed_actions
             && self.registered_actions == other.registered_actions
+            && self.action_scopes == other.action_scopes
             && self.capabilities == other.capabilities
             && self.capability_generations == other.capability_generations
             && self.action_capabilities == other.action_capabilities
@@ -448,6 +456,7 @@ impl D1GovernedTurnAuthority {
             turn: self.turn.clone(),
             committed_actions: self.committed_actions.clone(),
             registered_actions: self.registered_actions.clone(),
+            action_scopes: self.action_scopes.clone(),
             capabilities: self.capabilities.clone(),
             capability_generations: self.capability_generations.clone(),
             action_capabilities: self.action_capabilities.clone(),
@@ -757,7 +766,14 @@ impl D1GovernedTurnAuthority {
                         *self.capability_turns.entry(cap_id).or_default() += 1;
                     }
                 }
-                CoreEntry::ActionRegistered { action_id, cap_id } => {
+                CoreEntry::ActionRegistered {
+                    action_id,
+                    cap_id,
+                    target_scope,
+                } => {
+                    if let Some(scope) = target_scope {
+                        self.action_scopes.insert(action_id.clone(), scope);
+                    }
                     self.registered_actions.insert(action_id.clone());
                     if !cap_id.is_empty() {
                         self.action_capabilities.insert(action_id, cap_id);
@@ -781,6 +797,7 @@ impl D1GovernedTurnAuthority {
                             ambiguous_delivery: false,
                             reserved_delivery: false,
                             settlement: None,
+                            authenticated_settlement: false,
                         },
                     );
                     self.next_attempt_id = self.next_attempt_id.max(attempt_id + 1);
@@ -813,6 +830,7 @@ impl D1GovernedTurnAuthority {
                     self.projection_digest = proof_digest;
                 }
                 CoreEntry::AttemptSettled {
+                    authenticated,
                     attempt_id,
                     resolution,
                     evidence_region_id,
@@ -820,7 +838,12 @@ impl D1GovernedTurnAuthority {
                     ..
                 } => {
                     if let Some(attempt) = self.attempts.get_mut(&attempt_id) {
-                        attempt.status = AttemptStatus::Settled;
+                        attempt.authenticated_settlement = authenticated;
+                        attempt.status = if authenticated {
+                            AttemptStatus::Settled
+                        } else {
+                            AttemptStatus::QuarantinedDispute
+                        };
                         attempt.settlement = Some((
                             resolution,
                             evidence_region_id,
@@ -876,6 +899,7 @@ impl D1GovernedTurnAuthority {
         self.turn = None;
         self.committed_actions.clear();
         self.registered_actions.clear();
+        self.action_scopes.clear();
         self.capabilities.clear();
         self.capability_generations.clear();
         self.action_capabilities.clear();
@@ -894,11 +918,17 @@ impl D1GovernedTurnAuthority {
         self.turn = snapshot.turn;
         self.committed_actions = snapshot.committed_actions;
         self.registered_actions = snapshot.registered_actions;
+        self.action_scopes = snapshot.action_scopes;
         self.capabilities = snapshot.capabilities;
         self.capability_generations = snapshot.capability_generations;
         self.action_capabilities = snapshot.action_capabilities;
         self.capability_turns = snapshot.capability_turns;
         self.attempts = snapshot.attempts;
+        for attempt in self.attempts.values_mut() {
+            if attempt.status == AttemptStatus::Settled && !attempt.authenticated_settlement {
+                attempt.status = AttemptStatus::QuarantinedDispute;
+            }
+        }
         self.revoked_capabilities = snapshot.revoked_capabilities;
         self.next_entry_id = snapshot.last_entry_id.saturating_add(1);
         self.next_attempt_id = snapshot.next_attempt_id;
@@ -1125,6 +1155,20 @@ impl D1GovernedTurnAuthority {
         GovernedTurnOutcome::TurnCommitted
     }
     pub fn register_action(&mut self, request: ActionRegistrationRequest) -> GovernedTurnOutcome {
+        if let Some(scope) = self.action_scopes.get(&request.action_id) {
+            return if scope == &request.target_scope
+                && self
+                    .action_capabilities
+                    .get(&request.action_id)
+                    .map(String::as_str)
+                    .unwrap_or_default()
+                    == request.cap_id
+            {
+                GovernedTurnOutcome::ActionRegistered
+            } else {
+                GovernedTurnOutcome::RejectedPrecondition
+            };
+        }
         if !self.committed_actions.contains_key(&request.action_id) {
             return GovernedTurnOutcome::RejectedPrecondition;
         }
@@ -1154,6 +1198,7 @@ impl D1GovernedTurnAuthority {
             CoreEntry::ActionRegistered {
                 action_id: request.action_id.clone(),
                 cap_id: request.cap_id.clone(),
+                target_scope: Some(request.target_scope.clone()),
             },
             vec![],
             None,
@@ -1166,6 +1211,8 @@ impl D1GovernedTurnAuthority {
             self.action_capabilities
                 .insert(request.action_id.clone(), request.cap_id);
         }
+        self.action_scopes
+            .insert(request.action_id.clone(), request.target_scope);
         self.registered_actions.insert(request.action_id);
         GovernedTurnOutcome::ActionRegistered
     }
@@ -1194,11 +1241,15 @@ impl D1GovernedTurnAuthority {
         } else if self.revoked_capabilities.contains(&request.capability_id) {
             return GovernedTurnOutcome::RejectedCapabilityRevoked;
         }
-        if self.scope_locked(&request.target_scope)
+        let Some(target_scope) = self.action_scopes.get(&request.action_id).cloned() else {
+            // Legacy registrations must be canonically re-registered before admission.
+            return GovernedTurnOutcome::RejectedPrecondition;
+        };
+        if self.scope_locked(&target_scope)
             || self
                 .attempts
                 .values()
-                .any(|a| a.action_id == request.action_id && !attempt_is_terminal(a.status))
+                .any(|a| a.action_id == request.action_id)
         {
             return GovernedTurnOutcome::RejectedCurrentState;
         }
@@ -1214,7 +1265,7 @@ impl D1GovernedTurnAuthority {
                 attempt_id,
                 action_region_ref: action_region_ref.clone(),
                 action_digest,
-                request_digest: request.target_scope.clone(),
+                request_digest: target_scope.clone(),
             },
             vec![action_region_ref],
             None,
@@ -1228,13 +1279,14 @@ impl D1GovernedTurnAuthority {
             attempt_id,
             Attempt {
                 action_id: request.action_id,
-                target_scope: request.target_scope,
+                target_scope,
                 status: AttemptStatus::ArmedUnknown,
                 dispatch_identity: None,
                 delivered: false,
                 ambiguous_delivery: false,
                 reserved_delivery: false,
                 settlement: None,
+                authenticated_settlement: false,
             },
         );
         GovernedTurnOutcome::AttemptArmed { attempt_id }
@@ -1327,6 +1379,25 @@ impl D1GovernedTurnAuthority {
             .delivered = true;
         GovernedTurnOutcome::Delivered
     }
+    /// Read-only binding check for the host EvidenceService verifier.
+    pub fn settlement_binding_matches(
+        &self,
+        attempt_id: u64,
+        stable_operation_id: &str,
+        request_digest: &str,
+    ) -> bool {
+        self.attempts.get(&attempt_id).is_some_and(|attempt| {
+            attempt.dispatch_identity.as_deref() == Some(stable_operation_id)
+                && self.inspect_journal().iter().any(|entry| {
+                    matches!(entry,
+                    CoreEntry::AttemptArmed { attempt_id: id, request_digest: digest, .. }
+                    if *id == attempt_id && digest == request_digest)
+                })
+        })
+    }
+
+    /// Trusted in-process seam: the host must authenticate receipt and bindings
+    /// before calling. Ring-3 cannot invoke this through the agent socket.
     pub fn present_settlement_certificate(
         &mut self,
         request: PresentSettlementCertificateRequest,
@@ -1349,13 +1420,9 @@ impl D1GovernedTurnAuthority {
         }
         if attempt.status == AttemptStatus::Settled {
             if attempt.settlement.as_ref().is_some_and(|settlement| {
-                settlement
-                    == &(
-                        request.resolution.clone(),
-                        request.evidence_region_id.clone(),
-                        request.evidence_digest.clone(),
-                        request.dispatch_identity.clone(),
-                    )
+                settlement.0 == request.resolution
+                    && settlement.2 == request.evidence_digest
+                    && settlement.3 == request.dispatch_identity
             }) {
                 return GovernedTurnOutcome::Settled {
                     resolution: request.resolution,
@@ -1392,6 +1459,7 @@ impl D1GovernedTurnAuthority {
         let action_id = attempt.action_id.clone();
         if let Err(outcome) = self.append(
             CoreEntry::AttemptSettled {
+                authenticated: true,
                 action_id,
                 attempt_id: request.attempt_id,
                 resolution: request.resolution.clone(),
@@ -1410,6 +1478,7 @@ impl D1GovernedTurnAuthority {
             .get_mut(&request.attempt_id)
             .expect("attempt exists");
         attempt.status = AttemptStatus::Settled;
+        attempt.authenticated_settlement = true;
         attempt.settlement = Some((
             request.resolution.clone(),
             request.evidence_region_id.clone(),

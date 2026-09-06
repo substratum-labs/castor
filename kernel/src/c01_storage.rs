@@ -70,6 +70,8 @@ pub enum CoreEntry {
     ActionRegistered {
         action_id: String,
         cap_id: String,
+        #[serde(default)]
+        target_scope: Option<String>,
     },
     LeaseGranted {
         turn_id: u64,
@@ -88,6 +90,9 @@ pub enum CoreEntry {
         adapter_id: String,
     },
     AttemptSettled {
+        /// False for legacy guest-authored settlement records.
+        #[serde(default)]
+        authenticated: bool,
         action_id: String,
         attempt_id: u64,
         resolution: String,

@@ -613,6 +613,7 @@ fn test_d18_action_registered_capability_binding_survives_restart() {
         request(
             1,
             CoreEntry::ActionRegistered {
+                target_scope: None,
                 action_id: "action-1".into(),
                 cap_id: "cap-1".into(),
             },
