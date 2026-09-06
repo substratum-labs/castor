@@ -212,6 +212,11 @@ fn number(payload: &Value, name: &str) -> Result<u64, String> {
 }
 fn outcome_value(outcome: GovernedTurnOutcome) -> Value {
     match outcome {
+        GovernedTurnOutcome::Admitted {
+            unsettled_effects_snapshot,
+        } => {
+            json!({"type": "Admitted", "unsettled_effects_snapshot": unsettled_effects_snapshot})
+        }
         GovernedTurnOutcome::AttemptArmed { attempt_id } => {
             json!({"type":"AttemptArmed","attempt_id":attempt_id})
         }
@@ -225,7 +230,7 @@ fn outcome_value(outcome: GovernedTurnOutcome) -> Value {
             json!({"type":"RejectedStaleGeneration","current_generation":current_generation})
         }
         other => json!({"type": match other {
-            GovernedTurnOutcome::EntryPersisted => "EntryPersisted", GovernedTurnOutcome::Admitted => "Admitted", GovernedTurnOutcome::InteractionRequested => "InteractionRequested", GovernedTurnOutcome::InteractionBound => "InteractionBound", GovernedTurnOutcome::InteractionConsumed => "InteractionConsumed", GovernedTurnOutcome::TurnCommitted => "TurnCommitted", GovernedTurnOutcome::ActionRegistered => "ActionRegistered", GovernedTurnOutcome::DispatchRecorded => "DispatchRecorded", GovernedTurnOutcome::Delivered => "Delivered", GovernedTurnOutcome::DuplicateDelivery => "DuplicateDelivery", GovernedTurnOutcome::QuarantinedDispute => "QuarantinedDispute", GovernedTurnOutcome::CapabilityGranted => "CapabilityGranted", GovernedTurnOutcome::CapabilityRevoked => "CapabilityRevoked", GovernedTurnOutcome::Reconstructed => "Reconstructed", GovernedTurnOutcome::Ambiguous => "Ambiguous", GovernedTurnOutcome::RejectedStaleAuthority => "RejectedStaleAuthority", GovernedTurnOutcome::RejectedCapabilityRevoked => "RejectedCapabilityRevoked", GovernedTurnOutcome::RejectedBindingOrIssuer => "RejectedBindingOrIssuer", GovernedTurnOutcome::RejectedInvalidProofClass => "RejectedInvalidProofClass", GovernedTurnOutcome::RejectedLateOrClosedTurn => "RejectedLateOrClosedTurn", GovernedTurnOutcome::RejectedCurrentState => "RejectedCurrentState", GovernedTurnOutcome::RejectedNotFound => "RejectedNotFound", GovernedTurnOutcome::RejectedPrecondition => "RejectedPrecondition", GovernedTurnOutcome::IntegrityOrProtocolFault => "IntegrityOrProtocolFault", GovernedTurnOutcome::UnavailableBeforeAck => "UnavailableBeforeAck", _ => unreachable!() }}),
+            GovernedTurnOutcome::EntryPersisted => "EntryPersisted", GovernedTurnOutcome::InteractionRequested => "InteractionRequested", GovernedTurnOutcome::InteractionBound => "InteractionBound", GovernedTurnOutcome::InteractionConsumed => "InteractionConsumed", GovernedTurnOutcome::TurnCommitted => "TurnCommitted", GovernedTurnOutcome::ActionRegistered => "ActionRegistered", GovernedTurnOutcome::DispatchRecorded => "DispatchRecorded", GovernedTurnOutcome::Delivered => "Delivered", GovernedTurnOutcome::DuplicateDelivery => "DuplicateDelivery", GovernedTurnOutcome::QuarantinedDispute => "QuarantinedDispute", GovernedTurnOutcome::CapabilityGranted => "CapabilityGranted", GovernedTurnOutcome::CapabilityRevoked => "CapabilityRevoked", GovernedTurnOutcome::Reconstructed => "Reconstructed", GovernedTurnOutcome::Ambiguous => "Ambiguous", GovernedTurnOutcome::RejectedStaleAuthority => "RejectedStaleAuthority", GovernedTurnOutcome::RejectedCapabilityRevoked => "RejectedCapabilityRevoked", GovernedTurnOutcome::RejectedBindingOrIssuer => "RejectedBindingOrIssuer", GovernedTurnOutcome::RejectedInvalidProofClass => "RejectedInvalidProofClass", GovernedTurnOutcome::RejectedLateOrClosedTurn => "RejectedLateOrClosedTurn", GovernedTurnOutcome::RejectedCurrentState => "RejectedCurrentState", GovernedTurnOutcome::RejectedNotFound => "RejectedNotFound", GovernedTurnOutcome::RejectedPrecondition => "RejectedPrecondition", GovernedTurnOutcome::IntegrityOrProtocolFault => "IntegrityOrProtocolFault", GovernedTurnOutcome::UnavailableBeforeAck => "UnavailableBeforeAck", _ => unreachable!() }}),
     }
 }
 fn ensure_value(outcome: EnsureRegionOutcome) -> Value {

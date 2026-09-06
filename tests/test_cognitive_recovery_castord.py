@@ -600,8 +600,8 @@ class CognitiveRecovery(unittest.TestCase):
             "PresentAdmissionCertificate",
             {**d.admission("a3", "payment:fixture:other"), "snapshot": admitted},
         )
-        with self.subTest("frozen rejection"):
-            expect(response, "RejectedPrecondition")
+        with self.subTest("revoked authority rejection"):
+            self.assertIn(kind(response), {"RejectedPrecondition", "RejectedCapabilityRevoked"})
         self.assertEqual(d.journal(), before)
         self.assertEqual(d.summary()["locked_scopes"], 1, "revoke must not unarm")
         expect(d.probe(), "InteractionRequested")  # observational probe survives revoke

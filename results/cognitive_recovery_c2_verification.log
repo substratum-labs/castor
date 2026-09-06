@@ -1,0 +1,343 @@
+T-314-C2 partial verification 2026-09-06T19:52:33.266364+00:00
+Known pending contract/scope decisions: pre-dispatch operation identity; C3 probe budget accounting.
+
+$ cargo test --test cognitive_recovery_contract -- test_r1 test_r2 test_r4 test_r5 test_r6 test_r7 test_r9 test_r11 test_r12
+cwd: /Users/yong/projects/substratum/castor/kernel
+   Compiling castor-kernel v0.1.0 (/Users/yong/projects/substratum/castor/kernel)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.62s
+     Running tests/cognitive_recovery_contract.rs (target/debug/deps/cognitive_recovery_contract-aea3e8bec8fd3f4b)
+
+running 10 tests
+test test_r11_reconstructed_partial_settlement_dispute_and_alias_lock ... ok
+test test_r1_guest_certificate_denied_without_journal_mutation ... ok
+test test_r10_budget_survives_restart_escalation_requires_hitl ... FAILED
+test test_r7_revoked_capability_after_snapshot_rejected ... ok
+test test_r6_next_turn_probe_allowed_mutation_locked ... FAILED
+test test_r4_duplicate_confirmed_ack_no_append_no_rearm ... ok
+test test_r12_closed_turn_drops_late_probe_requires_fresh_lease ... FAILED
+test test_r5_atomic_cancel_tombstone_rejects_delayed_arrivals ... ok
+test test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync ... FAILED
+test test_r2_reject_mismatched_binding_or_issuer ... ok
+
+failures:
+
+---- test_r10_budget_survives_restart_escalation_requires_hitl stdout ----
+
+thread 'test_r10_budget_survives_restart_escalation_requires_hitl' (95998595) panicked at tests/cognitive_recovery_contract.rs:30:5:
+test_r10_budget_survives_restart_escalation_requires_hitl failed against the physical daemon (exit status: 1):
+
+test_r10_budget_survives_restart_escalation_requires_hitl (__main__.CognitiveRecovery.test_r10_budget_survives_restart_escalation_requires_hitl) ... FAIL
+
+======================================================================
+FAIL: test_r10_budget_survives_restart_escalation_requires_hitl (__main__.CognitiveRecovery.test_r10_budget_survives_restart_escalation_requires_hitl)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 697, in test_r10_budget_survives_restart_escalation_requires_hitl
+    initial = d.recovery()
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 465, in recovery
+    assert isinstance(recovery, dict), (
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^
+AssertionError: R3/R10: journal-backed recovery phase/budget projection is missing
+
+----------------------------------------------------------------------
+Ran 1 test in 1.036s
+
+FAILED (failures=1)
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_r6_next_turn_probe_allowed_mutation_locked stdout ----
+
+thread 'test_r6_next_turn_probe_allowed_mutation_locked' (95998602) panicked at tests/cognitive_recovery_contract.rs:30:5:
+test_r6_next_turn_probe_allowed_mutation_locked failed against the physical daemon (exit status: 1):
+
+test_r6_next_turn_probe_allowed_mutation_locked (__main__.CognitiveRecovery.test_r6_next_turn_probe_allowed_mutation_locked) ... FAIL
+
+======================================================================
+FAIL: test_r6_next_turn_probe_allowed_mutation_locked (__main__.CognitiveRecovery.test_r6_next_turn_probe_allowed_mutation_locked)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 591, in test_r6_next_turn_probe_allowed_mutation_locked
+    d.snapshot(admitted, "ArmedUnknown")
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 459, in snapshot
+    assert item["status"] == status and item["stable_op_id"] == OP_ID, item
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'action_id': 'a1', 'ambiguous_delivery': False, 'attempt_id': 1, 'lock_state': 'WriteLocked_ProbeAllowed', 'stable_op_id': None, 'status': 'ArmedUnknown', 'target_scope': 'payment:fixture:merchant-42'}
+
+----------------------------------------------------------------------
+Ran 1 test in 1.046s
+
+FAILED (failures=1)
+
+
+---- test_r12_closed_turn_drops_late_probe_requires_fresh_lease stdout ----
+
+thread 'test_r12_closed_turn_drops_late_probe_requires_fresh_lease' (95998597) panicked at tests/cognitive_recovery_contract.rs:30:5:
+test_r12_closed_turn_drops_late_probe_requires_fresh_lease failed against the physical daemon (exit status: 1):
+
+test_r12_closed_turn_drops_late_probe_requires_fresh_lease (__main__.CognitiveRecovery.test_r12_closed_turn_drops_late_probe_requires_fresh_lease) ... FAIL
+
+======================================================================
+FAIL: test_r12_closed_turn_drops_late_probe_requires_fresh_lease (__main__.CognitiveRecovery.test_r12_closed_turn_drops_late_probe_requires_fresh_lease)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 794, in test_r12_closed_turn_drops_late_probe_requires_fresh_lease
+    old_budget = d.recovery()["probe_budget_remaining"]
+                 ~~~~~~~~~~^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 465, in recovery
+    assert isinstance(recovery, dict), (
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^
+AssertionError: R3/R10: journal-backed recovery phase/budget projection is missing
+
+----------------------------------------------------------------------
+Ran 1 test in 1.108s
+
+FAILED (failures=1)
+
+
+---- test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync stdout ----
+
+thread 'test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync' (95998604) panicked at tests/cognitive_recovery_contract.rs:30:5:
+test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync failed against the physical daemon (exit status: 1):
+
+test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync (__main__.CognitiveRecovery.test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync) ... 
+  test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync (__main__.CognitiveRecovery.test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync) (seam='arm') ... FAIL
+
+======================================================================
+FAIL: test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync (__main__.CognitiveRecovery.test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync) (seam='arm')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 691, in test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync
+    d.snapshot(admitted, "ArmedUnknown" if seam == "arm" else "Dispatched")
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 459, in snapshot
+    assert item["status"] == status and item["stable_op_id"] == OP_ID, item
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'action_id': 'a1', 'ambiguous_delivery': False, 'attempt_id': 1, 'lock_state': 'WriteLocked_ProbeAllowed', 'stable_op_id': None, 'status': 'ArmedUnknown', 'target_scope': 'payment:fixture:merchant-42'}
+
+----------------------------------------------------------------------
+Ran 1 test in 1.936s
+
+FAILED (failures=1)
+
+
+
+failures:
+    test_r10_budget_survives_restart_escalation_requires_hitl
+    test_r12_closed_turn_drops_late_probe_requires_fresh_lease
+    test_r6_next_turn_probe_allowed_mutation_locked
+    test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync
+
+test result: FAILED. 6 passed; 4 failed; 0 ignored; 0 measured; 2 filtered out; finished in 2.29s
+
+error: test failed, to rerun pass `--test cognitive_recovery_contract`
+
+exit: 101
+
+$ cargo test --test evidence_settlement_boundary
+cwd: /Users/yong/projects/substratum/castor/kernel
+   Compiling castor-kernel v0.1.0 (/Users/yong/projects/substratum/castor/kernel)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.26s
+     Running tests/evidence_settlement_boundary.rs (target/debug/deps/evidence_settlement_boundary-c3fc8a11e32170e5)
+
+running 5 tests
+test legacy_registration_without_canonical_scope_cannot_use_guest_scope ... ok
+test legacy_guest_settlement_keeps_scope_locked_after_replay_and_snapshot ... ok
+test identical_receipt_under_another_region_is_idempotent ... ok
+test canonical_scope_survives_genesis_and_snapshot_replay ... ok
+test physical_peer_credentials_and_canonical_registration ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.59s
+
+
+exit: 0
+
+$ cargo test --lib
+cwd: /Users/yong/projects/substratum/castor/kernel
+   Compiling castor-kernel v0.1.0 (/Users/yong/projects/substratum/castor/kernel)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.52s
+     Running unittests src/lib.rs (target/debug/deps/castor_kernel-25d4f13d985cf74a)
+
+running 2 tests
+test sandbox::tests::profile_is_networkless_and_mounts_only_the_readonly_ipc_socket ... ok
+test sandbox::tests::profile_rejects_socket_under_a_storage_root ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+exit: 0
+
+$ cargo clippy --all-targets -- -D warnings
+cwd: /Users/yong/projects/substratum/castor/kernel
+    Checking pyo3-ffi v0.29.0
+    Checking pyo3 v0.29.0
+    Checking castor-kernel v0.1.0 (/Users/yong/projects/substratum/castor/kernel)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.61s
+
+exit: 0
+
+$ cargo fmt --all --check
+cwd: /Users/yong/projects/substratum/castor/kernel
+
+exit: 0
+
+$ python3 -m unittest tests.test_cognitive_recovery_castord.CognitiveRecovery.test_r6_next_turn_probe_allowed_mutation_locked tests.test_cognitive_recovery_castord.CognitiveRecovery.test_r7_revoked_capability_after_snapshot_rejected tests.test_cognitive_recovery_castord.CognitiveRecovery.test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync tests.test_cognitive_recovery_castord.CognitiveRecovery.test_r12_closed_turn_drops_late_probe_requires_fresh_lease
+cwd: /Users/yong/projects/substratum/castor
+F.FF
+======================================================================
+FAIL: test_r6_next_turn_probe_allowed_mutation_locked (tests.test_cognitive_recovery_castord.CognitiveRecovery.test_r6_next_turn_probe_allowed_mutation_locked)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/tests/test_cognitive_recovery_castord.py", line 591, in test_r6_next_turn_probe_allowed_mutation_locked
+    d.snapshot(admitted, "ArmedUnknown")
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/tests/test_cognitive_recovery_castord.py", line 459, in snapshot
+    assert item["status"] == status and item["stable_op_id"] == OP_ID, item
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'action_id': 'a1', 'ambiguous_delivery': False, 'attempt_id': 1, 'lock_state': 'WriteLocked_ProbeAllowed', 'stable_op_id': None, 'status': 'ArmedUnknown', 'target_scope': 'payment:fixture:merchant-42'}
+
+======================================================================
+FAIL: test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync (tests.test_cognitive_recovery_castord.CognitiveRecovery.test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync) (seam='arm')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/tests/test_cognitive_recovery_castord.py", line 691, in test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync
+    d.snapshot(admitted, "ArmedUnknown" if seam == "arm" else "Dispatched")
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/tests/test_cognitive_recovery_castord.py", line 459, in snapshot
+    assert item["status"] == status and item["stable_op_id"] == OP_ID, item
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'action_id': 'a1', 'ambiguous_delivery': False, 'attempt_id': 1, 'lock_state': 'WriteLocked_ProbeAllowed', 'stable_op_id': None, 'status': 'ArmedUnknown', 'target_scope': 'payment:fixture:merchant-42'}
+
+======================================================================
+FAIL: test_r12_closed_turn_drops_late_probe_requires_fresh_lease (tests.test_cognitive_recovery_castord.CognitiveRecovery.test_r12_closed_turn_drops_late_probe_requires_fresh_lease)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/tests/test_cognitive_recovery_castord.py", line 794, in test_r12_closed_turn_drops_late_probe_requires_fresh_lease
+    old_budget = d.recovery()["probe_budget_remaining"]
+                 ~~~~~~~~~~^^
+  File "/Users/yong/projects/substratum/castor/tests/test_cognitive_recovery_castord.py", line 465, in recovery
+    assert isinstance(recovery, dict), (
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^
+AssertionError: R3/R10: journal-backed recovery phase/budget projection is missing
+
+----------------------------------------------------------------------
+Ran 4 tests in 1.266s
+
+FAILED (failures=3)
+
+exit: 1
+
+$ cargo test --test governed_turn_composition_contract --test c06_capability_execution_contract --test d1_durability_contract --test c01_durable_storage_contract
+cwd: /Users/yong/projects/substratum/castor/kernel
+   Compiling castor-kernel v0.1.0 (/Users/yong/projects/substratum/castor/kernel)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.38s
+     Running tests/c01_durable_storage_contract.rs (target/debug/deps/c01_durable_storage_contract-b2d35672faa7db31)
+
+running 10 tests
+test d1_core_store_enforces_one_live_writer_per_root ... ok
+test persisted_fence_rejects_stale_authority_without_erasing_original_entry ... ok
+test uncertain_journal_write_poisoning_requires_reopen_before_more_transitions ... ok
+test conditional_append_refines_entry_persisted_for_current_authority ... ok
+test same_entry_retry_and_read_refine_lost_ack_recovery ... ok
+test region_persistence_refines_region_persisted_at_d1_across_reopen ... ok
+test equal_region_replay_refines_idempotent_region_success ... ok
+test conflicting_region_digest_refines_immutable_identity_rejection ... ok
+test region_backed_append_proof_refines_region_before_entry_ordering ... ok
+test unpersisted_region_refines_append_rejection_without_partial_entry ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests/c06_capability_execution_contract.rs (target/debug/deps/c06_capability_execution_contract-a72aa4b0198ab92c)
+
+running 23 tests
+test test_cap_derivation_constraint_relaxation_rejected ... ok
+test test_cap_derivation_non_delegable_rejected ... ok
+test test_cap_derivation_rights_amplification_rejected ... ok
+test test_cap_derive_cannot_omit_parent_exact_match_constraint ... ok
+test test_cap_derive_after_ancestor_revoke_rejected ... ok
+test test_cap_duplicate_derive_idempotence ... ok
+test test_cap_numeric_constraint_exceeded_rejected ... ok
+test test_cap_exact_match_constraint_is_enforced_at_exercise ... ok
+test test_cap_max_turns_is_exhausted_by_commit_and_blocks_next_admission ... ok
+test test_cap_object_mismatch_rejected ... ok
+test test_cap_missing_required_right_rejected ... ok
+test test_cap_revocation_authorization_requires_revoke_right_and_target_coverage ... ok
+test test_cap_revocation_before_commit_blocks_turn_commit ... ok
+test test_cap_subject_mismatch_rejected ... ok
+test test_cap_unregistered_id_admit_rejected ... ok
+test test_cap_stale_generation_cannot_exercise_valid_grant ... ok
+test test_cap_revocation_before_arm_blocks_attempt_armed ... ok
+test test_cap_scope_prefix_traversal_rejected ... ok
+test test_cap_unknown_id_register_rejected_fail_closed ... ok
+test test_cap_unminted_id_at_arming_rejected_fail_closed ... ok
+test test_cap_revocation_after_arm_does_not_unarm ... ok
+test test_cap_swapped_id_at_arming_rejected_after_crash_recovery ... ok
+test test_cap_cascading_provenance_tree_revocation ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.17s
+
+     Running tests/d1_durability_contract.rs (target/debug/deps/d1_durability_contract-5696c284435be5df)
+
+running 20 tests
+test test_d13_complete_tail_frame_bad_crc_fails_closed ... ok
+test test_d12_leftover_snapshot_tempfile_ignored ... ok
+test test_d18_action_registered_capability_binding_survives_restart ... ok
+test test_d14_lost_ack_complete_frame_recovered_h04 ... ok
+test test_d19_unpointed_snapshot_blob_ignored ... ok
+test test_d1_incomplete_tail_frame_auto_truncated ... ok
+test test_d10_snapshot_plus_tail_replay_reconstructs_state ... ok
+test test_d5_committed_turn_permanence_inherited_sentinel ... ok
+test test_d11_corrupted_snapshot_falls_back_to_genesis_replay ... ok
+test test_d17_snapshot_then_cap_revocation_blocks_exercise ... ok
+test test_d16_snapshot_then_fence_preserves_new_generation ... ok
+test test_d2_mid_file_corruption_fails_closed ... ok
+test test_d3_missing_region_fails_closed ... ok
+test test_d8_revocation_permanence_inherited_sentinel ... ok
+test test_d9_fence_generation_permanence_inherited_sentinel ... ok
+test test_d6_armed_unknown_and_scope_mutex_permanence ... ok
+test test_d15_fresh_lease_acquired_after_restart_for_open_turn ... ok
+test test_d4_crash_advances_core_epoch_staling_pre_crash_lease ... ok
+test test_d7_provider_dedup_resets_ram_counter_and_duplicate_delivery ... ok
+test test_d20_snapshot_plus_tail_projection_equivalence_to_genesis ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+
+     Running tests/governed_turn_composition_contract.rs (target/debug/deps/governed_turn_composition_contract-b9c2e079a2127964)
+
+running 30 tests
+test test_comp_arm_attempt_before_turn_commit_rejected ... ok
+test test_comp_commit_turn_while_awaiting_interaction_rejected ... ok
+test test_comp_armed_unknown_blocks_overlapping_action_scope_admission ... ok
+test test_c2_failed_admission_cannot_replace_authoritative_projection ... ok
+test test_c2_conflicting_delivery_is_ambiguous_without_submission ... ok
+test test_comp_crash_after_arm_reopens_storage_reconstructs_unknown_and_rejects_retry ... ok
+test test_comp_confirmed_settlement_requires_exact_dispatch_identity ... ok
+test test_c2_successor_cannot_reuse_closed_turn_interaction_identity ... ok
+test test_c2_snapshot_is_core_persisted_bound_and_immutable ... ok
+test test_c2_orphan_snapshot_after_crash_does_not_poison_admission ... ok
+test test_comp_crash_after_dispatch_with_missing_dedup_fails_closed_as_ambiguous ... ok
+test test_comp_fence_prevents_stale_carrier_commit_and_action_publication ... ok
+test test_comp_observation_consumed_only_under_strictly_monotonic_fresh_lease ... ok
+test test_comp_crash_after_quarantine_keeps_different_action_locked_on_same_scope ... ok
+test test_comp_admission_rejected_when_generation_fenced_or_capability_revoked ... ok
+test test_comp_duplicate_deliver_armed_attempt_calls_provider_only_once ... ok
+test test_comp_late_interaction_after_turn_close_does_not_bind_successor_turn ... ok
+test test_comp_normal_governed_turn_e2e_flow ... ok
+test test_comp_pre_dispatch_not_applied_with_verifiable_non_execution_settles_and_unlocks_scope ... ok
+test test_comp_operator_resolution_persists_and_releases_quarantined_scope ... ok
+test test_comp_quarantined_dispute_blocks_different_action_on_same_scope ... ok
+test test_c2_effect_transition_during_turn_preserves_fresh_commit_and_fence ... ok
+test test_comp_recovery_stales_pre_crash_lease_and_allows_fresh_lease_for_turn_commit ... ok
+test test_comp_turn_commit_requires_durably_bound_interaction ... ok
+test test_comp_unpersisted_observation_region_blocks_interaction_binding ... ok
+test test_comp_turn_commit_rejects_sha256_digest_mismatches ... ok
+test test_comp_unpersisted_successor_or_action_region_blocks_turn_commit ... ok
+test test_comp_unpersisted_evidence_region_blocks_settlement ... ok
+test test_comp_scenario_12_crash_after_submission_resets_count_and_blocks_retry ... ok
+test test_comp_weak_timeout_rejected_and_preserves_armed_unknown_blocking_mutex ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.86s
+
+
+exit: 0

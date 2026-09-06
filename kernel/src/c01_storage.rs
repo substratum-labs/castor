@@ -467,6 +467,49 @@ impl D1DurableStorage {
         self.fail_after_journal_write_once = true;
     }
 
+    /// Prepare a Core observation before its admission journal record commits.
+    /// Only unreferenced observations may be replaced after an interrupted
+    /// admission. Ordinary and journal-referenced Regions stay immutable.
+    pub(crate) fn ensure_core_observation(
+        &mut self,
+        region_ref: &str,
+        content_digest: &str,
+        content: &[u8],
+    ) -> EnsureRegionOutcome {
+        if !self.healthy {
+            return EnsureRegionOutcome::IntegrityFault;
+        }
+        if !region_ref.starts_with("observation:unsettled_effects:")
+            || content_digest != digest_label(content)
+        {
+            return EnsureRegionOutcome::RejectedIdentityConflict;
+        }
+        let differs = self
+            .regions
+            .get(region_ref)
+            .is_some_and(|r| r.persisted.content_digest != content_digest);
+        if differs
+            && !self
+                .entries
+                .values()
+                .any(|record| record.request.region_refs.iter().any(|r| r == region_ref))
+        {
+            let dir = self.root.join("regions");
+            let metadata = dir.join(format!("{}.json", hex_sha256(region_ref.as_bytes())));
+            // Remove and sync metadata first: a crash must never leave old
+            // metadata pointing at new bytes. An orphan .bin is ignored on load.
+            if fs::remove_file(metadata)
+                .and_then(|_| sync_directory(&dir))
+                .is_err()
+            {
+                self.healthy = false;
+                return EnsureRegionOutcome::UnavailableBeforeAck;
+            }
+            self.regions.remove(region_ref);
+        }
+        self.ensure_region(region_ref, content_digest, content, DurabilityProfile::D1)
+    }
+
     fn persist_region(
         &self,
         region_ref: &str,

@@ -61,10 +61,10 @@ impl Fixture {
     }
 
     fn ready_to_commit(&mut self, agent_id: &str, cap_id: &str) {
-        assert_eq!(
+        assert!(matches!(
             self.admit(agent_id, Some(cap_id)),
-            GovernedTurnOutcome::Admitted
-        );
+            GovernedTurnOutcome::Admitted { .. }
+        ));
         assert_eq!(
             self.authority.commit_turn(CommitTurnRequest {
                 lease_epoch: 0,
@@ -326,10 +326,10 @@ fn test_cap_derivation_constraint_relaxation_rejected() {
 fn test_cap_revocation_before_commit_blocks_turn_commit() {
     let mut c = Fixture::new();
     c.grant(grant("cap-1", "agent-a", vec![CapabilityRight::AdmitTurn]));
-    assert_eq!(
+    assert!(matches!(
         c.admit("agent-a", Some("cap-1")),
-        GovernedTurnOutcome::Admitted
-    );
+        GovernedTurnOutcome::Admitted { .. }
+    ));
     assert_eq!(
         c.authority.revoke_capability("cap-1"),
         GovernedTurnOutcome::CapabilityRevoked
@@ -377,10 +377,10 @@ fn test_cap_cascading_provenance_tree_revocation() {
 
     let mut turn_commit = Fixture::new();
     let child = child_for(&mut turn_commit);
-    assert_eq!(
+    assert!(matches!(
         turn_commit.admit("agent-a", Some(&child)),
-        GovernedTurnOutcome::Admitted
-    );
+        GovernedTurnOutcome::Admitted { .. }
+    ));
     assert_eq!(
         turn_commit.authority.revoke_capability("cap-1"),
         GovernedTurnOutcome::CapabilityRevoked

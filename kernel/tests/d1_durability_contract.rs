@@ -89,10 +89,10 @@ fn ready_to_commit(authority: &mut D1GovernedTurnAuthority) {
     persist_region(authority, "region://observation", b"observation");
     persist_region(authority, "region://successor", b"successor");
     persist_region(authority, "region://actions", b"action-1");
-    assert_eq!(
+    assert!(matches!(
         authority.admit_turn(admit(None)),
-        GovernedTurnOutcome::Admitted
-    );
+        GovernedTurnOutcome::Admitted { .. }
+    ));
     assert_eq!(
         authority.request_interaction(RequestInteractionRequest {
             interaction_id: "interaction-1".into(),
@@ -121,10 +121,10 @@ fn armed_dispatched_attempt(authority: &mut D1GovernedTurnAuthority) {
     );
     persist_region(authority, "region://successor", b"successor");
     persist_region(authority, "region://actions", b"action-1");
-    assert_eq!(
+    assert!(matches!(
         authority.admit_turn(admit(Some("cap-1"))),
-        GovernedTurnOutcome::Admitted
-    );
+        GovernedTurnOutcome::Admitted { .. }
+    ));
     assert_eq!(
         authority.commit_turn(CommitTurnRequest {
             cap_id: Some("cap-1".into()),
@@ -662,20 +662,20 @@ fn test_d20_snapshot_plus_tail_projection_equivalence_to_genesis() {
             )),
             GovernedTurnOutcome::CapabilityGranted
         );
-        assert_eq!(
+        assert!(matches!(
             authority.admit_turn(admit(None)),
-            GovernedTurnOutcome::Admitted
-        );
+            GovernedTurnOutcome::Admitted { .. }
+        ));
         assert_eq!(
             authority.persist_fence(2),
             GovernedTurnOutcome::GenerationFenced { generation: 2 }
         );
         let mut second_turn = admit(None);
         second_turn.turn_id = 2;
-        assert_eq!(
+        assert!(matches!(
             authority.admit_turn(second_turn),
-            GovernedTurnOutcome::Admitted
-        );
+            GovernedTurnOutcome::Admitted { .. }
+        ));
     }
     fast.create_snapshot("equivalent").unwrap();
     for authority in [&mut fast, &mut genesis] {

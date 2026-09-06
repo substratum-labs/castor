@@ -14,25 +14,35 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GovernedTurnOutcome {
     EntryPersisted,
-    Admitted,
+    Admitted {
+        unsettled_effects_snapshot: UnsettledEffectsSnapshot,
+    },
     InteractionRequested,
     InteractionBound,
     InteractionConsumed,
     TurnCommitted,
     ActionRegistered,
-    AttemptArmed { attempt_id: u64 },
+    AttemptArmed {
+        attempt_id: u64,
+    },
     DispatchRecorded,
     Delivered,
     DuplicateDelivery,
-    Settled { resolution: String },
+    Settled {
+        resolution: String,
+    },
     QuarantinedDispute,
-    GenerationFenced { generation: u64 },
+    GenerationFenced {
+        generation: u64,
+    },
     CapabilityGranted,
     CapabilityRevoked,
     Reconstructed,
     Ambiguous,
     RejectedStaleAuthority,
-    RejectedStaleGeneration { current_generation: u64 },
+    RejectedStaleGeneration {
+        current_generation: u64,
+    },
     RejectedCapabilityRevoked,
     RejectedInvalidProofClass,
     RejectedBindingOrIssuer,
@@ -42,6 +52,26 @@ pub enum GovernedTurnOutcome {
     RejectedPrecondition,
     IntegrityOrProtocolFault,
     UnavailableBeforeAck,
+}
+
+/// Core-authored, immutable observation of unsettled effects at Turn admission.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnsettledEffectsSnapshot {
+    pub author: String,
+    pub turn_id: u64,
+    pub region_ref: String,
+    pub attempts: Vec<UnsettledEffectObservation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnsettledEffectObservation {
+    pub attempt_id: u64,
+    pub action_id: String,
+    pub target_scope: String,
+    pub status: String,
+    pub stable_op_id: Option<String>,
+    pub lock_state: String,
+    pub ambiguous_delivery: bool,
 }
 
 /// The closed D1 authorization vocabulary. New rights require an RFC change.
@@ -506,6 +536,10 @@ impl D1GovernedTurnAuthority {
         content: &[u8],
         profile: DurabilityProfile,
     ) -> EnsureRegionOutcome {
+        // Guest-supplied bytes may never occupy Core's observation namespace.
+        if region_ref.starts_with("observation:unsettled_effects:") {
+            return EnsureRegionOutcome::RejectedIdentityConflict;
+        }
         self.storage_mut()
             .ensure_region(region_ref, content_digest, content, profile)
     }
@@ -543,6 +577,16 @@ impl D1GovernedTurnAuthority {
                 | CoreEntry::AdapterReservation { .. }
                 | CoreEntry::AdapterSubmissionRecorded { .. }
         );
+        // Effect transitions may outlive their originating Turn. Bind their
+        // storage CAS to the current tuple, including a surrendered lease.
+        let (turn_id, lease) = if updates_projection && turn_id.is_none() {
+            self.turn
+                .as_ref()
+                .filter(|t| t.status != TurnStatus::Closed)
+                .map_or((None, None), |t| (Some(t.turn_id), t.active_lease))
+        } else {
+            (turn_id, lease)
+        };
         let request = AppendConditionalRequest {
             agent_id,
             entry_id: self.next_entry_id,
@@ -935,6 +979,37 @@ impl D1GovernedTurnAuthority {
         self.provider_submissions = 0;
     }
 
+    fn unsettled_effects_snapshot(&self, turn_id: u64) -> UnsettledEffectsSnapshot {
+        let mut attempts: Vec<_> = self
+            .attempts
+            .iter()
+            .filter_map(|(&attempt_id, a)| {
+                let status = match a.status {
+                    AttemptStatus::ArmedUnknown => "ArmedUnknown",
+                    AttemptStatus::Dispatched => "Dispatched",
+                    AttemptStatus::QuarantinedDispute => "QuarantinedDispute",
+                    _ => return None,
+                };
+                Some(UnsettledEffectObservation {
+                    attempt_id,
+                    action_id: a.action_id.clone(),
+                    target_scope: a.target_scope.clone(),
+                    status: status.into(),
+                    stable_op_id: a.dispatch_identity.clone(),
+                    lock_state: "WriteLocked_ProbeAllowed".into(),
+                    ambiguous_delivery: a.ambiguous_delivery,
+                })
+            })
+            .collect();
+        attempts.sort_by_key(|a| a.attempt_id);
+        UnsettledEffectsSnapshot {
+            author: "Core".into(),
+            turn_id,
+            region_ref: format!("observation:unsettled_effects:{turn_id}"),
+            attempts,
+        }
+    }
+
     pub fn admit_turn(&mut self, request: AdmitTurnRequest) -> GovernedTurnOutcome {
         if self.turn.as_ref().is_some_and(|turn| {
             turn.status != TurnStatus::Closed || request.turn_id <= turn.turn_id
@@ -952,20 +1027,46 @@ impl D1GovernedTurnAuthority {
                 return outcome;
             }
         }
-        self.agent_id = Some(request.agent_id.clone());
-        self.projection_digest = Some(request.base_projection_digest.clone());
+        if self
+            .projection_digest
+            .as_ref()
+            .is_some_and(|base| base != &request.base_projection_digest)
+        {
+            return GovernedTurnOutcome::RejectedStaleAuthority;
+        }
+        let unsettled_effects_snapshot = self.unsettled_effects_snapshot(request.turn_id);
+        let bytes = match serde_json::to_vec(&unsettled_effects_snapshot) {
+            Ok(bytes) => bytes,
+            Err(_) => return GovernedTurnOutcome::IntegrityOrProtocolFault,
+        };
+        let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
+        match self.storage_mut().ensure_core_observation(
+            &unsettled_effects_snapshot.region_ref,
+            &digest,
+            &bytes,
+        ) {
+            EnsureRegionOutcome::Success(_)
+            | EnsureRegionOutcome::AlreadyPersistedSameContent(_) => {}
+            EnsureRegionOutcome::UnavailableBeforeAck => {
+                return GovernedTurnOutcome::UnavailableBeforeAck
+            }
+            _ => return GovernedTurnOutcome::IntegrityOrProtocolFault,
+        }
+        let previous_agent = self.agent_id.replace(request.agent_id.clone());
         if let Err(outcome) = self.append(
             CoreEntry::LeaseGranted {
                 turn_id: request.turn_id,
                 lease_epoch: request.lease_epoch,
             },
-            vec![],
+            vec![unsettled_effects_snapshot.region_ref.clone()],
             None,
             None,
             Some(request.base_projection_digest.clone()),
         ) {
+            self.agent_id = previous_agent;
             return outcome;
         }
+        self.projection_digest = Some(request.base_projection_digest.clone());
         self.turn = Some(Turn {
             turn_id: request.turn_id,
             base_digest: request.base_projection_digest,
@@ -975,7 +1076,9 @@ impl D1GovernedTurnAuthority {
             requested: HashSet::new(),
             interactions: HashMap::new(),
         });
-        GovernedTurnOutcome::Admitted
+        GovernedTurnOutcome::Admitted {
+            unsettled_effects_snapshot,
+        }
     }
     pub fn request_interaction(
         &mut self,
@@ -987,7 +1090,16 @@ impl D1GovernedTurnAuthority {
         if turn.status != TurnStatus::Ready || turn.active_lease != Some(request.lease_epoch) {
             return GovernedTurnOutcome::RejectedStaleAuthority;
         }
-        let (id, base) = (turn.turn_id, turn.base_digest.clone());
+        // A delayed report is identified by interaction_id. Never let a
+        // successor Turn reuse that identity and accidentally accept it.
+        if self.storage().journal_requests().iter().any(|entry| {
+            matches!(&entry.entry, CoreEntry::InteractionRequested {
+                turn_id, interaction_id, ..
+            } if *turn_id != turn.turn_id && interaction_id == &request.interaction_id)
+        }) {
+            return GovernedTurnOutcome::RejectedPrecondition;
+        }
+        let (id, base) = (turn.turn_id, self.projection_digest.clone());
         if let Err(outcome) = self.append(
             CoreEntry::InteractionRequested {
                 turn_id: id,
@@ -998,7 +1110,7 @@ impl D1GovernedTurnAuthority {
             vec![],
             Some(id),
             Some(request.lease_epoch),
-            Some(base),
+            base,
         ) {
             return outcome;
         }
@@ -1021,7 +1133,7 @@ impl D1GovernedTurnAuthority {
         if !self.region_matches(&report.observation_region_id, &report.observation_digest) {
             return GovernedTurnOutcome::IntegrityOrProtocolFault;
         }
-        let (id, base) = (turn.turn_id, turn.base_digest.clone());
+        let (id, base) = (turn.turn_id, self.projection_digest.clone());
         if let Err(outcome) = self.append(
             CoreEntry::InteractionBound {
                 turn_id: id,
@@ -1033,7 +1145,7 @@ impl D1GovernedTurnAuthority {
             vec![report.observation_region_id.clone()],
             Some(id),
             None,
-            Some(base),
+            base,
         ) {
             return outcome;
         }
@@ -1057,7 +1169,7 @@ impl D1GovernedTurnAuthority {
         {
             return GovernedTurnOutcome::RejectedStaleAuthority;
         }
-        let (id, base) = (turn.turn_id, turn.base_digest.clone());
+        let (id, base) = (turn.turn_id, self.projection_digest.clone());
         if let Err(outcome) = self.append(
             CoreEntry::LeaseGranted {
                 turn_id: id,
@@ -1066,7 +1178,7 @@ impl D1GovernedTurnAuthority {
             vec![],
             Some(id),
             None,
-            Some(base),
+            base,
         ) {
             return outcome;
         }
@@ -1132,7 +1244,7 @@ impl D1GovernedTurnAuthority {
             vec![request.successor_region_id, manifest_region],
             Some(id),
             Some(request.lease_epoch),
-            Some(request.base_projection_digest),
+            self.projection_digest.clone(),
         ) {
             return outcome;
         }
@@ -1330,12 +1442,12 @@ impl D1GovernedTurnAuthority {
         let Some(attempt) = self.attempts.get_mut(&request.attempt_id) else {
             return GovernedTurnOutcome::RejectedCurrentState;
         };
-        if attempt.status != AttemptStatus::Dispatched
-            || attempt.dispatch_identity.as_deref() != Some(request.dispatch_identity.as_str())
-        {
+        if attempt.status != AttemptStatus::Dispatched {
             return GovernedTurnOutcome::RejectedCurrentState;
         }
-        if attempt.ambiguous_delivery {
+        if attempt.dispatch_identity.as_deref() != Some(request.dispatch_identity.as_str())
+            || attempt.ambiguous_delivery
+        {
             return GovernedTurnOutcome::Ambiguous;
         }
         if attempt.delivered {
@@ -1498,7 +1610,11 @@ impl D1GovernedTurnAuthority {
             .as_ref()
             .filter(|turn| turn.status != TurnStatus::Closed)
             .map_or((None, None, self.projection_digest.clone()), |t| {
-                (Some(t.turn_id), t.active_lease, Some(t.base_digest.clone()))
+                (
+                    Some(t.turn_id),
+                    t.active_lease,
+                    self.projection_digest.clone(),
+                )
             });
         if let Err(outcome) = self.append(
             CoreEntry::FenceRevoked { generation },

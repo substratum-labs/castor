@@ -70,10 +70,10 @@ impl Fixture {
     }
 
     fn ready_to_commit(&mut self) {
-        assert_eq!(
+        assert!(matches!(
             self.authority.admit_turn(admit()),
-            GovernedTurnOutcome::Admitted
-        );
+            GovernedTurnOutcome::Admitted { .. }
+        ));
         assert_eq!(
             self.authority.request_interaction(request_interaction()),
             GovernedTurnOutcome::InteractionRequested
@@ -216,10 +216,10 @@ fn test_comp_normal_governed_turn_e2e_flow() {
 #[test]
 fn test_comp_commit_turn_while_awaiting_interaction_rejected() {
     let mut c = Fixture::new();
-    assert_eq!(
+    assert!(matches!(
         c.authority.admit_turn(admit()),
-        GovernedTurnOutcome::Admitted
-    );
+        GovernedTurnOutcome::Admitted { .. }
+    ));
     assert_eq!(
         c.authority.request_interaction(request_interaction()),
         GovernedTurnOutcome::InteractionRequested
@@ -236,10 +236,10 @@ fn test_comp_commit_turn_while_awaiting_interaction_rejected() {
 #[test]
 fn test_comp_unpersisted_observation_region_blocks_interaction_binding() {
     let mut c = Fixture::new();
-    assert_eq!(
+    assert!(matches!(
         c.authority.admit_turn(admit()),
-        GovernedTurnOutcome::Admitted
-    );
+        GovernedTurnOutcome::Admitted { .. }
+    ));
     assert_eq!(
         c.authority.request_interaction(request_interaction()),
         GovernedTurnOutcome::InteractionRequested
@@ -254,10 +254,10 @@ fn test_comp_unpersisted_observation_region_blocks_interaction_binding() {
 #[test]
 fn test_comp_observation_consumed_only_under_strictly_monotonic_fresh_lease() {
     let mut c = Fixture::new();
-    assert_eq!(
+    assert!(matches!(
         c.authority.admit_turn(admit()),
-        GovernedTurnOutcome::Admitted
-    );
+        GovernedTurnOutcome::Admitted { .. }
+    ));
     assert_eq!(
         c.authority.request_interaction(request_interaction()),
         GovernedTurnOutcome::InteractionRequested
@@ -311,10 +311,10 @@ fn test_comp_turn_commit_requires_durably_bound_interaction() {
     let mut c = Fixture::new();
     let mut no_cap_admit = admit();
     no_cap_admit.cap_id = None;
-    assert_eq!(
+    assert!(matches!(
         c.authority.admit_turn(no_cap_admit),
-        GovernedTurnOutcome::Admitted
-    );
+        GovernedTurnOutcome::Admitted { .. }
+    ));
     let mut initial_lease_commit = commit();
     initial_lease_commit.lease_epoch = 0;
     initial_lease_commit.cap_id = None;
@@ -571,14 +571,14 @@ fn test_comp_late_interaction_after_turn_close_does_not_bind_successor_turn() {
         c.authority.commit_turn(commit()),
         GovernedTurnOutcome::TurnCommitted
     );
-    assert_eq!(
+    assert!(matches!(
         c.authority.admit_turn(AdmitTurnRequest {
             turn_id: 2,
             base_projection_digest: digest(b"durably persisted governed-turn fixture"),
             ..admit()
         }),
-        GovernedTurnOutcome::Admitted
-    );
+        GovernedTurnOutcome::Admitted { .. }
+    ));
     assert_eq!(
         c.authority.report_outcome(report_interaction()),
         GovernedTurnOutcome::RejectedLateOrClosedTurn
@@ -680,5 +680,266 @@ fn test_comp_operator_resolution_persists_and_releases_quarantined_scope() {
     assert_eq!(
         c.authority.present_admission_certificate(successor),
         GovernedTurnOutcome::AttemptArmed { attempt_id: 2 }
+    );
+}
+
+#[test]
+fn test_c2_conflicting_delivery_is_ambiguous_without_submission() {
+    let mut c = Fixture::new();
+    c.dispatched_action();
+    let before = c.authority.inspect_journal();
+    assert_eq!(
+        c.authority
+            .deliver_armed_attempt(DeliverArmedAttemptRequest {
+                attempt_id: 1,
+                dispatch_identity: "conflicting-operation".into(),
+            }),
+        GovernedTurnOutcome::Ambiguous
+    );
+    assert_eq!(c.authority.inspect_journal(), before);
+    assert_eq!(c.authority.provider_submission_count(), 0);
+}
+
+#[test]
+fn test_c2_effect_transition_during_turn_preserves_fresh_commit_and_fence() {
+    for fence in [false, true] {
+        let mut c = Fixture::new();
+        c.armed_action();
+        let base = c
+            .authority
+            .storage()
+            .journal_requests()
+            .last()
+            .map(|r| {
+                c.authority
+                    .storage()
+                    .read_entry(&r.agent_id, r.entry_id)
+                    .unwrap()
+                    .entry_digest
+            })
+            .unwrap();
+        let mut next = admit();
+        next.turn_id = 2;
+        next.base_projection_digest = base.clone();
+        assert!(matches!(
+            c.authority.admit_turn(next),
+            GovernedTurnOutcome::Admitted { .. }
+        ));
+        assert_eq!(
+            c.authority.record_dispatch_attempt(dispatch()),
+            GovernedTurnOutcome::DispatchRecorded
+        );
+        let mut interaction = request_interaction();
+        interaction.interaction_id = "c2-next-turn".into();
+        let mut report = report_interaction();
+        report.interaction_id = interaction.interaction_id.clone();
+        let mut consumption = consume();
+        consumption.interaction_id = interaction.interaction_id.clone();
+        assert_eq!(
+            c.authority.request_interaction(interaction),
+            GovernedTurnOutcome::InteractionRequested
+        );
+        if fence {
+            assert_eq!(
+                c.authority.persist_fence(2),
+                GovernedTurnOutcome::GenerationFenced { generation: 2 }
+            );
+        } else {
+            assert_eq!(
+                c.authority.report_outcome(report),
+                GovernedTurnOutcome::InteractionBound
+            );
+            assert_eq!(
+                c.authority.consume_interaction(consumption),
+                GovernedTurnOutcome::InteractionConsumed
+            );
+            let mut request = commit();
+            request.base_projection_digest = base;
+            assert_eq!(
+                c.authority.commit_turn(request),
+                GovernedTurnOutcome::TurnCommitted
+            );
+        }
+    }
+}
+
+#[test]
+fn test_c2_snapshot_is_core_persisted_bound_and_immutable() {
+    let mut c = Fixture::new();
+    c.dispatched_action();
+    let last = c.authority.storage().journal_requests().pop().unwrap();
+    let base = c
+        .authority
+        .storage()
+        .read_entry(&last.agent_id, last.entry_id)
+        .unwrap()
+        .entry_digest;
+    let mut next = admit();
+    next.turn_id = 2;
+    next.base_projection_digest = base;
+    let GovernedTurnOutcome::Admitted {
+        unsettled_effects_snapshot: snapshot,
+    } = c.authority.admit_turn(next)
+    else {
+        panic!("admission failed")
+    };
+    assert_eq!(snapshot.author, "Core");
+    assert_eq!(snapshot.turn_id, 2);
+    assert_eq!(snapshot.region_ref, "observation:unsettled_effects:2");
+    assert_eq!(snapshot.attempts.len(), 1);
+    assert_eq!(
+        snapshot.attempts[0].stable_op_id.as_deref(),
+        Some("dispatch-1")
+    );
+    let bytes = c
+        .authority
+        .storage()
+        .read_region(&snapshot.region_ref)
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+        serde_json::to_value(&snapshot).unwrap()
+    );
+    let admission = c.authority.storage().journal_requests().pop().unwrap();
+    assert_eq!(admission.region_refs, vec![snapshot.region_ref.clone()]);
+    assert_eq!(
+        c.authority.ensure_region(
+            "observation:unsettled_effects:3",
+            &digest(b"forged"),
+            b"forged",
+            DurabilityProfile::D1
+        ),
+        castor_kernel::c01_storage::EnsureRegionOutcome::RejectedIdentityConflict
+    );
+    assert_eq!(
+        c.authority.present_settlement_certificate(settlement()),
+        GovernedTurnOutcome::Settled {
+            resolution: "Confirmed".into()
+        }
+    );
+    assert_eq!(
+        c.authority
+            .storage()
+            .read_region(&snapshot.region_ref)
+            .unwrap(),
+        bytes
+    );
+    assert_eq!(
+        c.authority.persist_fence(2),
+        GovernedTurnOutcome::GenerationFenced { generation: 2 }
+    );
+    let last = c.authority.storage().journal_requests().pop().unwrap();
+    let mut next = admit();
+    next.turn_id = 3;
+    next.cap_id = None;
+    next.base_projection_digest = last.expected_base_projection_digest.unwrap();
+    let GovernedTurnOutcome::Admitted {
+        unsettled_effects_snapshot: next,
+    } = c.authority.admit_turn(next)
+    else {
+        panic!("next admission failed")
+    };
+    assert!(next.attempts.is_empty());
+}
+
+#[test]
+fn test_c2_failed_admission_cannot_replace_authoritative_projection() {
+    let mut c = Fixture::new();
+    c.armed_action();
+    let mut bad = admit();
+    bad.turn_id = 2;
+    bad.base_projection_digest = "forged-base".into();
+    let before = c.authority.inspect_journal();
+    assert_eq!(
+        c.authority.admit_turn(bad),
+        GovernedTurnOutcome::RejectedStaleAuthority
+    );
+    assert_eq!(c.authority.inspect_journal(), before);
+    assert_eq!(
+        c.authority.record_dispatch_attempt(dispatch()),
+        GovernedTurnOutcome::DispatchRecorded
+    );
+}
+
+#[test]
+fn test_c2_orphan_snapshot_after_crash_does_not_poison_admission() {
+    let mut c = Fixture::new();
+    c.dispatched_action();
+    let root = c._root.path().to_path_buf();
+    drop(c.authority);
+    // Crash seam: Region is durable, but no LeaseGranted references it.
+    let mut storage = D1DurableStorage::open(&root).unwrap();
+    let orphan = b"uncommitted pre-crash observation";
+    assert!(matches!(
+        storage.ensure_region(
+            "observation:unsettled_effects:2",
+            &digest(orphan),
+            orphan,
+            DurabilityProfile::D1
+        ),
+        castor_kernel::c01_storage::EnsureRegionOutcome::Success(_)
+    ));
+    drop(storage);
+    let mut authority = D1GovernedTurnAuthority::open(&root).unwrap();
+    let last = authority.storage().journal_requests().pop().unwrap();
+    let mut next = admit();
+    next.turn_id = 2;
+    next.base_projection_digest = authority
+        .storage()
+        .read_entry(&last.agent_id, last.entry_id)
+        .unwrap()
+        .entry_digest;
+    let outcome = authority.admit_turn(next);
+    let GovernedTurnOutcome::Admitted {
+        unsettled_effects_snapshot: snapshot,
+    } = outcome
+    else {
+        panic!("{outcome:?}")
+    };
+    assert_eq!(snapshot.attempts[0].status, "Dispatched");
+    assert!(snapshot.attempts[0].ambiguous_delivery);
+    assert_ne!(
+        authority
+            .storage()
+            .read_region(&snapshot.region_ref)
+            .unwrap(),
+        orphan
+    );
+    drop(authority);
+    assert!(D1GovernedTurnAuthority::open(&root).is_ok());
+}
+
+#[test]
+fn test_c2_successor_cannot_reuse_closed_turn_interaction_identity() {
+    let mut c = Fixture::new();
+    c.armed_action();
+    let last = c.authority.storage().journal_requests().pop().unwrap();
+    let mut next = admit();
+    next.turn_id = 2;
+    next.base_projection_digest = c
+        .authority
+        .storage()
+        .read_entry(&last.agent_id, last.entry_id)
+        .unwrap()
+        .entry_digest;
+    assert!(matches!(
+        c.authority.admit_turn(next),
+        GovernedTurnOutcome::Admitted { .. }
+    ));
+    let before = c.authority.inspect_journal();
+    assert_eq!(
+        c.authority.request_interaction(request_interaction()),
+        GovernedTurnOutcome::RejectedPrecondition
+    );
+    assert_eq!(c.authority.inspect_journal(), before);
+    let mut fresh = request_interaction();
+    fresh.interaction_id = "fresh-probe".into();
+    assert_eq!(
+        c.authority.request_interaction(fresh),
+        GovernedTurnOutcome::InteractionRequested
+    );
+    assert_eq!(
+        c.authority.report_outcome(report_interaction()),
+        GovernedTurnOutcome::RejectedLateOrClosedTurn
     );
 }
