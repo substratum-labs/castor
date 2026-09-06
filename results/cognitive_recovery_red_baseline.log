@@ -1,0 +1,809 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running tests/cognitive_recovery_contract.rs (target/debug/deps/cognitive_recovery_contract-6314266b3e44a051)
+
+running 12 tests
+test test_r11_reconstructed_partial_settlement_dispute_and_alias_lock ... FAILED
+test test_r10_budget_survives_restart_escalation_requires_hitl ... FAILED
+test test_r6_next_turn_probe_allowed_mutation_locked ... FAILED
+test test_r7_revoked_capability_after_snapshot_rejected ... FAILED
+test test_r1_guest_certificate_denied_without_journal_mutation ... FAILED
+test test_r4_duplicate_confirmed_ack_no_append_no_rearm ... FAILED
+test test_r5_atomic_cancel_tombstone_rejects_delayed_arrivals ... FAILED
+test test_r12_closed_turn_drops_late_probe_requires_fresh_lease ... FAILED
+test test_r3_not_found_preserves_ambiguity_then_late_dispatch ... FAILED
+test test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync ... FAILED
+test test_r2_reject_mismatched_binding_or_issuer ... FAILED
+test test_r8_closed_query_descriptor_validation ... FAILED
+
+failures:
+
+---- test_r11_reconstructed_partial_settlement_dispute_and_alias_lock stdout ----
+
+thread 'test_r11_reconstructed_partial_settlement_dispute_and_alias_lock' (94927227) panicked at tests/cognitive_recovery_contract.rs:192:5:
+assertion `left == right` failed
+  left: AttemptArmed { attempt_id: 3 }
+ right: RejectedCurrentState
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_r10_budget_survives_restart_escalation_requires_hitl stdout ----
+
+thread 'test_r10_budget_survives_restart_escalation_requires_hitl' (94927226) panicked at tests/cognitive_recovery_contract.rs:30:5:
+test_r10_budget_survives_restart_escalation_requires_hitl failed against the physical daemon (exit status: 1):
+
+test_r10_budget_survives_restart_escalation_requires_hitl (__main__.CognitiveRecovery.test_r10_budget_survives_restart_escalation_requires_hitl) ... FAIL
+
+======================================================================
+FAIL: test_r10_budget_survives_restart_escalation_requires_hitl (__main__.CognitiveRecovery.test_r10_budget_survives_restart_escalation_requires_hitl)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 697, in test_r10_budget_survives_restart_escalation_requires_hitl
+    initial = d.recovery()
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 465, in recovery
+    assert isinstance(recovery, dict), (
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^
+AssertionError: R3/R10: journal-backed recovery phase/budget projection is missing
+
+----------------------------------------------------------------------
+Ran 1 test in 0.868s
+
+FAILED (failures=1)
+
+
+---- test_r6_next_turn_probe_allowed_mutation_locked stdout ----
+
+thread 'test_r6_next_turn_probe_allowed_mutation_locked' (94927234) panicked at tests/cognitive_recovery_contract.rs:30:5:
+test_r6_next_turn_probe_allowed_mutation_locked failed against the physical daemon (exit status: 1):
+
+test_r6_next_turn_probe_allowed_mutation_locked (__main__.CognitiveRecovery.test_r6_next_turn_probe_allowed_mutation_locked) ... 
+  test_r6_next_turn_probe_allowed_mutation_locked (__main__.CognitiveRecovery.test_r6_next_turn_probe_allowed_mutation_locked) [unrelated scope remains available] ... FAIL
+test_r6_next_turn_probe_allowed_mutation_locked (__main__.CognitiveRecovery.test_r6_next_turn_probe_allowed_mutation_locked) ... FAIL
+
+======================================================================
+FAIL: test_r6_next_turn_probe_allowed_mutation_locked (__main__.CognitiveRecovery.test_r6_next_turn_probe_allowed_mutation_locked) [unrelated scope remains available]
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 583, in test_r6_next_turn_probe_allowed_mutation_locked
+    d.ok(
+    ~~~~^
+        "PresentAdmissionCertificate",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        d.admission("a3", "payment:fixture:other"),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        "AttemptArmed",
+        ^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 265, in ok
+    return expect(self.call(op, payload, channel), expected)
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 77, in expect
+    assert kind(response) == expected, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: expected AttemptArmed, actual wire response: {'request_id': 'contract', 'status': 'Ok', 'outcome': {'type': 'RejectedStaleAuthority'}}
+
+======================================================================
+FAIL: test_r6_next_turn_probe_allowed_mutation_locked (__main__.CognitiveRecovery.test_r6_next_turn_probe_allowed_mutation_locked)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 591, in test_r6_next_turn_probe_allowed_mutation_locked
+    d.snapshot(admitted, "ArmedUnknown")
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 448, in snapshot
+    assert isinstance(snapshot, dict), (
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^
+AssertionError: R6/R9: AdmitTurn omitted Core-authored UnsettledEffectsSnapshot: {'type': 'Admitted'}
+
+----------------------------------------------------------------------
+Ran 1 test in 0.895s
+
+FAILED (failures=2)
+
+
+---- test_r7_revoked_capability_after_snapshot_rejected stdout ----
+
+thread 'test_r7_revoked_capability_after_snapshot_rejected' (94927235) panicked at tests/cognitive_recovery_contract.rs:30:5:
+test_r7_revoked_capability_after_snapshot_rejected failed against the physical daemon (exit status: 1):
+
+test_r7_revoked_capability_after_snapshot_rejected (__main__.CognitiveRecovery.test_r7_revoked_capability_after_snapshot_rejected) ... 
+  test_r7_revoked_capability_after_snapshot_rejected (__main__.CognitiveRecovery.test_r7_revoked_capability_after_snapshot_rejected) [frozen rejection] ... FAIL
+
+======================================================================
+FAIL: test_r7_revoked_capability_after_snapshot_rejected (__main__.CognitiveRecovery.test_r7_revoked_capability_after_snapshot_rejected) [frozen rejection]
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 604, in test_r7_revoked_capability_after_snapshot_rejected
+    expect(response, "RejectedPrecondition")
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 77, in expect
+    assert kind(response) == expected, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: expected RejectedPrecondition, actual wire response: {'request_id': 'contract', 'status': 'Ok', 'outcome': {'type': 'RejectedCapabilityRevoked'}}
+
+----------------------------------------------------------------------
+Ran 1 test in 0.916s
+
+FAILED (failures=1)
+
+
+---- test_r1_guest_certificate_denied_without_journal_mutation stdout ----
+
+thread 'test_r1_guest_certificate_denied_without_journal_mutation' (94927229) panicked at tests/cognitive_recovery_contract.rs:30:5:
+test_r1_guest_certificate_denied_without_journal_mutation failed against the physical daemon (exit status: 1):
+
+test_r1_guest_certificate_denied_without_journal_mutation (__main__.CognitiveRecovery.test_r1_guest_certificate_denied_without_journal_mutation) ... 
+  test_r1_guest_certificate_denied_without_journal_mutation (__main__.CognitiveRecovery.test_r1_guest_certificate_denied_without_journal_mutation) [opcode] ... FAIL
+  test_r1_guest_certificate_denied_without_journal_mutation (__main__.CognitiveRecovery.test_r1_guest_certificate_denied_without_journal_mutation) [journal] ... FAIL
+  test_r1_guest_certificate_denied_without_journal_mutation (__main__.CognitiveRecovery.test_r1_guest_certificate_denied_without_journal_mutation) [scope] ... FAIL
+
+======================================================================
+FAIL: test_r1_guest_certificate_denied_without_journal_mutation (__main__.CognitiveRecovery.test_r1_guest_certificate_denied_without_journal_mutation) [opcode]
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 485, in test_r1_guest_certificate_denied_without_journal_mutation
+    expect(response, "UnauthorizedOpcode")
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 77, in expect
+    assert kind(response) == expected, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: expected UnauthorizedOpcode, actual wire response: {'request_id': 'contract', 'status': 'Ok', 'outcome': {'resolution': 'Confirmed', 'type': 'Settled'}}
+
+======================================================================
+FAIL: test_r1_guest_certificate_denied_without_journal_mutation (__main__.CognitiveRecovery.test_r1_guest_certificate_denied_without_journal_mutation) [journal]
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 487, in test_r1_guest_certificate_denied_without_journal_mutation
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        d.journal(), before, "guest certificate changed Core journal"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: [{'Ca[1665 chars]: 1}}, {'AttemptSettled': {'action_id': 'a1', [185 chars]d'}}] != [{'Ca[1665 chars]: 1}}]
+
+First list contains 1 additional elements.
+First extra element 11:
+{'AttemptSettled': {'action_id': 'a1', 'attempt_id': 1, 'evidence_digest': 'sha256:7176d517cd07904b420b0033e7de1fbb4d4e5f0cce183449b407addf5732d41c', 'evidence_region_id': 'region://recovery/receipt', 'resolution': 'Confirmed'}}
+
+Diff is 2598 characters long. Set self.maxDiff to None to see it. : guest certificate changed Core journal
+
+======================================================================
+FAIL: test_r1_guest_certificate_denied_without_journal_mutation (__main__.CognitiveRecovery.test_r1_guest_certificate_denied_without_journal_mutation) [scope]
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 491, in test_r1_guest_certificate_denied_without_journal_mutation
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        d.summary(), projection, "guest certificate unlocked attempt"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: {'act[45 chars]al_entries': 12, 'locked_scopes': 0, 'quarantined_disputes': 0} != {'act[45 chars]al_entries': 11, 'locked_scopes': 1, 'quarantined_disputes': 0}
+  {'active_capabilities': 1,
+   'generation': 1,
+-  'journal_entries': 12,
+?                      ^
+
++  'journal_entries': 11,
+?                      ^
+
+-  'locked_scopes': 0,
+?                   ^
+
++  'locked_scopes': 1,
+?                   ^
+
+   'quarantined_disputes': 0} : guest certificate unlocked attempt
+
+----------------------------------------------------------------------
+Ran 1 test in 0.927s
+
+FAILED (failures=3)
+
+
+---- test_r4_duplicate_confirmed_ack_no_append_no_rearm stdout ----
+
+thread 'test_r4_duplicate_confirmed_ack_no_append_no_rearm' (94927232) panicked at tests/cognitive_recovery_contract.rs:30:5:
+test_r4_duplicate_confirmed_ack_no_append_no_rearm failed against the physical daemon (exit status: 1):
+
+test_r4_duplicate_confirmed_ack_no_append_no_rearm (__main__.CognitiveRecovery.test_r4_duplicate_confirmed_ack_no_append_no_rearm) ... FAIL
+
+======================================================================
+FAIL: test_r4_duplicate_confirmed_ack_no_append_no_rearm (__main__.CognitiveRecovery.test_r4_duplicate_confirmed_ack_no_append_no_rearm)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 549, in test_r4_duplicate_confirmed_ack_no_append_no_rearm
+    expect(d.settle(cert), "Settled")
+           ~~~~~~~~^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 444, in settle
+    return self.call("PresentSettlementCertificate", cert, "evidence")
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 249, in call
+    assert path.exists(), (
+           ~~~~~~~~~~~^^
+AssertionError: R2/R4/R5: dedicated authenticated evidence.sock is absent (no guest fallback)
+
+----------------------------------------------------------------------
+Ran 1 test in 0.972s
+
+FAILED (failures=1)
+
+
+---- test_r5_atomic_cancel_tombstone_rejects_delayed_arrivals stdout ----
+
+thread 'test_r5_atomic_cancel_tombstone_rejects_delayed_arrivals' (94927233) panicked at tests/cognitive_recovery_contract.rs:30:5:
+test_r5_atomic_cancel_tombstone_rejects_delayed_arrivals failed against the physical daemon (exit status: 1):
+
+test_r5_atomic_cancel_tombstone_rejects_delayed_arrivals (__main__.CognitiveRecovery.test_r5_atomic_cancel_tombstone_rejects_delayed_arrivals) ... FAIL
+
+======================================================================
+FAIL: test_r5_atomic_cancel_tombstone_rejects_delayed_arrivals (__main__.CognitiveRecovery.test_r5_atomic_cancel_tombstone_rejects_delayed_arrivals)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 568, in test_r5_atomic_cancel_tombstone_rejects_delayed_arrivals
+    expect(d.settle(d.certificate("NotApplied")), "Settled")
+           ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 444, in settle
+    return self.call("PresentSettlementCertificate", cert, "evidence")
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 249, in call
+    assert path.exists(), (
+           ~~~~~~~~~~~^^
+AssertionError: R2/R4/R5: dedicated authenticated evidence.sock is absent (no guest fallback)
+
+----------------------------------------------------------------------
+Ran 1 test in 1.002s
+
+FAILED (failures=1)
+
+
+---- test_r12_closed_turn_drops_late_probe_requires_fresh_lease stdout ----
+
+thread 'test_r12_closed_turn_drops_late_probe_requires_fresh_lease' (94927228) panicked at tests/cognitive_recovery_contract.rs:30:5:
+test_r12_closed_turn_drops_late_probe_requires_fresh_lease failed against the physical daemon (exit status: 1):
+
+test_r12_closed_turn_drops_late_probe_requires_fresh_lease (__main__.CognitiveRecovery.test_r12_closed_turn_drops_late_probe_requires_fresh_lease) ... FAIL
+
+======================================================================
+FAIL: test_r12_closed_turn_drops_late_probe_requires_fresh_lease (__main__.CognitiveRecovery.test_r12_closed_turn_drops_late_probe_requires_fresh_lease)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 794, in test_r12_closed_turn_drops_late_probe_requires_fresh_lease
+    old_budget = d.recovery()["probe_budget_remaining"]
+                 ~~~~~~~~~~^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 465, in recovery
+    assert isinstance(recovery, dict), (
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^
+AssertionError: R3/R10: journal-backed recovery phase/budget projection is missing
+
+----------------------------------------------------------------------
+Ran 1 test in 1.043s
+
+FAILED (failures=1)
+
+
+---- test_r3_not_found_preserves_ambiguity_then_late_dispatch stdout ----
+
+thread 'test_r3_not_found_preserves_ambiguity_then_late_dispatch' (94927231) panicked at tests/cognitive_recovery_contract.rs:30:5:
+test_r3_not_found_preserves_ambiguity_then_late_dispatch failed against the physical daemon (exit status: 1):
+
+test_r3_not_found_preserves_ambiguity_then_late_dispatch (__main__.CognitiveRecovery.test_r3_not_found_preserves_ambiguity_then_late_dispatch) ... FAIL
+
+======================================================================
+FAIL: test_r3_not_found_preserves_ambiguity_then_late_dispatch (__main__.CognitiveRecovery.test_r3_not_found_preserves_ambiguity_then_late_dispatch)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 536, in test_r3_not_found_preserves_ambiguity_then_late_dispatch
+    d.snapshot(admitted, "Dispatched")
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 448, in snapshot
+    assert isinstance(snapshot, dict), (
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^
+AssertionError: R6/R9: AdmitTurn omitted Core-authored UnsettledEffectsSnapshot: {'type': 'Admitted'}
+
+----------------------------------------------------------------------
+Ran 1 test in 1.082s
+
+FAILED (failures=1)
+
+
+---- test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync stdout ----
+
+thread 'test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync' (94927237) panicked at tests/cognitive_recovery_contract.rs:30:5:
+test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync failed against the physical daemon (exit status: 1):
+
+test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync (__main__.CognitiveRecovery.test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync) ... 
+  test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync (__main__.CognitiveRecovery.test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync) (seam='arm') ... FAIL
+  test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync (__main__.CognitiveRecovery.test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync) (seam='dispatch') ... FAIL
+  test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync (__main__.CognitiveRecovery.test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync) (seam='evidence') ... FAIL
+  test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync (__main__.CognitiveRecovery.test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync) (seam='torn-settlement') ... FAIL
+
+======================================================================
+FAIL: test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync (__main__.CognitiveRecovery.test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync) (seam='arm')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 691, in test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync
+    d.snapshot(admitted, "ArmedUnknown" if seam == "arm" else "Dispatched")
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 448, in snapshot
+    assert isinstance(snapshot, dict), (
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^
+AssertionError: R6/R9: AdmitTurn omitted Core-authored UnsettledEffectsSnapshot: {'type': 'Admitted'}
+
+======================================================================
+FAIL: test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync (__main__.CognitiveRecovery.test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync) (seam='dispatch')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 691, in test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync
+    d.snapshot(admitted, "ArmedUnknown" if seam == "arm" else "Dispatched")
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 448, in snapshot
+    assert isinstance(snapshot, dict), (
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^
+AssertionError: R6/R9: AdmitTurn omitted Core-authored UnsettledEffectsSnapshot: {'type': 'Admitted'}
+
+======================================================================
+FAIL: test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync (__main__.CognitiveRecovery.test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync) (seam='evidence')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 691, in test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync
+    d.snapshot(admitted, "ArmedUnknown" if seam == "arm" else "Dispatched")
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 448, in snapshot
+    assert isinstance(snapshot, dict), (
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^
+AssertionError: R6/R9: AdmitTurn omitted Core-authored UnsettledEffectsSnapshot: {'type': 'Admitted'}
+
+======================================================================
+FAIL: test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync (__main__.CognitiveRecovery.test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync) (seam='torn-settlement')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 691, in test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync
+    d.snapshot(admitted, "ArmedUnknown" if seam == "arm" else "Dispatched")
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 448, in snapshot
+    assert isinstance(snapshot, dict), (
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^
+AssertionError: R6/R9: AdmitTurn omitted Core-authored UnsettledEffectsSnapshot: {'type': 'Admitted'}
+
+----------------------------------------------------------------------
+Ran 1 test in 1.974s
+
+FAILED (failures=4)
+
+
+---- test_r2_reject_mismatched_binding_or_issuer stdout ----
+
+thread 'test_r2_reject_mismatched_binding_or_issuer' (94927230) panicked at tests/cognitive_recovery_contract.rs:30:5:
+test_r2_reject_mismatched_binding_or_issuer failed against the physical daemon (exit status: 1):
+
+test_r2_reject_mismatched_binding_or_issuer (__main__.CognitiveRecovery.test_r2_reject_mismatched_binding_or_issuer) ... 
+  test_r2_reject_mismatched_binding_or_issuer (__main__.CognitiveRecovery.test_r2_reject_mismatched_binding_or_issuer) (field='attempt_id') ... FAIL
+  test_r2_reject_mismatched_binding_or_issuer (__main__.CognitiveRecovery.test_r2_reject_mismatched_binding_or_issuer) (field='stable_operation_id') ... FAIL
+  test_r2_reject_mismatched_binding_or_issuer (__main__.CognitiveRecovery.test_r2_reject_mismatched_binding_or_issuer) (field='issuer') ... FAIL
+  test_r2_reject_mismatched_binding_or_issuer (__main__.CognitiveRecovery.test_r2_reject_mismatched_binding_or_issuer) (field='request_digest') ... FAIL
+  test_r2_reject_mismatched_binding_or_issuer (__main__.CognitiveRecovery.test_r2_reject_mismatched_binding_or_issuer) (field='settlement_schema_version') ... FAIL
+  test_r2_reject_mismatched_binding_or_issuer (__main__.CognitiveRecovery.test_r2_reject_mismatched_binding_or_issuer) (field='adapter_id') ... FAIL
+
+======================================================================
+FAIL: test_r2_reject_mismatched_binding_or_issuer (__main__.CognitiveRecovery.test_r2_reject_mismatched_binding_or_issuer) (field='attempt_id')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 512, in test_r2_reject_mismatched_binding_or_issuer
+    expect(d.settle(cert), "RejectedBindingOrIssuer")
+           ~~~~~~~~^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 444, in settle
+    return self.call("PresentSettlementCertificate", cert, "evidence")
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 249, in call
+    assert path.exists(), (
+           ~~~~~~~~~~~^^
+AssertionError: R2/R4/R5: dedicated authenticated evidence.sock is absent (no guest fallback)
+
+======================================================================
+FAIL: test_r2_reject_mismatched_binding_or_issuer (__main__.CognitiveRecovery.test_r2_reject_mismatched_binding_or_issuer) (field='stable_operation_id')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 512, in test_r2_reject_mismatched_binding_or_issuer
+    expect(d.settle(cert), "RejectedBindingOrIssuer")
+           ~~~~~~~~^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 444, in settle
+    return self.call("PresentSettlementCertificate", cert, "evidence")
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 249, in call
+    assert path.exists(), (
+           ~~~~~~~~~~~^^
+AssertionError: R2/R4/R5: dedicated authenticated evidence.sock is absent (no guest fallback)
+
+======================================================================
+FAIL: test_r2_reject_mismatched_binding_or_issuer (__main__.CognitiveRecovery.test_r2_reject_mismatched_binding_or_issuer) (field='issuer')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 512, in test_r2_reject_mismatched_binding_or_issuer
+    expect(d.settle(cert), "RejectedBindingOrIssuer")
+           ~~~~~~~~^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 444, in settle
+    return self.call("PresentSettlementCertificate", cert, "evidence")
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 249, in call
+    assert path.exists(), (
+           ~~~~~~~~~~~^^
+AssertionError: R2/R4/R5: dedicated authenticated evidence.sock is absent (no guest fallback)
+
+======================================================================
+FAIL: test_r2_reject_mismatched_binding_or_issuer (__main__.CognitiveRecovery.test_r2_reject_mismatched_binding_or_issuer) (field='request_digest')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 512, in test_r2_reject_mismatched_binding_or_issuer
+    expect(d.settle(cert), "RejectedBindingOrIssuer")
+           ~~~~~~~~^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 444, in settle
+    return self.call("PresentSettlementCertificate", cert, "evidence")
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 249, in call
+    assert path.exists(), (
+           ~~~~~~~~~~~^^
+AssertionError: R2/R4/R5: dedicated authenticated evidence.sock is absent (no guest fallback)
+
+======================================================================
+FAIL: test_r2_reject_mismatched_binding_or_issuer (__main__.CognitiveRecovery.test_r2_reject_mismatched_binding_or_issuer) (field='settlement_schema_version')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 512, in test_r2_reject_mismatched_binding_or_issuer
+    expect(d.settle(cert), "RejectedBindingOrIssuer")
+           ~~~~~~~~^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 444, in settle
+    return self.call("PresentSettlementCertificate", cert, "evidence")
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 249, in call
+    assert path.exists(), (
+           ~~~~~~~~~~~^^
+AssertionError: R2/R4/R5: dedicated authenticated evidence.sock is absent (no guest fallback)
+
+======================================================================
+FAIL: test_r2_reject_mismatched_binding_or_issuer (__main__.CognitiveRecovery.test_r2_reject_mismatched_binding_or_issuer) (field='adapter_id')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 512, in test_r2_reject_mismatched_binding_or_issuer
+    expect(d.settle(cert), "RejectedBindingOrIssuer")
+           ~~~~~~~~^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 444, in settle
+    return self.call("PresentSettlementCertificate", cert, "evidence")
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 249, in call
+    assert path.exists(), (
+           ~~~~~~~~~~~^^
+AssertionError: R2/R4/R5: dedicated authenticated evidence.sock is absent (no guest fallback)
+
+----------------------------------------------------------------------
+Ran 1 test in 2.529s
+
+FAILED (failures=6)
+
+
+---- test_r8_closed_query_descriptor_validation stdout ----
+
+thread 'test_r8_closed_query_descriptor_validation' (94927236) panicked at tests/cognitive_recovery_contract.rs:30:5:
+test_r8_closed_query_descriptor_validation failed against the physical daemon (exit status: 1):
+
+test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) ... 
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'url': 'http://127.0.0.1:9/admin'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'url': 'http://127.0.0.1:9/admin'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'shell': 'touch /tmp/forbidden'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'shell': 'touch /tmp/forbidden'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'sql': 'DELETE FROM payments'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'sql': 'DELETE FROM payments'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'target_scope': 'foreign-scope'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'target_scope': 'foreign-scope'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 'not-an-integer', 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 'not-an-integer', 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 999, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 999, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'wrong', 'adapter_id': 'c04:generic'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'wrong', 'adapter_id': 'c04:generic'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'unregistered'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'unregistered'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation'}) ... FAIL
+  test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation'}) ... FAIL
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'url': 'http://127.0.0.1:9/admin'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 635, in test_r8_closed_query_descriptor_validation
+    expect(response, "RejectedPrecondition")
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 77, in expect
+    assert kind(response) == expected, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: expected RejectedPrecondition, actual wire response: {'request_id': 'contract', 'status': 'Ok', 'outcome': {'type': 'InteractionRequested'}}
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'url': 'http://127.0.0.1:9/admin'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 636, in test_r8_closed_query_descriptor_validation
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        d.journal(), before, "malformed probe consumed authority/journal"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: [{'Ca[1717 chars]: 2}}, {'InteractionRequested': {'interaction_[137 chars] 2}}] != [{'Ca[1717 chars]: 2}}]
+
+First list contains 1 additional elements.
+First extra element 12:
+{'InteractionRequested': {'interaction_id': 'probe', 'request_digest': 'sha256:5be8e3c11954b1511816c8d97e6d390379ab0f65e7c8ae20bc57eea8fc6a16dc', 'service_id': 'D1', 'turn_id': 2}}
+
+Diff is 2636 characters long. Set self.maxDiff to None to see it. : malformed probe consumed authority/journal
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'shell': 'touch /tmp/forbidden'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 635, in test_r8_closed_query_descriptor_validation
+    expect(response, "RejectedPrecondition")
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 77, in expect
+    assert kind(response) == expected, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: expected RejectedPrecondition, actual wire response: {'request_id': 'contract', 'status': 'Ok', 'outcome': {'type': 'InteractionRequested'}}
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'shell': 'touch /tmp/forbidden'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 636, in test_r8_closed_query_descriptor_validation
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        d.journal(), before, "malformed probe consumed authority/journal"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: [{'Ca[1717 chars]: 2}}, {'InteractionRequested': {'interaction_[137 chars] 2}}] != [{'Ca[1717 chars]: 2}}]
+
+First list contains 1 additional elements.
+First extra element 12:
+{'InteractionRequested': {'interaction_id': 'probe', 'request_digest': 'sha256:b9aed055cd1f9c27e72cb2c0de5c777c0c81f9a6e2fcbfd3491aa608ae43ae5f', 'service_id': 'D1', 'turn_id': 2}}
+
+Diff is 2636 characters long. Set self.maxDiff to None to see it. : malformed probe consumed authority/journal
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'sql': 'DELETE FROM payments'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 635, in test_r8_closed_query_descriptor_validation
+    expect(response, "RejectedPrecondition")
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 77, in expect
+    assert kind(response) == expected, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: expected RejectedPrecondition, actual wire response: {'request_id': 'contract', 'status': 'Ok', 'outcome': {'type': 'InteractionRequested'}}
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'sql': 'DELETE FROM payments'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 636, in test_r8_closed_query_descriptor_validation
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        d.journal(), before, "malformed probe consumed authority/journal"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: [{'Ca[1717 chars]: 2}}, {'InteractionRequested': {'interaction_[137 chars] 2}}] != [{'Ca[1717 chars]: 2}}]
+
+First list contains 1 additional elements.
+First extra element 12:
+{'InteractionRequested': {'interaction_id': 'probe', 'request_digest': 'sha256:c91919d345a8fc0a5ba78ef8105d7536dd61dbd85906c4262e07a928e592f37c', 'service_id': 'D1', 'turn_id': 2}}
+
+Diff is 2636 characters long. Set self.maxDiff to None to see it. : malformed probe consumed authority/journal
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'target_scope': 'foreign-scope'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 635, in test_r8_closed_query_descriptor_validation
+    expect(response, "RejectedPrecondition")
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 77, in expect
+    assert kind(response) == expected, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: expected RejectedPrecondition, actual wire response: {'request_id': 'contract', 'status': 'Ok', 'outcome': {'type': 'InteractionRequested'}}
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic', 'target_scope': 'foreign-scope'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 636, in test_r8_closed_query_descriptor_validation
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        d.journal(), before, "malformed probe consumed authority/journal"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: [{'Ca[1717 chars]: 2}}, {'InteractionRequested': {'interaction_[137 chars] 2}}] != [{'Ca[1717 chars]: 2}}]
+
+First list contains 1 additional elements.
+First extra element 12:
+{'InteractionRequested': {'interaction_id': 'probe', 'request_digest': 'sha256:6e4aa55047268359f7b1346b011d0ea91bd7f4712c7ba28e9c505cbef94796e6', 'service_id': 'D1', 'turn_id': 2}}
+
+Diff is 2636 characters long. Set self.maxDiff to None to see it. : malformed probe consumed authority/journal
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 'not-an-integer', 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 635, in test_r8_closed_query_descriptor_validation
+    expect(response, "RejectedPrecondition")
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 77, in expect
+    assert kind(response) == expected, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: expected RejectedPrecondition, actual wire response: {'request_id': 'contract', 'status': 'Ok', 'outcome': {'type': 'InteractionRequested'}}
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 'not-an-integer', 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 636, in test_r8_closed_query_descriptor_validation
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        d.journal(), before, "malformed probe consumed authority/journal"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: [{'Ca[1717 chars]: 2}}, {'InteractionRequested': {'interaction_[137 chars] 2}}] != [{'Ca[1717 chars]: 2}}]
+
+First list contains 1 additional elements.
+First extra element 12:
+{'InteractionRequested': {'interaction_id': 'probe', 'request_digest': 'sha256:fbca279b780a1823fa2aa0fa69d1a0ce8d5bb45d0e79a7eec9b5ae7b4a01559f', 'service_id': 'D1', 'turn_id': 2}}
+
+Diff is 2636 characters long. Set self.maxDiff to None to see it. : malformed probe consumed authority/journal
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 999, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 635, in test_r8_closed_query_descriptor_validation
+    expect(response, "RejectedPrecondition")
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 77, in expect
+    assert kind(response) == expected, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: expected RejectedPrecondition, actual wire response: {'request_id': 'contract', 'status': 'Ok', 'outcome': {'type': 'InteractionRequested'}}
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 999, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'c04:generic'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 636, in test_r8_closed_query_descriptor_validation
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        d.journal(), before, "malformed probe consumed authority/journal"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: [{'Ca[1717 chars]: 2}}, {'InteractionRequested': {'interaction_[137 chars] 2}}] != [{'Ca[1717 chars]: 2}}]
+
+First list contains 1 additional elements.
+First extra element 12:
+{'InteractionRequested': {'interaction_id': 'probe', 'request_digest': 'sha256:dd3768d31b02610b55e3241c6a989393a843113dd3d2f58f03d8cb059e71fde9', 'service_id': 'D1', 'turn_id': 2}}
+
+Diff is 2636 characters long. Set self.maxDiff to None to see it. : malformed probe consumed authority/journal
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'wrong', 'adapter_id': 'c04:generic'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 635, in test_r8_closed_query_descriptor_validation
+    expect(response, "RejectedPrecondition")
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 77, in expect
+    assert kind(response) == expected, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: expected RejectedPrecondition, actual wire response: {'request_id': 'contract', 'status': 'Ok', 'outcome': {'type': 'InteractionRequested'}}
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'wrong', 'adapter_id': 'c04:generic'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 636, in test_r8_closed_query_descriptor_validation
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        d.journal(), before, "malformed probe consumed authority/journal"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: [{'Ca[1717 chars]: 2}}, {'InteractionRequested': {'interaction_[137 chars] 2}}] != [{'Ca[1717 chars]: 2}}]
+
+First list contains 1 additional elements.
+First extra element 12:
+{'InteractionRequested': {'interaction_id': 'probe', 'request_digest': 'sha256:2bb57ec52941d7cec3d7b6623b50c75123fcceacab26c00eacd70b3176809dde', 'service_id': 'D1', 'turn_id': 2}}
+
+Diff is 2636 characters long. Set self.maxDiff to None to see it. : malformed probe consumed authority/journal
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'unregistered'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 635, in test_r8_closed_query_descriptor_validation
+    expect(response, "RejectedPrecondition")
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 77, in expect
+    assert kind(response) == expected, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: expected RejectedPrecondition, actual wire response: {'request_id': 'contract', 'status': 'Ok', 'outcome': {'type': 'InteractionRequested'}}
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation', 'attempt_id': 1, 'stable_operation_id': 'recovery-payment-1', 'adapter_id': 'unregistered'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 636, in test_r8_closed_query_descriptor_validation
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        d.journal(), before, "malformed probe consumed authority/journal"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: [{'Ca[1717 chars]: 2}}, {'InteractionRequested': {'interaction_[137 chars] 2}}] != [{'Ca[1717 chars]: 2}}]
+
+First list contains 1 additional elements.
+First extra element 12:
+{'InteractionRequested': {'interaction_id': 'probe', 'request_digest': 'sha256:304c47ac8d5b3495f1da0b621768c364b87eb8465c5558c05e990a42941efdcf', 'service_id': 'D1', 'turn_id': 2}}
+
+Diff is 2636 characters long. Set self.maxDiff to None to see it. : malformed probe consumed authority/journal
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) [error] (descriptor={'type': 'QueryOperation'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 635, in test_r8_closed_query_descriptor_validation
+    expect(response, "RejectedPrecondition")
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 77, in expect
+    assert kind(response) == expected, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: expected RejectedPrecondition, actual wire response: {'request_id': 'contract', 'status': 'Ok', 'outcome': {'type': 'InteractionRequested'}}
+
+======================================================================
+FAIL: test_r8_closed_query_descriptor_validation (__main__.CognitiveRecovery.test_r8_closed_query_descriptor_validation) (descriptor={'type': 'QueryOperation'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/kernel/../tests/test_cognitive_recovery_castord.py", line 636, in test_r8_closed_query_descriptor_validation
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        d.journal(), before, "malformed probe consumed authority/journal"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: [{'Ca[1717 chars]: 2}}, {'InteractionRequested': {'interaction_[137 chars] 2}}] != [{'Ca[1717 chars]: 2}}]
+
+First list contains 1 additional elements.
+First extra element 12:
+{'InteractionRequested': {'interaction_id': 'probe', 'request_digest': 'sha256:c518b6b4e26ce088dea40563951dda8cc558e2e1ded2a6d99a89edd3b8c85e9f', 'service_id': 'D1', 'turn_id': 2}}
+
+Diff is 2636 characters long. Set self.maxDiff to None to see it. : malformed probe consumed authority/journal
+
+----------------------------------------------------------------------
+Ran 1 test in 2.887s
+
+FAILED (failures=18)
+
+
+
+failures:
+    test_r10_budget_survives_restart_escalation_requires_hitl
+    test_r11_reconstructed_partial_settlement_dispute_and_alias_lock
+    test_r12_closed_turn_drops_late_probe_requires_fresh_lease
+    test_r1_guest_certificate_denied_without_journal_mutation
+    test_r2_reject_mismatched_binding_or_issuer
+    test_r3_not_found_preserves_ambiguity_then_late_dispatch
+    test_r4_duplicate_confirmed_ack_no_append_no_rearm
+    test_r5_atomic_cancel_tombstone_rejects_delayed_arrivals
+    test_r6_next_turn_probe_allowed_mutation_locked
+    test_r7_revoked_capability_after_snapshot_rejected
+    test_r8_closed_query_descriptor_validation
+    test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync
+
+test result: FAILED. 0 passed; 12 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.97s
+
+error: test failed, to rerun pass `--test cognitive_recovery_contract`
