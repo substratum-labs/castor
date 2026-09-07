@@ -6,8 +6,8 @@ use castor_kernel::c06_composition::{
     CommitTurnRequest, ConsumeInteractionRequest, D1GovernedTurnAuthority,
     DeliverArmedAttemptRequest, DisputeResolution, GovernedTurnOutcome, GrantCapabilityRequest,
     InteractionOutcomeReport, PresentAdmissionCertificateRequest,
-    PresentSettlementCertificateRequest, RecordDispatchAttemptRequest, RequestInteractionRequest,
-    ResolveQuarantinedDisputeRequest,
+    PresentSettlementCertificateRequest, QueryOperation, RecordDispatchAttemptRequest,
+    RequestInteractionRequest, ResolveQuarantinedDisputeRequest,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -128,7 +128,7 @@ fn admit() -> AdmitTurnRequest {
 }
 fn request_interaction() -> RequestInteractionRequest {
     RequestInteractionRequest {
-        query_operation: false,
+        query_operation: None,
         interaction_id: "interaction-1".into(),
         lease_epoch: 0,
         request_digest: digest(b"interaction request"),
@@ -161,7 +161,7 @@ fn commit() -> CommitTurnRequest {
 }
 fn action(action_id: &str) -> ActionRegistrationRequest {
     ActionRegistrationRequest {
-        stable_operation_id: None,
+        stable_operation_id: Some("dispatch-1".into()),
         action_id: action_id.into(),
         agent_id: "agent-1".into(),
         action_family: "c04:generic".into(),
@@ -1033,7 +1033,11 @@ fn test_c2_probe_budget_survives_snapshot_tail_and_exhaustion() {
     ));
     for index in 0..3 {
         let mut request = request_interaction();
-        request.query_operation = true;
+        request.query_operation = Some(QueryOperation {
+            attempt_id: 1,
+            stable_operation_id: "dispatch-1".into(),
+            adapter_id: "c04:generic".into(),
+        });
         request.interaction_id = format!("probe-{index}");
         request.lease_epoch = index;
         assert_eq!(
@@ -1044,10 +1048,21 @@ fn test_c2_probe_budget_survives_snapshot_tail_and_exhaustion() {
             f.authority.projection_summary()["recovery"]["probe_budget_remaining"],
             2 - index
         );
+        if index == 2 {
+            assert_eq!(
+                f.authority.projection_summary()["recovery"]["phase"],
+                "Escalated",
+                "consuming the final durable probe must escalate even if no result arrives"
+            );
+        }
         let before = f.authority.inspect_journal();
         assert_eq!(
             f.authority.request_interaction(request),
-            GovernedTurnOutcome::RejectedStaleAuthority
+            if index == 2 {
+                GovernedTurnOutcome::RejectedCurrentState
+            } else {
+                GovernedTurnOutcome::RejectedStaleAuthority
+            }
         );
         assert_eq!(f.authority.inspect_journal(), before);
         let mut report = report_interaction();
@@ -1073,6 +1088,10 @@ fn test_c2_probe_budget_survives_snapshot_tail_and_exhaustion() {
         f.authority.projection_summary()["recovery"]["probe_budget_remaining"],
         0
     );
+    assert_eq!(
+        f.authority.projection_summary()["recovery"]["phase"],
+        "Escalated"
+    );
     let mut fresh_lease = consume();
     fresh_lease.interaction_id = "probe-2".into();
     fresh_lease.lease_epoch = 4;
@@ -1082,7 +1101,11 @@ fn test_c2_probe_budget_survives_snapshot_tail_and_exhaustion() {
     );
     let before = f.authority.inspect_journal();
     let mut request = request_interaction();
-    request.query_operation = true;
+    request.query_operation = Some(QueryOperation {
+        attempt_id: 1,
+        stable_operation_id: "dispatch-1".into(),
+        adapter_id: "c04:generic".into(),
+    });
     request.lease_epoch = 4;
     assert_eq!(
         f.authority.request_interaction(request),

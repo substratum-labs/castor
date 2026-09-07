@@ -11,6 +11,7 @@ use castor_kernel::sandbox::{
     build_castor_untrusted_agent_config, RocheProcessSupervisor, RocheSandboxRunner,
     DEFAULT_SANDBOX_IMAGE,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::env;
 use std::fs;
@@ -49,6 +50,16 @@ enum SocketChannel {
     Agent,
     Control,
     Evidence,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QueryOperationDescriptor {
+    #[serde(rename = "type")]
+    descriptor_type: String,
+    attempt_id: u64,
+    stable_operation_id: String,
+    adapter_id: String,
 }
 
 enum SupervisedChild {
@@ -230,7 +241,7 @@ fn outcome_value(outcome: GovernedTurnOutcome) -> Value {
             json!({"type":"RejectedStaleGeneration","current_generation":current_generation})
         }
         other => json!({"type": match other {
-            GovernedTurnOutcome::EntryPersisted => "EntryPersisted", GovernedTurnOutcome::InteractionRequested => "InteractionRequested", GovernedTurnOutcome::InteractionBound => "InteractionBound", GovernedTurnOutcome::InteractionConsumed => "InteractionConsumed", GovernedTurnOutcome::TurnCommitted => "TurnCommitted", GovernedTurnOutcome::ActionRegistered => "ActionRegistered", GovernedTurnOutcome::DispatchRecorded => "DispatchRecorded", GovernedTurnOutcome::Delivered => "Delivered", GovernedTurnOutcome::DuplicateDelivery => "DuplicateDelivery", GovernedTurnOutcome::QuarantinedDispute => "QuarantinedDispute", GovernedTurnOutcome::CapabilityGranted => "CapabilityGranted", GovernedTurnOutcome::CapabilityRevoked => "CapabilityRevoked", GovernedTurnOutcome::Reconstructed => "Reconstructed", GovernedTurnOutcome::Ambiguous => "Ambiguous", GovernedTurnOutcome::RejectedStaleAuthority => "RejectedStaleAuthority", GovernedTurnOutcome::RejectedCapabilityRevoked => "RejectedCapabilityRevoked", GovernedTurnOutcome::RejectedBindingOrIssuer => "RejectedBindingOrIssuer", GovernedTurnOutcome::RejectedInvalidProofClass => "RejectedInvalidProofClass", GovernedTurnOutcome::RejectedLateOrClosedTurn => "RejectedLateOrClosedTurn", GovernedTurnOutcome::RejectedCurrentState => "RejectedCurrentState", GovernedTurnOutcome::RejectedNotFound => "RejectedNotFound", GovernedTurnOutcome::RejectedPrecondition => "RejectedPrecondition", GovernedTurnOutcome::IntegrityOrProtocolFault => "IntegrityOrProtocolFault", GovernedTurnOutcome::UnavailableBeforeAck => "UnavailableBeforeAck", _ => unreachable!() }}),
+            GovernedTurnOutcome::EntryPersisted => "EntryPersisted", GovernedTurnOutcome::InteractionRequested => "InteractionRequested", GovernedTurnOutcome::InteractionBound => "InteractionBound", GovernedTurnOutcome::InteractionConsumed => "InteractionConsumed", GovernedTurnOutcome::TurnCommitted => "TurnCommitted", GovernedTurnOutcome::ActionRegistered => "ActionRegistered", GovernedTurnOutcome::DispatchRecorded => "DispatchRecorded", GovernedTurnOutcome::Delivered => "Delivered", GovernedTurnOutcome::DuplicateDelivery => "DuplicateDelivery", GovernedTurnOutcome::QuarantinedDispute => "QuarantinedDispute", GovernedTurnOutcome::CapabilityGranted => "CapabilityGranted", GovernedTurnOutcome::CapabilityRevoked => "CapabilityRevoked", GovernedTurnOutcome::DecisionSubmitted => "DecisionSubmitted", GovernedTurnOutcome::Reconstructed => "Reconstructed", GovernedTurnOutcome::Ambiguous => "Ambiguous", GovernedTurnOutcome::RejectedStaleAuthority => "RejectedStaleAuthority", GovernedTurnOutcome::RejectedCapabilityRevoked => "RejectedCapabilityRevoked", GovernedTurnOutcome::RejectedBindingOrIssuer => "RejectedBindingOrIssuer", GovernedTurnOutcome::RejectedInvalidProofClass => "RejectedInvalidProofClass", GovernedTurnOutcome::RejectedLateOrClosedTurn => "RejectedLateOrClosedTurn", GovernedTurnOutcome::RejectedCurrentState => "RejectedCurrentState", GovernedTurnOutcome::RejectedNotFound => "RejectedNotFound", GovernedTurnOutcome::RejectedPrecondition => "RejectedPrecondition", GovernedTurnOutcome::IntegrityOrProtocolFault => "IntegrityOrProtocolFault", GovernedTurnOutcome::UnavailableBeforeAck => "UnavailableBeforeAck", _ => unreachable!() }}),
     }
 }
 fn ensure_value(outcome: EnsureRegionOutcome) -> Value {
@@ -272,6 +283,7 @@ fn dispatch(
             | "PersistFence"
             | "GetProjectionSummary"
             | "InspectJournal"
+            | "SubmitDecision"
     );
     if (channel == SocketChannel::Agent && !agent_allowed && !test_opcode_allowed)
         || (channel == SocketChannel::Control && !control_allowed)
@@ -304,16 +316,32 @@ fn dispatch(
             base_projection_digest: string(p, "base_projection_digest")?,
             cap_id: p.get("cap_id").and_then(Value::as_str).map(str::to_owned),
         }),
-        "RequestInteraction" => authority.request_interaction(RequestInteractionRequest {
-            query_operation: p
-                .get("descriptor")
-                .and_then(|d| d.get("type"))
-                .and_then(Value::as_str)
-                == Some("QueryOperation"),
-            interaction_id: string(p, "interaction_id")?,
-            lease_epoch: number(p, "lease_epoch")?,
-            request_digest: string(p, "request_digest")?,
-        }),
+        "RequestInteraction" => {
+            let query_operation = match p.get("descriptor") {
+                None => None,
+                Some(descriptor) => {
+                    let Ok(descriptor) =
+                        serde_json::from_value::<QueryOperationDescriptor>(descriptor.clone())
+                    else {
+                        return Ok(outcome_value(GovernedTurnOutcome::RejectedPrecondition));
+                    };
+                    if descriptor.descriptor_type != "QueryOperation" {
+                        return Ok(outcome_value(GovernedTurnOutcome::RejectedPrecondition));
+                    }
+                    Some(QueryOperation {
+                        attempt_id: descriptor.attempt_id,
+                        stable_operation_id: descriptor.stable_operation_id,
+                        adapter_id: descriptor.adapter_id,
+                    })
+                }
+            };
+            authority.request_interaction(RequestInteractionRequest {
+                query_operation,
+                interaction_id: string(p, "interaction_id")?,
+                lease_epoch: number(p, "lease_epoch")?,
+                request_digest: string(p, "request_digest")?,
+            })
+        }
         "ReportOutcome" | "ReportInteractionOutcome" => {
             authority.report_outcome(InteractionOutcomeReport {
                 interaction_id: string(p, "interaction_id")?,
@@ -417,6 +445,11 @@ fn dispatch(
                 resolution: string(p, "resolution")?,
             })
         }
+        "SubmitDecision" => authority.submit_decision(SubmitDecisionRequest {
+            attempt_id: number(p, "attempt_id")?,
+            decision: string(p, "decision")?,
+            operator_id: string(p, "operator_id")?,
+        }),
         "PersistFence" => authority.persist_fence(number(p, "generation")?),
         "RevokeCapability" => match channel {
             SocketChannel::Agent => authority.revoke_capability_with_authorization(

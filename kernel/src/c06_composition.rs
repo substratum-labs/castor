@@ -37,6 +37,7 @@ pub enum GovernedTurnOutcome {
     },
     CapabilityGranted,
     CapabilityRevoked,
+    DecisionSubmitted,
     Reconstructed,
     Ambiguous,
     RejectedStaleAuthority,
@@ -151,10 +152,22 @@ pub struct AdmitTurnRequest {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RequestInteractionRequest {
-    pub query_operation: bool,
+    pub query_operation: Option<QueryOperation>,
     pub interaction_id: String,
     pub lease_epoch: u64,
     pub request_digest: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueryOperation {
+    pub attempt_id: u64,
+    pub stable_operation_id: String,
+    pub adapter_id: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubmitDecisionRequest {
+    pub attempt_id: u64,
+    pub decision: String,
+    pub operator_id: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InteractionOutcomeReport {
@@ -231,6 +244,8 @@ struct Turn {
     status: TurnStatus,
     requested: HashSet<String>,
     interactions: HashMap<String, String>,
+    #[serde(default)]
+    query_operations: HashSet<String>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum AttemptStatus {
@@ -272,6 +287,8 @@ struct D1ProjectionSnapshot {
     action_scopes: HashMap<String, String>,
     action_operation_ids: HashMap<String, String>,
     probe_budget_remaining: u64,
+    #[serde(default)]
+    recovery_escalated: bool,
     capabilities: HashMap<String, CapabilityGrant>,
     capability_generations: HashMap<String, u64>,
     action_capabilities: HashMap<String, String>,
@@ -299,6 +316,7 @@ pub struct D1GovernedTurnAuthority {
     action_scopes: HashMap<String, String>,
     action_operation_ids: HashMap<String, String>,
     probe_budget_remaining: u64,
+    recovery_escalated: bool,
     capabilities: HashMap<String, CapabilityGrant>,
     capability_generations: HashMap<String, u64>,
     action_capabilities: HashMap<String, String>,
@@ -408,6 +426,7 @@ impl D1GovernedTurnAuthority {
             action_scopes: HashMap::new(),
             action_operation_ids: HashMap::new(),
             probe_budget_remaining: 3,
+            recovery_escalated: false,
             capabilities: HashMap::new(),
             capability_generations: HashMap::new(),
             action_capabilities: HashMap::new(),
@@ -447,6 +466,7 @@ impl D1GovernedTurnAuthority {
             && self.action_scopes == other.action_scopes
             && self.action_operation_ids == other.action_operation_ids
             && self.probe_budget_remaining == other.probe_budget_remaining
+            && self.recovery_escalated == other.recovery_escalated
             && self.capabilities == other.capabilities
             && self.capability_generations == other.capability_generations
             && self.action_capabilities == other.action_capabilities
@@ -462,7 +482,10 @@ impl D1GovernedTurnAuthority {
             .map(|attempt| attempt.target_scope.as_str())
             .collect();
         json!({
-            "recovery": { "probe_budget_remaining": self.probe_budget_remaining },
+            "recovery": {
+                "phase": self.recovery_phase(),
+                "probe_budget_remaining": self.probe_budget_remaining,
+            },
             "generation": self.generation,
             "active_capabilities": self.capabilities.keys()
                 .filter(|capability_id| !self.revoked_capabilities.contains(*capability_id))
@@ -500,6 +523,7 @@ impl D1GovernedTurnAuthority {
             action_scopes: self.action_scopes.clone(),
             action_operation_ids: self.action_operation_ids.clone(),
             probe_budget_remaining: self.probe_budget_remaining,
+            recovery_escalated: self.recovery_escalated,
             capabilities: self.capabilities.clone(),
             capability_generations: self.capability_generations.clone(),
             action_capabilities: self.action_capabilities.clone(),
@@ -589,6 +613,7 @@ impl D1GovernedTurnAuthority {
                 | CoreEntry::QuarantinedDisputeResolved { .. }
                 | CoreEntry::AdapterReservation { .. }
                 | CoreEntry::AdapterSubmissionRecorded { .. }
+                | CoreEntry::RecoveryDecision { .. }
         );
         // Effect transitions may outlive their originating Turn. Bind their
         // storage CAS to the current tuple, including a surrendered lease.
@@ -636,6 +661,42 @@ impl D1GovernedTurnAuthority {
         self.storage()
             .read_region(id)
             .is_some_and(|bytes| format!("sha256:{:x}", Sha256::digest(bytes)) == digest)
+    }
+    fn query_operation_matches(&self, query: &QueryOperation) -> bool {
+        let Some(attempt) = self.attempts.get(&query.attempt_id) else {
+            return false;
+        };
+        if attempt_is_terminal(attempt.status) || query.stable_operation_id.is_empty() {
+            return false;
+        }
+        let stable_id_matches = self
+            .action_operation_ids
+            .get(&attempt.action_id)
+            .or(attempt.dispatch_identity.as_ref())
+            == Some(&query.stable_operation_id);
+        let adapter_matches = self
+            .action_capabilities
+            .get(&attempt.action_id)
+            .and_then(|cap_id| self.capabilities.get(cap_id))
+            .is_some_and(|capability| capability.object_ref == query.adapter_id);
+        stable_id_matches && adapter_matches
+    }
+    fn recovery_phase(&self) -> &'static str {
+        if self.recovery_escalated {
+            "Escalated"
+        } else if self
+            .attempts
+            .values()
+            .all(|attempt| attempt_is_terminal(attempt.status))
+        {
+            "Idle"
+        } else if self.turn.as_ref().is_some_and(|turn| {
+            turn.status == TurnStatus::AwaitingInteraction && !turn.query_operations.is_empty()
+        }) {
+            "Probing"
+        } else {
+            "NeedsEvidence"
+        }
     }
     fn scope_locked(&self, scope: &str) -> bool {
         self.attempts.values().any(|attempt| {
@@ -770,6 +831,7 @@ impl D1GovernedTurnAuthority {
                             status: TurnStatus::Ready,
                             requested: HashSet::new(),
                             interactions: HashMap::new(),
+                            query_operations: HashSet::new(),
                         });
                     }
                 }
@@ -781,12 +843,18 @@ impl D1GovernedTurnAuthority {
                 } => {
                     if service_id == "QueryOperation" {
                         self.probe_budget_remaining = self.probe_budget_remaining.saturating_sub(1);
+                        if self.probe_budget_remaining == 0 {
+                            self.recovery_escalated = true;
+                        }
                     }
                     if let Some(turn) = self.turn.as_mut() {
                         if turn.turn_id == turn_id {
                             turn.active_lease = None;
                             turn.status = TurnStatus::AwaitingInteraction;
-                            turn.requested.insert(interaction_id);
+                            turn.requested.insert(interaction_id.clone());
+                            if service_id == "QueryOperation" {
+                                turn.query_operations.insert(interaction_id);
+                            }
                         }
                     }
                 }
@@ -802,6 +870,12 @@ impl D1GovernedTurnAuthority {
                             turn.status = TurnStatus::Ready;
                         }
                     }
+                }
+                CoreEntry::RecoveryDecision { decision, .. } => {
+                    if decision == "RearmEvidence" {
+                        self.recovery_escalated = false;
+                    }
+                    self.projection_digest = proof_digest;
                 }
                 CoreEntry::TurnCommitted {
                     successor_projection_digest,
@@ -968,6 +1042,7 @@ impl D1GovernedTurnAuthority {
         self.action_scopes.clear();
         self.action_operation_ids.clear();
         self.probe_budget_remaining = 3;
+        self.recovery_escalated = false;
         self.capabilities.clear();
         self.capability_generations.clear();
         self.action_capabilities.clear();
@@ -989,6 +1064,7 @@ impl D1GovernedTurnAuthority {
         self.action_scopes = snapshot.action_scopes;
         self.action_operation_ids = snapshot.action_operation_ids;
         self.probe_budget_remaining = snapshot.probe_budget_remaining;
+        self.recovery_escalated = snapshot.recovery_escalated;
         self.capabilities = snapshot.capabilities;
         self.capability_generations = snapshot.capability_generations;
         self.action_capabilities = snapshot.action_capabilities;
@@ -1105,6 +1181,7 @@ impl D1GovernedTurnAuthority {
             status: TurnStatus::Ready,
             requested: HashSet::new(),
             interactions: HashMap::new(),
+            query_operations: HashSet::new(),
         });
         GovernedTurnOutcome::Admitted {
             unsettled_effects_snapshot,
@@ -1114,14 +1191,24 @@ impl D1GovernedTurnAuthority {
         &mut self,
         request: RequestInteractionRequest,
     ) -> GovernedTurnOutcome {
+        if request.query_operation.is_some() && self.recovery_escalated {
+            return GovernedTurnOutcome::RejectedCurrentState;
+        }
         let Some(turn) = self.turn.as_ref() else {
             return GovernedTurnOutcome::RejectedStaleAuthority;
         };
         if turn.status != TurnStatus::Ready || turn.active_lease != Some(request.lease_epoch) {
             return GovernedTurnOutcome::RejectedStaleAuthority;
         }
-        if request.query_operation && self.probe_budget_remaining == 0 {
+        if request.query_operation.is_some() && self.probe_budget_remaining == 0 {
             return GovernedTurnOutcome::RejectedCurrentState;
+        }
+        if request
+            .query_operation
+            .as_ref()
+            .is_some_and(|query| !self.query_operation_matches(query))
+        {
+            return GovernedTurnOutcome::RejectedPrecondition;
         }
         // A delayed report is identified by interaction_id. Never let a
         // successor Turn reuse that identity and accidentally accept it.
@@ -1133,12 +1220,13 @@ impl D1GovernedTurnAuthority {
             return GovernedTurnOutcome::RejectedPrecondition;
         }
         let (id, base) = (turn.turn_id, self.projection_digest.clone());
+        let interaction_id = request.interaction_id.clone();
         if let Err(outcome) = self.append(
             CoreEntry::InteractionRequested {
                 turn_id: id,
                 interaction_id: request.interaction_id.clone(),
                 request_digest: request.request_digest,
-                service_id: if request.query_operation {
+                service_id: if request.query_operation.is_some() {
                     "QueryOperation"
                 } else {
                     "D1"
@@ -1155,9 +1243,13 @@ impl D1GovernedTurnAuthority {
         let turn = self.turn.as_mut().expect("turn exists");
         turn.active_lease = None;
         turn.status = TurnStatus::AwaitingInteraction;
-        turn.requested.insert(request.interaction_id);
-        if request.query_operation {
+        turn.requested.insert(interaction_id.clone());
+        if request.query_operation.is_some() {
+            turn.query_operations.insert(interaction_id);
             self.probe_budget_remaining -= 1;
+            if self.probe_budget_remaining == 0 {
+                self.recovery_escalated = true;
+            }
         }
         GovernedTurnOutcome::InteractionRequested
     }
@@ -1576,6 +1668,9 @@ impl D1GovernedTurnAuthority {
         &mut self,
         request: PresentSettlementCertificateRequest,
     ) -> GovernedTurnOutcome {
+        if self.recovery_escalated {
+            return GovernedTurnOutcome::RejectedCurrentState;
+        }
         if !self.region_matches(&request.evidence_region_id, &request.evidence_digest) {
             return GovernedTurnOutcome::IntegrityOrProtocolFault;
         }
@@ -1662,6 +1757,34 @@ impl D1GovernedTurnAuthority {
         GovernedTurnOutcome::Settled {
             resolution: request.resolution,
         }
+    }
+
+    pub fn submit_decision(&mut self, request: SubmitDecisionRequest) -> GovernedTurnOutcome {
+        if !self.recovery_escalated
+            || request.decision != "RearmEvidence"
+            || request.operator_id.is_empty()
+            || self
+                .attempts
+                .get(&request.attempt_id)
+                .is_none_or(|attempt| attempt_is_terminal(attempt.status))
+        {
+            return GovernedTurnOutcome::RejectedCurrentState;
+        }
+        if let Err(outcome) = self.append(
+            CoreEntry::RecoveryDecision {
+                attempt_id: request.attempt_id,
+                decision: request.decision,
+                operator_id: request.operator_id,
+            },
+            vec![],
+            None,
+            None,
+            self.projection_digest.clone(),
+        ) {
+            return outcome;
+        }
+        self.recovery_escalated = false;
+        GovernedTurnOutcome::DecisionSubmitted
     }
     pub fn persist_fence(&mut self, generation: u64) -> GovernedTurnOutcome {
         if generation <= self.generation {

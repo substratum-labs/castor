@@ -95,7 +95,7 @@ fn ready_to_commit(authority: &mut D1GovernedTurnAuthority) {
     ));
     assert_eq!(
         authority.request_interaction(RequestInteractionRequest {
-            query_operation: false,
+            query_operation: None,
             interaction_id: "interaction-1".into(),
             lease_epoch: 0,
             request_digest: digest(b"request"),

@@ -135,6 +135,11 @@ pub enum CoreEntry {
         request_digest: String,
         service_id: String,
     },
+    RecoveryDecision {
+        attempt_id: u64,
+        decision: String,
+        operator_id: String,
+    },
     InteractionBound {
         turn_id: u64,
         interaction_id: String,
@@ -233,12 +238,13 @@ impl AuthorityState {
     }
 
     /// A restart advances the Core epoch without rewriting old journal
-    /// records.  The only transition allowed to bridge that boundary is a
-    /// fresh lease for the still-open turn; a commit under the old lease is
-    /// deliberately not accepted.
+    /// records. Only a fresh lease or an authenticated control-plane recovery
+    /// decision may bridge that boundary; guest commits remain fenced.
     fn accepts_recovery_lease(&self, request: &AppendConditionalRequest) -> bool {
-        matches!(request.entry, CoreEntry::LeaseGranted { .. })
-            && request.expected_core_epoch == self.core_epoch + 1
+        matches!(
+            request.entry,
+            CoreEntry::LeaseGranted { .. } | CoreEntry::RecoveryDecision { .. }
+        ) && request.expected_core_epoch == self.core_epoch + 1
             && self.agent_generation == request.expected_agent_generation
             && self.turn_id == request.expected_turn_id
             && (request.expected_lease_epoch.is_none()
@@ -288,7 +294,8 @@ impl AuthorityState {
             | CoreEntry::CapabilityGranted { .. }
             | CoreEntry::CapabilityRevoked { .. }
             | CoreEntry::AdapterReservation { .. }
-            | CoreEntry::AdapterSubmissionRecorded { .. } => {
+            | CoreEntry::AdapterSubmissionRecorded { .. }
+            | CoreEntry::RecoveryDecision { .. } => {
                 self.projection_digest = Some(proof.entry_digest.clone());
             }
             CoreEntry::InteractionBound { .. }
@@ -873,6 +880,7 @@ fn entry_kind(entry: &CoreEntry) -> &'static str {
         CoreEntry::AdapterSubmissionRecorded { .. } => "AdapterSubmissionRecorded",
         CoreEntry::FenceRevoked { .. } => "FenceRevoked",
         CoreEntry::InteractionRequested { .. } => "InteractionRequested",
+        CoreEntry::RecoveryDecision { .. } => "RecoveryDecision",
         CoreEntry::InteractionBound { .. } => "InteractionBound",
         CoreEntry::ConflictingInteractionOutcomeAppended { .. } => {
             "ConflictingInteractionOutcomeAppended"
