@@ -230,8 +230,10 @@ class Daemon:
     def kill(self):
         assert self.process is not None and self.process.poll() is None
         self.process.send_signal(signal.SIGKILL)
-        assert self.process.wait(timeout=5) == -signal.SIGKILL
+        status = self.process.wait(timeout=5)
+        assert status == -signal.SIGKILL
         self.process = None
+        return status
 
     def restart(self):
         self.kill()

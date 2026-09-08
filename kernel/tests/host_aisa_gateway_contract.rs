@@ -9,6 +9,7 @@
 use castor_kernel::host::{
     read_framed, GatewayClient, SyscallRequest, SyscallResponse, MAX_FRAME_BYTES,
 };
+use hmac::{Hmac, Mac};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -23,12 +24,18 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 const DIGEST: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+const EVIDENCE_KEY: &[u8] = b"host-contract-evidence-key-32bytes";
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
 
 struct ContractHarness {
     _serial: MutexGuard<'static, ()>,
     root: TempDir,
     socket: PathBuf,
     control_socket: PathBuf,
+    evidence_socket: PathBuf,
     daemon: Mutex<Child>,
 }
 
@@ -53,6 +60,24 @@ impl ContractHarness {
         let root = tempfile::tempdir().expect("temporary host root");
         let socket = root.path().join("castord.sock");
         let control_socket = root.path().join("control.sock");
+        let evidence_socket = root.path().join("evidence.sock");
+        let trust_config = root.path().join("evidence-trust.json");
+        fs::write(
+            &trust_config,
+            serde_json::to_vec(&json!({
+                "issuer": "host-contract-evidence-service",
+                "peer_uid": fs::metadata(root.path()).expect("root metadata").uid(),
+                "adapter_id": "c04:generic",
+                "receipt_algorithm": "HMAC-SHA256",
+                "key_hex": hex_encode(EVIDENCE_KEY),
+                "canonical_scopes": {
+                    "action-1": "scope-1",
+                    "action-2": "scope-1"
+                }
+            }))
+            .expect("serialize evidence trust config"),
+        )
+        .expect("write evidence trust config");
         // The daemon's safe-bind algorithm must remove a stale inode without
         // touching an active listener.
         drop(UnixListener::bind(&socket).expect("create stale socket inode"));
@@ -64,13 +89,18 @@ impl ContractHarness {
             socket.to_str().unwrap(),
             "--control-socket",
             control_socket.to_str().unwrap(),
+            "--evidence-socket",
+            evidence_socket.to_str().unwrap(),
         ]);
+        command.env("CASTORD_EVIDENCE_TRUST_CONFIG", &trust_config);
         if allow_test_opcodes {
             command.arg("--allow-test-opcodes");
         }
         let daemon = command.spawn().expect("launch castord");
         let deadline = Instant::now() + Duration::from_secs(3);
-        while UnixStream::connect(&socket).is_err() || UnixStream::connect(&control_socket).is_err()
+        while UnixStream::connect(&socket).is_err()
+            || UnixStream::connect(&control_socket).is_err()
+            || UnixStream::connect(&evidence_socket).is_err()
         {
             assert!(
                 Instant::now() < deadline,
@@ -86,6 +116,7 @@ impl ContractHarness {
             root,
             socket,
             control_socket,
+            evidence_socket,
             daemon: Mutex::new(daemon),
         }
     }
@@ -99,6 +130,11 @@ impl ContractHarness {
     fn control_client(&self) -> GatewayClient {
         GatewayClient::connect(&self.control_socket)
             .expect("control socket must accept host client")
+    }
+
+    fn evidence_client(&self) -> GatewayClient {
+        GatewayClient::connect(&self.evidence_socket)
+            .expect("evidence socket must accept the configured trusted client")
     }
 
     fn storage_root(&self) -> &std::path::Path {
@@ -239,7 +275,11 @@ fn arm_action(client: &mut GatewayClient, action_id: &str, scope: &str) {
             client,
             "register",
             "RegisterAction",
-            json!({ "action_id": action_id }),
+            json!({
+                "action_id": action_id,
+                "stable_operation_id": if action_id == "action-1" { "dispatch-1" } else { "dispatch-2" },
+                "target_scope": scope
+            }),
         ),
         "ActionRegistered",
     );
@@ -278,23 +318,58 @@ fn scenario_01_end_to_end_governed_turn_over_socket() {
         ),
         "Delivered",
     );
+    let mut receipt = json!({
+        "attempt_id": 1,
+        "stable_operation_id": "dispatch-1",
+        "request_digest": "scope-1",
+        "issuer": "host-contract-evidence-service",
+        "adapter_id": "c04:generic",
+        "settlement_schema_version": 1,
+        "resolution": "Confirmed",
+        "actuator_state": "Committed"
+    });
+    let receipt_bytes = serde_json::to_vec(&receipt).expect("serialize receipt");
+    let mut mac = Hmac::<Sha256>::new_from_slice(EVIDENCE_KEY).expect("HMAC key");
+    mac.update(&receipt_bytes);
+    receipt["signature"] = json!(hex_encode(&mac.finalize().into_bytes()));
+    let evidence_bytes = serde_json::to_vec(&receipt).expect("serialize signed receipt");
+    let evidence_digest = format!("sha256:{:x}", Sha256::digest(&evidence_bytes));
     assert_outcome(
         call(
             &mut client,
+            "ensure-evidence",
+            "EnsureRegion",
+            json!({
+                "region_ref": "region://settlement-receipt",
+                "content_digest": evidence_digest,
+                "content": evidence_bytes,
+                "profile": "D1"
+            }),
+        ),
+        "Success",
+    );
+    let mut settlement = receipt;
+    settlement["dispatch_identity"] = json!("dispatch-1");
+    settlement["evidence_region_id"] = json!("region://settlement-receipt");
+    settlement["evidence_digest"] = json!(evidence_digest);
+    settlement["proof_class"] = json!("ProviderConfirmation");
+    assert_outcome(
+        call(
+            &mut harness.evidence_client(),
             "settle",
             "PresentSettlementCertificate",
-            json!({ "attempt_id": 1, "dispatch_identity": "dispatch-1", "evidence_region_id": "region://observation", "evidence_digest": DIGEST, "proof_class": "ProviderConfirmation", "resolution": "Confirmed" }),
+            settlement,
         ),
         "Settled",
     );
-    assert_attempt_armed(
+    assert_outcome(
         call(
             &mut client,
             "rearm",
             "PresentAdmissionCertificate",
             json!({ "action_id": "action-1", "target_scope": "scope-1", "capability_id": "capability-1", "generation": 1 }),
         ),
-        2,
+        "RejectedCurrentState",
     );
     assert_eq!(harness.provider_submission_count(), 1);
 }

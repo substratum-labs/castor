@@ -6,7 +6,7 @@ using genuine worker carrier and daemon SIGKILL terminations across four seams:
 1. arm (crash after arming, before dispatch)
 2. t1_dispatch_committed (crash after dispatch & physical commit on actuator)
 3. t2_dispatch_late_arrival (crash with packet in-flight, probe not_found, late arrive)
-4. torn-settlement (crash with torn journal tail, startup truncation)
+4. torn_journal_tail for daemon crashes; t1_worker_commit for worker crashes
 
 Verifies independent SQLite actuator ground truth with zero duplicate effects (E = 0)
 and evaluates comparative recovery policies under an objective kernel recovery predicate.
@@ -18,6 +18,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import platform
 import signal
@@ -64,6 +65,23 @@ def compute_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def nearest_rank_percentile(values: list[float], percentile: float) -> float:
+    """Return a nearest-rank percentile without collapsing p95 into max for n=20."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    rank = max(1, math.ceil(percentile * len(ordered)))
+    return ordered[rank - 1]
+
+
+def reported_fault_seam(seam: str, target: str) -> str:
+    if seam == "torn-settlement" and target == "worker_sigkill":
+        return "t1_worker_commit"
+    if seam == "torn-settlement":
+        return "torn_journal_tail"
+    return seam
+
+
 class CognitiveRecoveryMatrixRunner:
     def __init__(self, trials_per_cell: int = 20):
         self.trials = trials_per_cell
@@ -98,7 +116,7 @@ class CognitiveRecoveryMatrixRunner:
         daemon_pid_after = daemon_pid_before
         worker_pid = None
         signal_sent = "SIGKILL"
-        signal_received = -signal.SIGKILL
+        signal_received = None
 
         try:
             # 1. Spawn Carrier Worker Subprocess for Setup & Pre-Crash State
@@ -152,6 +170,7 @@ class CognitiveRecoveryMatrixRunner:
                 os.kill(worker_proc.pid, signal.SIGKILL)
                 ret = worker_proc.wait(timeout=5)
                 assert ret == -signal.SIGKILL, f"Expected -SIGKILL, got {ret}"
+                signal_received = ret
 
                 # Verify daemon PID is completely unchanged
                 assert d.process.pid == daemon_pid_before
@@ -163,7 +182,7 @@ class CognitiveRecoveryMatrixRunner:
                 worker_proc.wait(timeout=5)
 
                 # Real SIGKILL of release castord daemon
-                d.kill()
+                signal_received = d.kill()
                 daemon_pid_before = daemon_pid_before
 
                 if seam == "torn-settlement":
@@ -285,7 +304,8 @@ class CognitiveRecoveryMatrixRunner:
 
             return {
                 "trial_index": trial_index,
-                "seam": seam,
+                "seam": reported_fault_seam(seam, target),
+                "setup_seam": seam,
                 "target": target,
                 "policy": policy,
                 "daemon_pid_before": daemon_pid_before,
@@ -345,7 +365,8 @@ class CognitiveRecoveryMatrixRunner:
 
         for seam in seams:
             for target in targets:
-                cell_key = f"{seam}__{target}"
+                report_seam = reported_fault_seam(seam, target)
+                cell_key = f"{report_seam}__{target}"
                 print(f"\n--- Cell: {cell_key} ({self.trials} trials) ---")
                 cell_records = []
                 for i in range(self.trials):
@@ -379,14 +400,14 @@ class CognitiveRecoveryMatrixRunner:
                             cs["latencies_ms"].append(c_rec["latency_ms"])
 
                 lats = sorted([r["latency_ms"] for r in cell_records])
-                p50 = lats[len(lats) // 2]
-                p95 = lats[int(len(lats) * 0.95)]
+                p50 = nearest_rank_percentile(lats, 0.50)
+                p95 = nearest_rank_percentile(lats, 0.95)
                 p99 = lats[-1]
                 dups = sum(r["duplicate_effects"] for r in cell_records)
                 succ_rate = round(sum(1 for r in cell_records if r["recovered_ok"]) / self.trials * 100, 1)
 
                 results["cells"][cell_key] = {
-                    "seam": seam,
+                    "seam": report_seam,
                     "target": target,
                     "trials": self.trials,
                     "duplicate_effects": dups,
@@ -400,8 +421,8 @@ class CognitiveRecoveryMatrixRunner:
         # Aggregate summaries
         for pol, s in results["policy_summary"].items():
             lats = sorted(s["latencies_ms"]) if s["latencies_ms"] else [0.0]
-            s["latency_p50_ms"] = lats[len(lats) // 2]
-            s["latency_p95_ms"] = lats[int(len(lats) * 0.95)]
+            s["latency_p50_ms"] = nearest_rank_percentile(lats, 0.50)
+            s["latency_p95_ms"] = nearest_rank_percentile(lats, 0.95)
             s["recovery_success_pct"] = round(s["successful_recoveries"] / max(s["total_trials"], 1) * 100, 1)
             s["avg_probes_per_trial"] = round(s["total_probe_queries"] / max(s["total_trials"], 1), 2)
             s["hitl_intervention_pct"] = round(s["total_operator_interventions"] / max(s["total_trials"], 1) * 100, 1)
@@ -430,6 +451,7 @@ class CognitiveRecoveryMatrixRunner:
             f"- **Target Binary**: `{meta['castord_binary']}`",
             f"- **Binary SHA-256**: `{meta['castord_sha256']}`",
             f"- **Trials per Cell**: `{meta['trials_per_cell']}`",
+            "- **Total Trials**: `280` (`160` adaptive + `120` comparative)",
             "",
             "## 1. Fault-Injection Cell Matrix (Adaptive Cognitive Recovery)",
             "",
@@ -447,7 +469,7 @@ class CognitiveRecoveryMatrixRunner:
                 "",
                 "## 2. Comparative Policy Evaluation",
                 "",
-                "| Recovery Policy | Total Trials | Duplicate Effects | Success Rate | Avg Probes / Trial | HITL Escalation Rate | Latency p50 (ms) |",
+                "| Recovery Policy | Total Trials | Duplicate Effects | Success Rate | Avg Probes / Trial | HITL Request Proxy Rate | Latency p50 (ms) |",
                 "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |",
             ]
         )
@@ -462,10 +484,13 @@ class CognitiveRecoveryMatrixRunner:
                 "",
                 "## 3. Ground Truth Verification Invariants",
                 "",
-                "1. **Zero Duplicate Effects ($E = 0$)**: Across all 160 physical fault injection trials (4 seams $\times$ 2 crash targets $\times$ 20 trials), Castor's adaptive cognitive recovery produced exactly 0 duplicate commits on the external SQLite actuator.",
+                "1. **Zero Duplicate Effects ($E = 0$)**: Across all 160 physical fault injection trials (4 seams $\\times$ 2 crash targets $\\times$ 20 trials), Castor's adaptive cognitive recovery produced exactly 0 duplicate commits on the external SQLite actuator.",
                 "2. **Physical Subprocess Termination**: Every trial verified real OS signal delivery: carrier processes received `SIGKILL` with asserted `-SIGKILL` exit status while daemon remained alive, or release daemon received `SIGKILL` and was restarted with a distinct PID.",
                 "3. **Physical Commit Persistence (T1 & T2)**: In `t1_dispatch_committed`, actuator committed to SQLite before crash; recovery verified `Committed` status and settled without secondary execution. In `t2_dispatch_late_arrival`, ambiguity was preserved while write-locked until delayed arrival committed.",
                 "4. **Unified Objective Predicate**: Recovery was verified via an objective kernel predicate (`locked_scopes == 0` in Core projection and actuator `commits == 1`), eliminating author-selected booleans.",
+                "5. **Cell Semantics**: `torn_journal_tail` is the daemon-crash cell that injects and truncates an incomplete journal frame. `t1_worker_commit` kills the carrier after an actuator commit while the daemon remains live; it is a T1 recovery cell and does not claim torn-tail coverage.",
+                "6. **HITL Metric Boundary**: `HITL Request Proxy Rate` counts harness requests for operator attention. `direct_escalation` does not drive the kernel into `Escalated`; the control-only `SubmitDecision` boundary is verified separately by R10.",
+                "7. **Recovery Driver Boundary**: The parent matrix runner performs the recovery decisions. It exercises Core-authored snapshots and the evidence channel but does not execute `examples/cognitive_recovery_agent.py` as an independently resumed Ring-3 worker.",
                 "",
             ]
         )
