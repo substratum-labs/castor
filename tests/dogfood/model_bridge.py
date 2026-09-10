@@ -303,21 +303,19 @@ def _extract_completion(
             continue
         text = item.get("text")
         if not isinstance(text, str):
-            raise ModelBridgeError("structured agent message is missing text")
+            continue
         try:
             completion = json.loads(text)
-        except json.JSONDecodeError as error:
-            raise ModelBridgeError(
-                "final structured model message is malformed JSON"
-            ) from error
+        except json.JSONDecodeError:
+            continue
         if not isinstance(completion, dict):
-            raise ModelBridgeError("final structured model message must be an object")
+            continue
         messages.append((completion, text.encode("utf-8")))
-    if len(messages) != 1:
+    if not messages:
         raise ModelBridgeError(
-            "Codex JSONL must contain exactly one structured agent message"
+            "Codex JSONL must contain at least one structured agent message"
         )
-    return messages[0]
+    return messages[-1]
 
 
 def _extract_usage(records: list[dict[str, object]]) -> tuple[int, int, int]:
