@@ -81,9 +81,12 @@ PreflightRunner = Callable[..., subprocess.CompletedProcess[str]]
 def project_provider_schema(canonical_schema: Path, provider: str = "openai") -> Path:
     """Project a canonical Draft 2020-12 schema to a provider-compatible dialect."""
     if provider == "openai":
-        candidate = canonical_schema.with_name(
-            f"{canonical_schema.stem}_openai.schema.json"
-        )
+        prefix = canonical_schema.name
+        for suffix in (".schema.json", ".json"):
+            if prefix.endswith(suffix):
+                prefix = prefix[: -len(suffix)]
+                break
+        candidate = canonical_schema.with_name(f"{prefix}_openai.schema.json")
         if candidate.is_file():
             return candidate
     return canonical_schema
