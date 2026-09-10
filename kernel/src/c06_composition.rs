@@ -910,15 +910,17 @@ impl D1GovernedTurnAuthority {
                         let region = request.region_refs.get(1).cloned().unwrap_or_default();
                         let unique_manifest: HashSet<_> = action_manifest.iter().cloned().collect();
                         let unique_bindings: HashMap<_, _> = action_bindings
-                            .into_iter()
+                            .iter()
+                            .cloned()
                             .map(|binding| (binding.action_id.clone(), binding))
                             .collect();
                         let bindings_valid = !unique_bindings.is_empty()
                             && unique_manifest.len() == action_manifest.len()
+                            && unique_bindings.len() == action_bindings.len()
                             && unique_bindings.len() == action_manifest.len()
                             && unique_manifest.iter().all(|action_id| {
                                 unique_bindings.get(action_id).is_some_and(|binding| {
-                                    !binding.actuator_id.is_empty()
+                                    !binding.actuator_id.trim().is_empty()
                                         && self.region_matches(
                                             &binding.payload_region_ref,
                                             &binding.payload_digest,
@@ -927,7 +929,7 @@ impl D1GovernedTurnAuthority {
                             });
                         for action in action_manifest {
                             self.registered_actions.insert(action.clone());
-                            let committed = if bindings_valid {
+                            let candidate = if bindings_valid {
                                 CommittedAction::Bound(
                                     unique_bindings
                                         .get(&action)
@@ -939,6 +941,18 @@ impl D1GovernedTurnAuthority {
                                     manifest_region_ref: region.clone(),
                                     manifest_digest: digest.clone(),
                                 }
+                            };
+                            let committed = if self
+                                .committed_actions
+                                .get(&action)
+                                .is_some_and(|existing| existing != &candidate)
+                            {
+                                CommittedAction::LegacyUnbound {
+                                    manifest_region_ref: region.clone(),
+                                    manifest_digest: digest.clone(),
+                                }
+                            } else {
+                                candidate
                             };
                             self.committed_actions.insert(action, committed);
                         }
@@ -1426,7 +1440,7 @@ impl D1GovernedTurnAuthority {
             if binding.action_id.is_empty()
                 || binding.payload_region_ref.is_empty()
                 || binding.payload_digest.is_empty()
-                || binding.actuator_id.is_empty()
+                || binding.actuator_id.trim().is_empty()
                 || !manifest_ids.contains(&binding.action_id)
                 || bindings_by_id
                     .insert(binding.action_id.clone(), binding.clone())
@@ -1451,8 +1465,9 @@ impl D1GovernedTurnAuthority {
         let id = turn.turn_id;
         let manifest_region = request.action_manifest_region_id.clone();
         let mut region_refs = vec![request.successor_region_id.clone(), manifest_region];
+        let mut seen_region_refs: HashSet<_> = region_refs.iter().cloned().collect();
         for binding in &request.action_bindings {
-            if !region_refs.contains(&binding.payload_region_ref) {
+            if seen_region_refs.insert(binding.payload_region_ref.clone()) {
                 region_refs.push(binding.payload_region_ref.clone());
             }
         }
@@ -1497,7 +1512,7 @@ impl D1GovernedTurnAuthority {
             Some(CommittedAction::Bound(binding))
                 if binding.actuator_id == request.action_family =>
             {
-                // The immutable binding, rather than caller input, selects the actuator.
+                // Caller input must match; the immutable binding remains authoritative.
             }
             _ => return GovernedTurnOutcome::RejectedPrecondition,
         }

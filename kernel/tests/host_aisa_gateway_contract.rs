@@ -813,6 +813,34 @@ fn scenario_16_framing_bounds_fail_closed() {
 }
 
 #[test]
+fn malformed_action_binding_is_rejected_at_gateway_boundary() {
+    let harness = ContractHarness::new();
+    let response = call(
+        &mut harness.client(),
+        "malformed-action-binding",
+        "CommitTurn",
+        json!({
+            "lease_epoch": 1,
+            "base_projection_digest": DIGEST,
+            "successor_region_id": "region://successor",
+            "successor_digest": DIGEST,
+            "action_manifest_region_id": "region://manifest",
+            "action_manifest_digest": DIGEST,
+            "action_manifest": ["action-1"],
+            "action_bindings": [{
+                "action_id": "action-1",
+                "payload_region_ref": "region://payload/action-1",
+                "payload_digest": DIGEST
+            }]
+        }),
+    );
+    assert_eq!(response.status, "Error");
+    let error = response.error.expect("malformed binding error");
+    assert_eq!(error.code, "MalformedRequest");
+    assert!(error.message.contains("invalid action_bindings"));
+}
+
+#[test]
 fn scenario_17_lost_ack_after_commit_does_not_mint_a_second_turn() {
     let harness = ContractHarness::new();
     let mut first_client = harness.client();
