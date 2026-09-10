@@ -1,0 +1,10 @@
+{
+  "timestamp": "2026-09-10T00:00:00Z",
+  "source_url": "https://openai.com/api/pricing/",
+  "model": "gpt-5.6-sol",
+  "currency": "USD",
+  "uncached_input_usd_per_million": "1.00",
+  "cached_input_usd_per_million": "0.10",
+  "output_usd_per_million": "8.00",
+  "output_tokens_include_reasoning": true
+}
