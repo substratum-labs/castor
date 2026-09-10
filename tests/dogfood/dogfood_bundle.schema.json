@@ -1,0 +1,462 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://substratum.dev/castor/dogfood_bundle.schema.json",
+  "title": "Castor governed dogfood evidence bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "runner_version",
+    "provenance",
+    "model_run",
+    "raw_artifacts",
+    "traces",
+    "predicates",
+    "overall_verdict",
+    "bundle_sha256"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "runner_version": { "type": "string", "minLength": 1 },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "model_run": { "$ref": "#/$defs/model_run" },
+    "raw_artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" },
+      "minItems": 1
+    },
+    "traces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["N1", "C1", "C2", "C3", "D1", "H1"],
+      "properties": {
+        "N1": {
+          "allOf": [
+            { "$ref": "#/$defs/trace" },
+            {
+              "properties": {
+                "trace_id": { "const": "N1" },
+                "fault_proof": {
+                  "properties": { "fault_hook": { "type": "null" } }
+                }
+              }
+            }
+          ]
+        },
+        "C1": {
+          "allOf": [
+            { "$ref": "#/$defs/trace" },
+            {
+              "properties": {
+                "trace_id": { "const": "C1" },
+                "fault_proof": {
+                  "properties": { "fault_hook": { "const": "before_delivery_append" } }
+                }
+              }
+            }
+          ]
+        },
+        "C2": {
+          "allOf": [
+            { "$ref": "#/$defs/trace" },
+            {
+              "properties": {
+                "trace_id": { "const": "C2" },
+                "fault_proof": {
+                  "properties": {
+                    "fault_hook": { "const": "after_delivery_fsync_before_response" }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "C3": {
+          "allOf": [
+            { "$ref": "#/$defs/trace" },
+            {
+              "properties": {
+                "trace_id": { "const": "C3" },
+                "fault_proof": {
+                  "properties": { "fault_hook": { "const": "after_file_replace" } }
+                }
+              }
+            }
+          ]
+        },
+        "D1": {
+          "allOf": [
+            { "$ref": "#/$defs/trace" },
+            {
+              "properties": {
+                "trace_id": { "const": "D1" },
+                "fault_proof": {
+                  "properties": { "fault_hook": { "type": "null" } }
+                }
+              }
+            }
+          ]
+        },
+        "H1": {
+          "allOf": [
+            { "$ref": "#/$defs/trace" },
+            {
+              "properties": {
+                "trace_id": { "const": "H1" },
+                "fault_proof": {
+                  "properties": { "fault_hook": { "type": "null" } }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "predicates": { "$ref": "#/$defs/predicates" },
+    "overall_verdict": { "enum": ["PASS", "FAIL"] },
+    "bundle_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^(sha256:)?[0-9a-f]{64}$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sha256"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "sandbox_audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "config_sha256",
+        "readable_roots",
+        "provider_only_egress",
+        "outside_root_access_count",
+        "non_provider_egress_bytes"
+      ],
+      "properties": {
+        "config_sha256": { "$ref": "#/$defs/sha256" },
+        "readable_roots": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "provider_only_egress": { "type": "boolean" },
+        "outside_root_access_count": { "type": "integer", "minimum": 0 },
+        "non_provider_egress_bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dogfood_base_commit",
+        "implementation_commit",
+        "target_branch",
+        "target_clean_at_start",
+        "castord_binary_sha256",
+        "agent_image_digest",
+        "model_image_digest",
+        "bundle_schema_sha256",
+        "task_prompt_sha256",
+        "curated_context_sha256",
+        "host_os",
+        "docker_version",
+        "timestamp_iso8601",
+        "model_sandbox"
+      ],
+      "properties": {
+        "dogfood_base_commit": { "$ref": "#/$defs/sha256" },
+        "implementation_commit": { "$ref": "#/$defs/sha256" },
+        "target_branch": { "type": "string", "minLength": 1 },
+        "target_clean_at_start": { "const": true },
+        "castord_binary_sha256": { "$ref": "#/$defs/sha256" },
+        "agent_image_digest": { "$ref": "#/$defs/sha256" },
+        "model_image_digest": { "$ref": "#/$defs/sha256" },
+        "bundle_schema_sha256": { "$ref": "#/$defs/sha256" },
+        "task_prompt_sha256": { "$ref": "#/$defs/sha256" },
+        "curated_context_sha256": { "$ref": "#/$defs/sha256" },
+        "host_os": { "type": "string", "minLength": 1 },
+        "docker_version": { "type": "string", "minLength": 1 },
+        "timestamp_iso8601": { "type": "string", "format": "date-time" },
+        "model_sandbox": { "$ref": "#/$defs/sandbox_audit" }
+      }
+    },
+    "model_run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "reasoning_effort",
+        "cli_version",
+        "command_mode",
+        "exit_status",
+        "wall_time_seconds",
+        "prompt_sha256",
+        "context_manifest_sha256",
+        "output_sha256",
+        "candidate_payload_sha256",
+        "provider_request_count",
+        "input_tokens",
+        "cached_input_tokens",
+        "output_tokens",
+        "rate_card_sha256",
+        "estimated_cost_usd"
+      ],
+      "properties": {
+        "model": { "type": "string", "minLength": 1 },
+        "reasoning_effort": { "type": "string", "minLength": 1 },
+        "cli_version": { "type": "string", "minLength": 1 },
+        "command_mode": { "type": "string", "minLength": 1 },
+        "exit_status": { "type": "integer" },
+        "wall_time_seconds": { "type": "number", "minimum": 0 },
+        "prompt_sha256": { "$ref": "#/$defs/sha256" },
+        "context_manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "output_sha256": { "$ref": "#/$defs/sha256" },
+        "candidate_payload_sha256": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sha256" },
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "provider_request_count": { "type": "integer", "minimum": 1 },
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "cached_input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "rate_card_sha256": { "$ref": "#/$defs/sha256" },
+        "estimated_cost_usd": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]{2,6}$"
+        }
+      }
+    },
+    "journal_references": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "turn_commit",
+        "registration",
+        "admission",
+        "attempt",
+        "dispatch",
+        "delivery"
+      ],
+      "properties": {
+        "turn_commit": { "type": "string", "minLength": 1 },
+        "registration": { "type": "string", "minLength": 1 },
+        "admission": { "type": "string", "minLength": 1 },
+        "attempt": { "type": "string", "minLength": 1 },
+        "dispatch": { "type": "string", "minLength": 1 },
+        "delivery": { "type": "string", "minLength": 1 }
+      }
+    },
+    "acquisition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "envelope_sha256"],
+      "properties": {
+        "outcome": { "type": "string", "minLength": 1 },
+        "envelope_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "command_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_id",
+        "argv",
+        "working_directory",
+        "exit_code",
+        "stdout_sha256",
+        "stderr_sha256"
+      ],
+      "properties": {
+        "command_id": { "type": "string", "minLength": 1 },
+        "argv": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "working_directory": { "type": "string", "minLength": 1 },
+        "exit_code": { "type": "integer" },
+        "stdout_sha256": { "$ref": "#/$defs/sha256" },
+        "stderr_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "causal_chain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_id",
+        "stable_operation_id",
+        "target_scope",
+        "capability_id",
+        "actuator_id",
+        "payload_region_ref",
+        "payload_sha256",
+        "journal",
+        "acquisitions",
+        "reconciliation_result",
+        "target_before_sha256",
+        "target_after_sha256",
+        "receipt_region_sha256",
+        "settlement_outcome",
+        "command"
+      ],
+      "properties": {
+        "action_id": { "type": "string", "minLength": 1 },
+        "stable_operation_id": { "type": "string", "minLength": 1 },
+        "target_scope": { "type": "string", "minLength": 1 },
+        "capability_id": { "type": "string", "minLength": 1 },
+        "actuator_id": { "type": "string", "minLength": 1 },
+        "payload_region_ref": { "type": "string", "minLength": 1 },
+        "payload_sha256": { "$ref": "#/$defs/sha256" },
+        "journal": { "$ref": "#/$defs/journal_references" },
+        "acquisitions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/acquisition" },
+          "minItems": 1
+        },
+        "reconciliation_result": { "type": "string", "minLength": 1 },
+        "target_before_sha256": { "$ref": "#/$defs/sha256" },
+        "target_after_sha256": { "$ref": "#/$defs/sha256" },
+        "receipt_region_sha256": { "$ref": "#/$defs/sha256" },
+        "settlement_outcome": { "type": "string", "minLength": 1 },
+        "command": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/command_evidence" }
+          ]
+        }
+      }
+    },
+    "fault_proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fault_hook",
+        "boundary_reached",
+        "journal_before_sha256",
+        "journal_after_sha256",
+        "torn_tail_result",
+        "process_exit_status",
+        "recovered_core_epoch"
+      ],
+      "properties": {
+        "fault_hook": { "type": ["string", "null"] },
+        "boundary_reached": { "type": "boolean" },
+        "journal_before_sha256": { "$ref": "#/$defs/sha256" },
+        "journal_after_sha256": { "$ref": "#/$defs/sha256" },
+        "torn_tail_result": { "enum": ["not_applicable", "intact", "truncated"] },
+        "process_exit_status": { "type": ["integer", "null"] },
+        "recovered_core_epoch": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "attempt_count": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt_id", "acquisition_count", "semantic_application_count"],
+      "properties": {
+        "attempt_id": { "type": "string", "minLength": 1 },
+        "acquisition_count": { "type": "integer", "minimum": 0 },
+        "semantic_application_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "target_audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status_porcelain", "review_patch_sha256", "unauthorized_mutations"],
+      "properties": {
+        "status_porcelain": { "type": "string" },
+        "review_patch_sha256": { "$ref": "#/$defs/sha256" },
+        "unauthorized_mutations": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trace_id",
+        "status",
+        "failed_predicates",
+        "journal_events_count",
+        "target_files_touched",
+        "network_egress_bytes",
+        "loopback_egress_bytes",
+        "causal_chains",
+        "fault_proof",
+        "attempt_counts",
+        "target_audit",
+        "raw_artifact_sha256"
+      ],
+      "properties": {
+        "trace_id": { "enum": ["N1", "C1", "C2", "C3", "D1", "H1"] },
+        "status": { "enum": ["PASS", "FAIL"] },
+        "failed_predicates": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "journal_events_count": { "type": "integer", "minimum": 0 },
+        "target_files_touched": {
+          "type": "array",
+          "items": {
+            "enum": ["src/castor/ipc_client.py", "tests/test_ipc_client.py"]
+          },
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "network_egress_bytes": { "const": 0 },
+        "loopback_egress_bytes": { "type": "integer", "minimum": 0 },
+        "causal_chains": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/causal_chain" }
+        },
+        "fault_proof": { "$ref": "#/$defs/fault_proof" },
+        "attempt_counts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/attempt_count" }
+        },
+        "target_audit": { "$ref": "#/$defs/target_audit" },
+        "raw_artifact_sha256": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sha256" },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pass", "failed_predicates"],
+      "properties": {
+        "pass": { "type": "boolean" },
+        "failed_predicates": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "predicates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prerequisites", "functional", "mediation", "recovery", "hostile"],
+      "properties": {
+        "prerequisites": { "$ref": "#/$defs/gate" },
+        "functional": { "$ref": "#/$defs/gate" },
+        "mediation": { "$ref": "#/$defs/gate" },
+        "recovery": { "$ref": "#/$defs/gate" },
+        "hostile": { "$ref": "#/$defs/gate" }
+      }
+    }
+  }
+}
