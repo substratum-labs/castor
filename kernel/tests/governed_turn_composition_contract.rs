@@ -1,6 +1,8 @@
 //! Governed-turn composition contract for the single D1 Core journal.
 
-use castor_kernel::c01_storage::{D1DurableStorage, DurabilityProfile, DurableStorage};
+use castor_kernel::c01_storage::{
+    ActionBinding, D1DurableStorage, DurabilityProfile, DurableStorage,
+};
 use castor_kernel::c06_composition::{
     ActionRegistrationRequest, AdmitTurnRequest, CapabilityGrant, CapabilityRight,
     CommitTurnRequest, ConsumeInteractionRequest, D1GovernedTurnAuthority,
@@ -32,6 +34,8 @@ impl Fixture {
                 b"durably persisted governed-turn fixture".as_slice(),
             ),
             ("region://action-manifest", b"action-1\naction-2".as_slice()),
+            ("region://action-1", b"payload-action-1".as_slice()),
+            ("region://action-2", b"payload-action-2".as_slice()),
             (
                 "region://action-manifest-2",
                 b"second action manifest specification".as_slice(),
@@ -156,6 +160,20 @@ fn commit() -> CommitTurnRequest {
         action_manifest_region_id: "region://action-manifest".into(),
         action_manifest_digest: digest(b"action-1\naction-2"),
         action_manifest: vec!["action-1".into(), "action-2".into()],
+        action_bindings: vec![
+            ActionBinding {
+                action_id: "action-1".into(),
+                payload_region_ref: "region://action-1".into(),
+                payload_digest: digest(b"payload-action-1"),
+                actuator_id: "c04:generic".into(),
+            },
+            ActionBinding {
+                action_id: "action-2".into(),
+                payload_region_ref: "region://action-2".into(),
+                payload_digest: digest(b"payload-action-2"),
+                actuator_id: "c04:generic".into(),
+            },
+        ],
         cap_id: Some("capability-1".into()),
     }
 }

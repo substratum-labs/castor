@@ -1,7 +1,7 @@
 //! Single-store D1 governed-turn composition.
 
 use crate::c01_storage::{
-    AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, D1DurableStorage,
+    ActionBinding, AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, D1DurableStorage,
     DurabilityProfile, DurableStorage, EnsureRegionOutcome,
 };
 use serde::{Deserialize, Serialize};
@@ -189,6 +189,7 @@ pub struct CommitTurnRequest {
     pub action_manifest_region_id: String,
     pub action_manifest_digest: String,
     pub action_manifest: Vec<String>,
+    pub action_bindings: Vec<ActionBinding>,
     pub cap_id: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -260,6 +261,12 @@ enum AttemptStatus {
 struct Attempt {
     action_id: String,
     target_scope: String,
+    #[serde(default)]
+    action_region_ref: String,
+    #[serde(default)]
+    action_digest: String,
+    #[serde(default)]
+    actuator_id: Option<String>,
     status: AttemptStatus,
     dispatch_identity: Option<String>,
     delivered: bool,
@@ -268,6 +275,15 @@ struct Attempt {
     settlement: Option<(String, String, String, String)>,
     #[serde(default)]
     authenticated_settlement: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum CommittedAction {
+    Bound(ActionBinding),
+    LegacyUnbound {
+        manifest_region_ref: String,
+        manifest_digest: String,
+    },
 }
 
 /// Private on-disk body of a D-04 materialized projection cache.  The live
@@ -281,7 +297,7 @@ struct D1ProjectionSnapshot {
     agent_id: Option<String>,
     projection_digest: Option<String>,
     turn: Option<Turn>,
-    committed_actions: HashMap<String, (String, String)>,
+    committed_actions: HashMap<String, CommittedAction>,
     registered_actions: HashSet<String>,
     #[serde(default)]
     action_scopes: HashMap<String, String>,
@@ -311,7 +327,7 @@ pub struct D1GovernedTurnAuthority {
     agent_id: Option<String>,
     projection_digest: Option<String>,
     turn: Option<Turn>,
-    committed_actions: HashMap<String, (String, String)>,
+    committed_actions: HashMap<String, CommittedAction>,
     registered_actions: HashSet<String>,
     action_scopes: HashMap<String, String>,
     action_operation_ids: HashMap<String, String>,
@@ -881,6 +897,7 @@ impl D1GovernedTurnAuthority {
                     successor_projection_digest,
                     action_manifest,
                     action_manifest_digest,
+                    action_bindings,
                     cap_id,
                     ..
                 } => {
@@ -891,10 +908,39 @@ impl D1GovernedTurnAuthority {
                     }
                     if let Some(digest) = action_manifest_digest {
                         let region = request.region_refs.get(1).cloned().unwrap_or_default();
+                        let unique_manifest: HashSet<_> = action_manifest.iter().cloned().collect();
+                        let unique_bindings: HashMap<_, _> = action_bindings
+                            .into_iter()
+                            .map(|binding| (binding.action_id.clone(), binding))
+                            .collect();
+                        let bindings_valid = !unique_bindings.is_empty()
+                            && unique_manifest.len() == action_manifest.len()
+                            && unique_bindings.len() == action_manifest.len()
+                            && unique_manifest.iter().all(|action_id| {
+                                unique_bindings.get(action_id).is_some_and(|binding| {
+                                    !binding.actuator_id.is_empty()
+                                        && self.region_matches(
+                                            &binding.payload_region_ref,
+                                            &binding.payload_digest,
+                                        )
+                                })
+                            });
                         for action in action_manifest {
                             self.registered_actions.insert(action.clone());
-                            self.committed_actions
-                                .insert(action, (region.clone(), digest.clone()));
+                            let committed = if bindings_valid {
+                                CommittedAction::Bound(
+                                    unique_bindings
+                                        .get(&action)
+                                        .expect("validated binding set")
+                                        .clone(),
+                                )
+                            } else {
+                                CommittedAction::LegacyUnbound {
+                                    manifest_region_ref: region.clone(),
+                                    manifest_digest: digest.clone(),
+                                }
+                            };
+                            self.committed_actions.insert(action, committed);
                         }
                     }
                     if let Some(cap_id) = cap_id {
@@ -923,14 +969,19 @@ impl D1GovernedTurnAuthority {
                 CoreEntry::AttemptArmed {
                     action_id,
                     attempt_id,
+                    action_region_ref,
+                    action_digest,
+                    actuator_id,
                     request_digest,
-                    ..
                 } => {
                     self.attempts.insert(
                         attempt_id,
                         Attempt {
                             action_id,
                             target_scope: request_digest,
+                            action_region_ref,
+                            action_digest,
+                            actuator_id,
                             status: AttemptStatus::ArmedUnknown,
                             dispatch_identity: None,
                             delivered: false,
@@ -1364,17 +1415,57 @@ impl D1GovernedTurnAuthority {
         if manifest_actions != request.action_manifest {
             return GovernedTurnOutcome::IntegrityOrProtocolFault;
         }
+        let manifest_ids: HashSet<_> = request.action_manifest.iter().cloned().collect();
+        if manifest_ids.len() != request.action_manifest.len()
+            || request.action_bindings.len() != request.action_manifest.len()
+        {
+            return GovernedTurnOutcome::RejectedPrecondition;
+        }
+        let mut bindings_by_id = HashMap::new();
+        for binding in &request.action_bindings {
+            if binding.action_id.is_empty()
+                || binding.payload_region_ref.is_empty()
+                || binding.payload_digest.is_empty()
+                || binding.actuator_id.is_empty()
+                || !manifest_ids.contains(&binding.action_id)
+                || bindings_by_id
+                    .insert(binding.action_id.clone(), binding.clone())
+                    .is_some()
+            {
+                return GovernedTurnOutcome::RejectedPrecondition;
+            }
+            if !self.region_matches(&binding.payload_region_ref, &binding.payload_digest) {
+                return GovernedTurnOutcome::IntegrityOrProtocolFault;
+            }
+            if self
+                .committed_actions
+                .get(&binding.action_id)
+                .is_some_and(|existing| existing != &CommittedAction::Bound(binding.clone()))
+            {
+                return GovernedTurnOutcome::RejectedPrecondition;
+            }
+        }
+        if bindings_by_id.len() != manifest_ids.len() {
+            return GovernedTurnOutcome::RejectedPrecondition;
+        }
         let id = turn.turn_id;
         let manifest_region = request.action_manifest_region_id.clone();
+        let mut region_refs = vec![request.successor_region_id.clone(), manifest_region];
+        for binding in &request.action_bindings {
+            if !region_refs.contains(&binding.payload_region_ref) {
+                region_refs.push(binding.payload_region_ref.clone());
+            }
+        }
         if let Err(outcome) = self.append(
             CoreEntry::TurnCommitted {
                 turn_id: id,
                 successor_projection_digest: Some(request.successor_digest.clone()),
                 action_manifest_digest: Some(request.action_manifest_digest.clone()),
                 action_manifest: request.action_manifest.clone(),
+                action_bindings: request.action_bindings.clone(),
                 cap_id: request.cap_id.clone(),
             },
-            vec![request.successor_region_id, manifest_region],
+            region_refs,
             Some(id),
             Some(request.lease_epoch),
             self.projection_digest.clone(),
@@ -1385,14 +1476,9 @@ impl D1GovernedTurnAuthority {
         if let Some(capability_id) = request.cap_id {
             *self.capability_turns.entry(capability_id).or_default() += 1;
         }
-        for action in request.action_manifest {
-            self.committed_actions.insert(
-                action,
-                (
-                    request.action_manifest_region_id.clone(),
-                    request.action_manifest_digest.clone(),
-                ),
-            );
+        for binding in request.action_bindings {
+            self.committed_actions
+                .insert(binding.action_id.clone(), CommittedAction::Bound(binding));
         }
         let turn = self.turn.as_mut().expect("turn exists");
         turn.active_lease = None;
@@ -1406,6 +1492,14 @@ impl D1GovernedTurnAuthority {
             .is_some_and(|id| id.is_empty())
         {
             return GovernedTurnOutcome::RejectedPrecondition;
+        }
+        match self.committed_actions.get(&request.action_id) {
+            Some(CommittedAction::Bound(binding))
+                if binding.actuator_id == request.action_family =>
+            {
+                // The immutable binding, rather than caller input, selects the actuator.
+            }
+            _ => return GovernedTurnOutcome::RejectedPrecondition,
         }
         if let Some(scope) = self.action_scopes.get(&request.action_id) {
             return if self.action_operation_ids.get(&request.action_id)
@@ -1422,9 +1516,6 @@ impl D1GovernedTurnAuthority {
             } else {
                 GovernedTurnOutcome::RejectedPrecondition
             };
-        }
-        if !self.committed_actions.contains_key(&request.action_id) {
-            return GovernedTurnOutcome::RejectedPrecondition;
         }
         if !request.cap_id.is_empty() {
             let capability = match self.validate_capability(
@@ -1513,20 +1604,20 @@ impl D1GovernedTurnAuthority {
             return GovernedTurnOutcome::RejectedCurrentState;
         }
         let attempt_id = self.next_attempt_id;
-        let Some((action_region_ref, action_digest)) =
-            self.committed_actions.get(&request.action_id).cloned()
-        else {
-            return GovernedTurnOutcome::RejectedPrecondition;
+        let binding = match self.committed_actions.get(&request.action_id).cloned() {
+            Some(CommittedAction::Bound(binding)) => binding,
+            _ => return GovernedTurnOutcome::RejectedPrecondition,
         };
         if let Err(outcome) = self.append(
             CoreEntry::AttemptArmed {
                 action_id: request.action_id.clone(),
                 attempt_id,
-                action_region_ref: action_region_ref.clone(),
-                action_digest,
+                action_region_ref: binding.payload_region_ref.clone(),
+                action_digest: binding.payload_digest.clone(),
+                actuator_id: Some(binding.actuator_id.clone()),
                 request_digest: target_scope.clone(),
             },
-            vec![action_region_ref],
+            vec![binding.payload_region_ref.clone()],
             None,
             None,
             self.projection_digest.clone(),
@@ -1539,6 +1630,9 @@ impl D1GovernedTurnAuthority {
             Attempt {
                 action_id: request.action_id,
                 target_scope,
+                action_region_ref: binding.payload_region_ref,
+                action_digest: binding.payload_digest,
+                actuator_id: Some(binding.actuator_id),
                 status: AttemptStatus::ArmedUnknown,
                 dispatch_identity: None,
                 delivered: false,

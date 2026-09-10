@@ -240,6 +240,21 @@ def prepare_turn(socket_path: Path, trial_id: str) -> None:
     manifest_digest = ensure_region(
         socket_path, "ensure-manifest", manifest_ref, manifest
     )
+    action_bindings = []
+    for action_id in action_ids:
+        payload = f"payload-{action_id}".encode()
+        payload_ref = f"region://spay/{trial_id}/payload/{action_id}"
+        payload_digest = ensure_region(
+            socket_path, f"ensure-payload-{action_id}", payload_ref, payload
+        )
+        action_bindings.append(
+            {
+                "action_id": action_id,
+                "payload_region_ref": payload_ref,
+                "payload_digest": payload_digest,
+                "actuator_id": "c04:generic",
+            }
+        )
     expect_outcome(
         socket_path,
         "commit-turn",
@@ -252,6 +267,7 @@ def prepare_turn(socket_path: Path, trial_id: str) -> None:
             "action_manifest_region_id": manifest_ref,
             "action_manifest_digest": manifest_digest,
             "action_manifest": action_ids,
+            "action_bindings": action_bindings,
         },
         "TurnCommitted",
     )
@@ -263,7 +279,7 @@ def arm_action(socket_path: Path, trial_id: str, effect: str, attempt_id: int) -
         socket_path,
         f"register-{effect}",
         "RegisterAction",
-        {"action_id": action_id},
+        {"action_id": action_id, "action_family": "c04:generic"},
         "ActionRegistered",
     )
     armed = expect_outcome(

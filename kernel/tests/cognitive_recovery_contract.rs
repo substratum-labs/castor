@@ -8,7 +8,7 @@
 //! No kernel changes, ignored tests, should_panic, or hard-coded RED results.
 
 use castor_kernel::c01_storage::{
-    AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, D1DurableStorage,
+    ActionBinding, AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, D1DurableStorage,
     DurabilityProfile, DurableStorage, EnsureRegionOutcome,
 };
 use castor_kernel::c06_composition::{
@@ -77,6 +77,14 @@ fn two_unsettled(storage: &mut D1DurableStorage) {
         successor_projection_digest: Some(digest(bytes)),
         action_manifest_digest: Some(digest(bytes)),
         action_manifest: vec!["a1".into(), "a2".into(), "a3".into()],
+        action_bindings: (1..=3)
+            .map(|id| ActionBinding {
+                action_id: format!("a{id}"),
+                payload_region_ref: REGION.into(),
+                payload_digest: digest(bytes),
+                actuator_id: "c04:generic".into(),
+            })
+            .collect(),
         cap_id: None,
     }];
     for id in 1..=2 {
@@ -85,6 +93,7 @@ fn two_unsettled(storage: &mut D1DurableStorage) {
             attempt_id: id,
             action_region_ref: REGION.into(),
             action_digest: digest(bytes),
+            actuator_id: Some("c04:generic".into()),
             request_digest: SCOPE.into(),
         });
         entries.push(CoreEntry::DispatchAttempt {

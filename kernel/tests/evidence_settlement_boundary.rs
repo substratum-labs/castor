@@ -1,6 +1,6 @@
 //! C1 durable scope and legacy settlement migration regressions.
 use castor_kernel::c01_storage::{
-    AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, D1DurableStorage,
+    ActionBinding, AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, D1DurableStorage,
     DurabilityProfile, DurableStorage,
 };
 use castor_kernel::c06_composition::{
@@ -29,6 +29,15 @@ fn fixture_with_scope(
             successor_projection_digest: Some(digest.clone()),
             action_manifest_digest: Some(digest.clone()),
             action_manifest: vec!["a1".into(), "a2".into()],
+            action_bindings: ["a1", "a2"]
+                .into_iter()
+                .map(|action_id| ActionBinding {
+                    action_id: action_id.into(),
+                    payload_region_ref: "manifest".into(),
+                    payload_digest: digest.clone(),
+                    actuator_id: "c04:generic".into(),
+                })
+                .collect(),
             cap_id: None,
         },
         CoreEntry::ActionRegistered {
@@ -42,6 +51,7 @@ fn fixture_with_scope(
             attempt_id: 1,
             action_region_ref: "manifest".into(),
             action_digest: digest.clone(),
+            actuator_id: Some("c04:generic".into()),
             request_digest: SCOPE.into(),
         },
         CoreEntry::DispatchAttempt {

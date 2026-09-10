@@ -4,7 +4,7 @@
 //! boundary accepted in RFC v2.
 
 use castor_kernel::c01_storage::{
-    AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, D1DurableStorage,
+    ActionBinding, AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, D1DurableStorage,
     DurabilityProfile, DurableStorage, EnsureRegionOutcome,
 };
 use castor_kernel::c06_composition::{
@@ -81,6 +81,12 @@ fn commit_request(lease_epoch: u64) -> CommitTurnRequest {
         action_manifest_region_id: "region://actions".into(),
         action_manifest_digest: digest(b"action-1"),
         action_manifest: vec!["action-1".into()],
+        action_bindings: vec![ActionBinding {
+            action_id: "action-1".into(),
+            payload_region_ref: "region://action-1".into(),
+            payload_digest: digest(b"payload-action-1"),
+            actuator_id: "c04:http_get".into(),
+        }],
         cap_id: None,
     }
 }
@@ -89,6 +95,7 @@ fn ready_to_commit(authority: &mut D1GovernedTurnAuthority) {
     persist_region(authority, "region://observation", b"observation");
     persist_region(authority, "region://successor", b"successor");
     persist_region(authority, "region://actions", b"action-1");
+    persist_region(authority, "region://action-1", b"payload-action-1");
     assert!(matches!(
         authority.admit_turn(admit(None)),
         GovernedTurnOutcome::Admitted { .. }
@@ -122,6 +129,7 @@ fn armed_dispatched_attempt(authority: &mut D1GovernedTurnAuthority) {
     );
     persist_region(authority, "region://successor", b"successor");
     persist_region(authority, "region://actions", b"action-1");
+    persist_region(authority, "region://action-1", b"payload-action-1");
     assert!(matches!(
         authority.admit_turn(admit(Some("cap-1"))),
         GovernedTurnOutcome::Admitted { .. }
@@ -240,6 +248,7 @@ fn region_backed_attempt(
             attempt_id: 1,
             action_region_ref: region.into(),
             action_digest: digest(bytes),
+            actuator_id: None,
             request_digest: "sha256:request".into(),
         },
     );
@@ -335,6 +344,7 @@ fn test_d5_committed_turn_permanence_inherited_sentinel() {
                 successor_projection_digest: Some("sha256:successor".into()),
                 action_manifest_digest: Some("sha256:manifest".into()),
                 action_manifest: vec!["action-1".into()],
+                action_bindings: vec![],
                 cap_id: None,
             },
         ),
@@ -348,6 +358,7 @@ fn test_d5_committed_turn_permanence_inherited_sentinel() {
             successor_projection_digest: Some("sha256:other".into()),
             action_manifest_digest: None,
             action_manifest: vec![],
+            action_bindings: vec![],
             cap_id: None,
         },
     );

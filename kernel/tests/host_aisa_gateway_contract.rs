@@ -204,6 +204,32 @@ fn assert_attempt_armed(response: SyscallResponse, attempt_id: u64) {
 fn commit_ready_turn(client: &mut GatewayClient, action_manifest: &[&str]) {
     let manifest_content = format!("{}\n", action_manifest.join("\n")).into_bytes();
     let manifest_digest = format!("sha256:{:x}", Sha256::digest(&manifest_content));
+    let mut action_bindings = Vec::new();
+    for action_id in action_manifest {
+        let payload = format!("payload-{action_id}").into_bytes();
+        let payload_digest = format!("sha256:{:x}", Sha256::digest(&payload));
+        let payload_region_ref = format!("region://payload/{action_id}");
+        assert_outcome(
+            call(
+                client,
+                &format!("ensure-payload-{action_id}"),
+                "EnsureRegion",
+                json!({
+                    "region_ref": payload_region_ref,
+                    "content_digest": payload_digest,
+                    "content": payload,
+                    "profile": "D1"
+                }),
+            ),
+            "Success",
+        );
+        action_bindings.push(json!({
+            "action_id": action_id,
+            "payload_region_ref": payload_region_ref,
+            "payload_digest": payload_digest,
+            "actuator_id": "c04:generic"
+        }));
+    }
     assert_outcome(
         call(
             client,
@@ -263,7 +289,7 @@ fn commit_ready_turn(client: &mut GatewayClient, action_manifest: &[&str]) {
             client,
             "commit",
             "CommitTurn",
-            json!({ "lease_epoch": 1, "base_projection_digest": DIGEST, "successor_region_id": "region://observation", "successor_digest": DIGEST, "action_manifest_region_id": "region://manifest", "action_manifest_digest": manifest_digest, "action_manifest": action_manifest }),
+            json!({ "lease_epoch": 1, "base_projection_digest": DIGEST, "successor_region_id": "region://observation", "successor_digest": DIGEST, "action_manifest_region_id": "region://manifest", "action_manifest_digest": manifest_digest, "action_manifest": action_manifest, "action_bindings": action_bindings }),
         ),
         "TurnCommitted",
     );
@@ -278,6 +304,7 @@ fn arm_action(client: &mut GatewayClient, action_id: &str, scope: &str) {
             json!({
                 "action_id": action_id,
                 "stable_operation_id": if action_id == "action-1" { "dispatch-1" } else { "dispatch-2" },
+                "action_family": "c04:generic",
                 "target_scope": scope
             }),
         ),
@@ -442,7 +469,7 @@ fn scenario_03_pre_commit_action_registration_is_rejected() {
             &mut client,
             "register",
             "RegisterAction",
-            json!({ "action_id": "action-1" }),
+            json!({ "action_id": "action-1", "action_family": "c04:generic" }),
         ),
         "RejectedPrecondition",
     );
@@ -473,7 +500,7 @@ fn scenario_05_uncommitted_action_id_admission_is_rejected() {
             &mut client,
             "register",
             "RegisterAction",
-            json!({ "action_id": "action-2" }),
+            json!({ "action_id": "action-2", "action_family": "c04:generic" }),
         ),
         "RejectedPrecondition",
     );
@@ -636,7 +663,7 @@ fn scenario_11_stale_generation_admission_is_rejected_after_fence() {
             &mut client,
             "register",
             "RegisterAction",
-            json!({ "action_id": "action-1" }),
+            json!({ "action_id": "action-1", "action_family": "c04:generic" }),
         ),
         "ActionRegistered",
     );
@@ -664,7 +691,7 @@ fn scenario_12_scope_mutex_rejects_overlapping_admission() {
             &mut client_two,
             "register",
             "RegisterAction",
-            json!({ "action_id": "action-2" }),
+            json!({ "action_id": "action-2", "action_family": "c04:generic" }),
         ),
         "ActionRegistered",
     );
@@ -838,7 +865,7 @@ fn scenario_18_supervisor_persists_fence_before_child_termination_and_reap() {
             &mut client,
             "register",
             "RegisterAction",
-            json!({ "action_id": "action-1" }),
+            json!({ "action_id": "action-1", "action_family": "c04:generic" }),
         ),
         "ActionRegistered",
     );

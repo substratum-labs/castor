@@ -79,6 +79,7 @@ fn castord_reopens_core_and_adapter_without_a_second_provider_submission() {
                 attempt_id: 1,
                 action_region_ref: "region://agent-v/action-v".to_string(),
                 action_digest: action_digest.clone(),
+                actuator_id: None,
                 request_digest: "request-v".to_string(),
             },
             region_refs: vec!["region://agent-v/action-v".to_string()],

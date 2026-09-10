@@ -435,6 +435,7 @@ impl<P: EffectProvider> D1EffectAdapter<P> {
                 ref action_region_ref,
                 ref action_digest,
                 ref request_digest,
+                ..
             } if action_id == &command.action_id
                 && attempt_id == command.attempt_id
                 && action_region_ref == &command.action_region_ref

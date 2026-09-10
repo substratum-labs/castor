@@ -4,7 +4,9 @@
 //! privileged-grant, attenuated-derive, and exercise seams that T-304-C makes
 //! green; the Phase 2 API stubs fail closed.
 
-use castor_kernel::c01_storage::{CoreEntry, D1DurableStorage, DurabilityProfile, DurableStorage};
+use castor_kernel::c01_storage::{
+    ActionBinding, CoreEntry, D1DurableStorage, DurabilityProfile, DurableStorage,
+};
 use castor_kernel::c06_composition::{
     ActionRegistrationRequest, AdmitTurnRequest, CapabilityDeriveOutcome, CapabilityGrant,
     CapabilityRight, CommitTurnRequest, Constraint, D1GovernedTurnAuthority,
@@ -30,6 +32,7 @@ impl Fixture {
         for (region, bytes) in [
             ("region://fixture", b"durable successor".as_slice()),
             ("region://actions", b"action-1".as_slice()),
+            ("region://action-1", b"payload-action-1".as_slice()),
         ] {
             assert!(matches!(
                 storage.ensure_region(region, &digest(bytes), bytes, DurabilityProfile::D1),
@@ -74,6 +77,12 @@ impl Fixture {
                 action_manifest_region_id: "region://actions".into(),
                 action_manifest_digest: digest(b"action-1"),
                 action_manifest: vec!["action-1".into()],
+                action_bindings: vec![ActionBinding {
+                    action_id: "action-1".into(),
+                    payload_region_ref: "region://action-1".into(),
+                    payload_digest: digest(b"payload-action-1"),
+                    actuator_id: "c04:http_get".into(),
+                }],
                 cap_id: Some(cap_id.into()),
             }),
             GovernedTurnOutcome::TurnCommitted
@@ -484,6 +493,12 @@ fn commit(cap_id: &str) -> CommitTurnRequest {
         action_manifest_region_id: "region://actions".into(),
         action_manifest_digest: digest(b"action-1"),
         action_manifest: vec!["action-1".into()],
+        action_bindings: vec![ActionBinding {
+            action_id: "action-1".into(),
+            payload_region_ref: "region://action-1".into(),
+            payload_digest: digest(b"payload-action-1"),
+            actuator_id: "c04:http_get".into(),
+        }],
         cap_id: Some(cap_id.into()),
     }
 }

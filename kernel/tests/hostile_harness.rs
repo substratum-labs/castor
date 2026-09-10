@@ -94,6 +94,7 @@ fn persisted_dispatch_command(
             attempt_id,
             action_region_ref: action_region.clone(),
             action_digest: action_digest.clone(),
+            actuator_id: None,
             request_digest: "request_hash_001".to_string(),
         },
         region_refs: vec![action_region.clone()],
@@ -176,6 +177,7 @@ fn persisted_dispatch_command_with_decoy_region(core_root: &Path) -> DispatchCom
             attempt_id: 5,
             action_region_ref: "region://agent_kappa/action".to_string(),
             action_digest: action_digest.clone(),
+            actuator_id: None,
             request_digest: "request-kappa".to_string(),
         },
         region_refs: vec![
@@ -293,6 +295,7 @@ fn hostile_trace_lost_acknowledgement_recovers_same_entry_from_disk() {
             successor_projection_digest: None,
             action_manifest_digest: None,
             action_manifest: vec![],
+            action_bindings: vec![],
             cap_id: None,
         },
         region_refs: vec![],

@@ -1,7 +1,9 @@
 #[path = "castord/evidence.rs"]
 mod evidence;
 
-use castor_kernel::c01_storage::{D1DurableStorage, DurabilityProfile, EnsureRegionOutcome};
+use castor_kernel::c01_storage::{
+    ActionBinding, D1DurableStorage, DurabilityProfile, EnsureRegionOutcome,
+};
 use castor_kernel::c04_adapter::inspect_adapter_store;
 use castor_kernel::c06_composition::*;
 use castor_kernel::host::{
@@ -371,6 +373,13 @@ fn dispatch(
                         .ok_or_else(|| "action_manifest entries must be strings".to_string())
                 })
                 .collect::<Result<_, _>>()?,
+            action_bindings: p
+                .get("action_bindings")
+                .cloned()
+                .map(serde_json::from_value::<Vec<ActionBinding>>)
+                .transpose()
+                .map_err(|error| format!("invalid action_bindings: {error}"))?
+                .unwrap_or_default(),
             cap_id: p.get("cap_id").and_then(Value::as_str).map(str::to_owned),
         }),
         "RegisterAction" => authority.register_action(ActionRegistrationRequest {

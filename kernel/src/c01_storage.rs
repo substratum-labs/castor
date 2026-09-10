@@ -26,6 +26,15 @@ pub struct RegionPersisted {
     pub profile: DurabilityProfile,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActionBinding {
+    pub action_id: String,
+    pub payload_region_ref: String,
+    pub payload_digest: String,
+    pub actuator_id: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EnsureRegionOutcome {
     Success(RegionPersisted),
@@ -65,6 +74,8 @@ pub enum CoreEntry {
         #[serde(default)]
         action_manifest: Vec<String>,
         #[serde(default)]
+        action_bindings: Vec<ActionBinding>,
+        #[serde(default)]
         cap_id: Option<String>,
     },
     ActionRegistered {
@@ -84,6 +95,8 @@ pub enum CoreEntry {
         attempt_id: u64,
         action_region_ref: String,
         action_digest: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actuator_id: Option<String>,
         request_digest: String,
     },
     DispatchAttempt {
@@ -653,6 +666,21 @@ impl DurableStorage for D1DurableStorage {
                 || action_region.persisted.content_digest != *action_digest
             {
                 return AppendConditionalOutcome::IntegrityFault;
+            }
+        }
+        if let CoreEntry::TurnCommitted {
+            action_bindings, ..
+        } = &request.entry
+        {
+            for binding in action_bindings {
+                let Some(payload_region) = self.regions.get(&binding.payload_region_ref) else {
+                    return AppendConditionalOutcome::RejectedMissingOrUnpersistedRegion;
+                };
+                if !request.region_refs.contains(&binding.payload_region_ref)
+                    || payload_region.persisted.content_digest != binding.payload_digest
+                {
+                    return AppendConditionalOutcome::IntegrityFault;
+                }
             }
         }
 

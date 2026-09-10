@@ -297,6 +297,10 @@ class Daemon:
         self.ok("GrantCapability", {"grant": grant}, "CapabilityGranted", "control")
         self.observation = self.region("observation", b"")
         self.manifest = self.region("manifest", b"a1\na2\na3\n")
+        self.action_payloads = {
+            action: self.region(f"payload-{action}", f"payload-{action}")
+            for action in ("a1", "a2", "a3")
+        }
         self.ok("AdmitTurn", self.admit_payload(1), "Admitted")
         self.ok(
             "RequestInteraction",
@@ -348,6 +352,15 @@ class Daemon:
             "action_manifest_region_id": self.manifest[0],
             "action_manifest_digest": self.manifest[1],
             "action_manifest": ["a1", "a2", "a3"],
+            "action_bindings": [
+                {
+                    "action_id": action,
+                    "payload_region_ref": self.action_payloads[action][0],
+                    "payload_digest": self.action_payloads[action][1],
+                    "actuator_id": ADAPTER,
+                }
+                for action in ("a1", "a2", "a3")
+            ],
             "cap_id": CAP,
         }
 
