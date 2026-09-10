@@ -9,6 +9,10 @@
 use castor_kernel::host::{
     read_framed, GatewayClient, SyscallRequest, SyscallResponse, MAX_FRAME_BYTES,
 };
+use castor_kernel::{
+    c01_storage::CoreEntry,
+    c06_composition::{AcquireDispatchRequest, D1GovernedTurnAuthority},
+};
 use hmac::{Hmac, Mac};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -50,6 +54,10 @@ impl ContractHarness {
     }
 
     fn start(allow_test_opcodes: bool) -> Self {
+        Self::start_with_fault(allow_test_opcodes, None)
+    }
+
+    fn start_with_fault(allow_test_opcodes: bool, fault_point: Option<&str>) -> Self {
         // Each fixture starts a real process and exercises OS-level writer
         // locks. Serializing fixtures avoids test-runner process churn from
         // obscuring those boundaries; clients within a fixture stay concurrent.
@@ -108,6 +116,9 @@ impl ContractHarness {
         ]);
         command.env("CASTORD_EVIDENCE_TRUST_CONFIG", &trust_config);
         command.env("CASTORD_ACTUATOR_TRUST_CONFIG", &actuator_trust_config);
+        if let Some(fault_point) = fault_point {
+            command.env("CASTORD_TEST_FAULT_POINT", fault_point);
+        }
         if allow_test_opcodes {
             command.arg("--allow-test-opcodes");
         }
@@ -181,6 +192,21 @@ impl ContractHarness {
             json!({}),
         );
         assert_outcome(response, "AdapterDedupLost");
+    }
+
+    fn wait_for_daemon_exit_or_kill(&self) -> std::process::ExitStatus {
+        let mut daemon = self.daemon.lock().expect("daemon mutex poisoned");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Some(status) = daemon.try_wait().expect("poll daemon") {
+                return status;
+            }
+            if Instant::now() >= deadline {
+                let _ = daemon.kill();
+                return daemon.wait().expect("reap noncrashing daemon");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 }
 
@@ -1110,4 +1136,98 @@ fn scenario_20_actuator_socket_is_closed_and_returns_only_bound_payload() {
         malformed.error.expect("strict request error").code,
         "MalformedRequest"
     );
+}
+
+fn prepare_dispatched_attempt(harness: &ContractHarness) {
+    let mut agent = harness.client();
+    commit_ready_turn(&mut agent, &["action-1"]);
+    arm_action(&mut agent, "action-1", "scope-1");
+    assert_outcome(
+        call(
+            &mut agent,
+            "record-dispatch",
+            "RecordDispatchAttempt",
+            json!({ "attempt_id": 1, "dispatch_identity": "dispatch-1" }),
+        ),
+        "DispatchRecorded",
+    );
+}
+
+#[test]
+fn scenario_21_delivery_fault_points_select_the_durable_journal_seam() {
+    for (fault_point, expected_exit, submission_persisted) in [
+        ("before_delivery_append", 86, false),
+        ("after_delivery_fsync_before_response", 87, true),
+    ] {
+        let harness = ContractHarness::start_with_fault(true, Some(fault_point));
+        prepare_dispatched_attempt(&harness);
+        let response = harness.actuator_client().request(&request(
+            "fault-acquire",
+            "AcquireDispatch",
+            json!({
+                "attempt_id": 1,
+                "dispatch_identity": "dispatch-1",
+                "actuator_id": "c04:generic"
+            }),
+        ));
+        let status = harness.wait_for_daemon_exit_or_kill();
+        assert!(response.is_err(), "{fault_point} must lose the response");
+        assert_eq!(
+            status.code(),
+            Some(expected_exit),
+            "{fault_point} exit code"
+        );
+
+        let mut recovered = D1GovernedTurnAuthority::open(harness.storage_root())
+            .expect("reopen authority after fault");
+        let has_submission = recovered.inspect_journal().iter().any(|entry| {
+            matches!(
+                entry,
+                CoreEntry::AdapterSubmissionRecorded { attempt_id: 1 }
+            )
+        });
+        assert_eq!(
+            has_submission, submission_persisted,
+            "{fault_point} journal seam"
+        );
+        if submission_persisted {
+            let envelope = recovered
+                .acquire_dispatch(AcquireDispatchRequest {
+                    attempt_id: 1,
+                    dispatch_identity: "dispatch-1".into(),
+                    actuator_id: "c04:generic".into(),
+                })
+                .expect("durably delivered attempt recovers as duplicate");
+            assert_eq!(envelope.delivery_outcome, "DuplicateDelivery");
+            assert_eq!(envelope.payload, b"payload-action-1");
+        }
+    }
+}
+
+#[test]
+fn scenario_22_delivery_fault_environment_is_inert_without_test_flag() {
+    let harness = ContractHarness::start_with_fault(false, Some("before_delivery_append"));
+    prepare_dispatched_attempt(&harness);
+    let response = call(
+        &mut harness.actuator_client(),
+        "disabled-fault-acquire",
+        "AcquireDispatch",
+        json!({
+            "attempt_id": 1,
+            "dispatch_identity": "dispatch-1",
+            "actuator_id": "c04:generic"
+        }),
+    );
+    assert_eq!(response.status, "Ok");
+    assert_eq!(
+        response.outcome.expect("delivered envelope")["delivery_outcome"],
+        json!("Delivered")
+    );
+    assert!(harness
+        .daemon
+        .lock()
+        .expect("daemon mutex poisoned")
+        .try_wait()
+        .expect("poll daemon")
+        .is_none());
 }

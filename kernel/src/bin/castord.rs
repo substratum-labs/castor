@@ -58,6 +58,35 @@ enum SocketChannel {
     Actuator,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeliveryFaultPoint {
+    BeforeDeliveryAppend,
+    AfterDeliveryFsyncBeforeResponse,
+}
+
+impl DeliveryFaultPoint {
+    fn load(allow_test_opcodes: bool) -> io::Result<Option<Self>> {
+        if !allow_test_opcodes {
+            return Ok(None);
+        }
+        match env::var("CASTORD_TEST_FAULT_POINT") {
+            Ok(value) if value == "before_delivery_append" => Ok(Some(Self::BeforeDeliveryAppend)),
+            Ok(value) if value == "after_delivery_fsync_before_response" => {
+                Ok(Some(Self::AfterDeliveryFsyncBeforeResponse))
+            }
+            Ok(value) => Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("unsupported CASTORD_TEST_FAULT_POINT: {value}"),
+            )),
+            Err(env::VarError::NotPresent) => Ok(None),
+            Err(env::VarError::NotUnicode(_)) => Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                "CASTORD_TEST_FAULT_POINT must be UTF-8",
+            )),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct QueryOperationDescriptor {
@@ -71,6 +100,16 @@ struct QueryOperationDescriptor {
 enum SupervisedChild {
     Bare(Child),
     Roche(RocheProcessSupervisor),
+}
+
+#[derive(Clone)]
+struct ServerContext {
+    authority: Arc<Mutex<D1GovernedTurnAuthority>>,
+    child: Arc<Mutex<Option<SupervisedChild>>>,
+    allow_test_opcodes: bool,
+    trust: Arc<Option<evidence::EvidenceTrust>>,
+    actuator_trust: Arc<Option<actuator::ActuatorTrust>>,
+    delivery_fault_point: Option<DeliveryFaultPoint>,
 }
 
 impl SupervisedChild {
@@ -268,6 +307,7 @@ fn dispatch(
     allow_test_opcodes: bool,
     trust: Option<&evidence::EvidenceTrust>,
     actuator_trust: Option<&actuator::ActuatorTrust>,
+    delivery_fault_point: Option<DeliveryFaultPoint>,
 ) -> Result<Value, String> {
     let agent_allowed = matches!(
         request.op.as_str(),
@@ -460,8 +500,18 @@ fn dispatch(
             if request.actuator_id != actuator_trust.actuator_id {
                 return Ok(outcome_value(GovernedTurnOutcome::RejectedBindingOrIssuer));
             }
+            if delivery_fault_point == Some(DeliveryFaultPoint::BeforeDeliveryAppend) {
+                std::process::exit(86);
+            }
             return match authority.acquire_dispatch(request) {
-                Ok(envelope) => serde_json::to_value(envelope).map_err(|error| error.to_string()),
+                Ok(envelope) => {
+                    if delivery_fault_point
+                        == Some(DeliveryFaultPoint::AfterDeliveryFsyncBeforeResponse)
+                    {
+                        std::process::exit(87);
+                    }
+                    serde_json::to_value(envelope).map_err(|error| error.to_string())
+                }
                 Err(outcome) => Ok(outcome_value(outcome)),
             };
         }
@@ -532,15 +582,7 @@ fn dispatch(
     Ok(outcome_value(governed))
 }
 
-fn serve_connection(
-    mut stream: UnixStream,
-    authority: Arc<Mutex<D1GovernedTurnAuthority>>,
-    child: Arc<Mutex<Option<SupervisedChild>>>,
-    channel: SocketChannel,
-    allow_test_opcodes: bool,
-    trust: Arc<Option<evidence::EvidenceTrust>>,
-    actuator_trust: Arc<Option<actuator::ActuatorTrust>>,
-) {
+fn serve_connection(mut stream: UnixStream, channel: SocketChannel, context: ServerContext) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     loop {
         let payload = match read_framed(&mut stream) {
@@ -565,11 +607,13 @@ fn serve_connection(
             }
         };
         let peer_authorized = match channel {
-            SocketChannel::Evidence => trust
+            SocketChannel::Evidence => context
+                .trust
                 .as_ref()
                 .as_ref()
                 .is_some_and(|trust| evidence::peer_uid(&stream).ok() == Some(trust.peer_uid)),
-            SocketChannel::Actuator => actuator_trust
+            SocketChannel::Actuator => context
+                .actuator_trust
                 .as_ref()
                 .as_ref()
                 .is_some_and(|trust| trust.matches_peer(&stream)),
@@ -579,12 +623,13 @@ fn serve_connection(
             Err("RejectedBindingOrIssuer".into())
         } else {
             dispatch(
-                &mut authority.lock().expect("authority mutex poisoned"),
+                &mut context.authority.lock().expect("authority mutex poisoned"),
                 &request,
                 channel,
-                allow_test_opcodes,
-                trust.as_ref().as_ref(),
-                actuator_trust.as_ref().as_ref(),
+                context.allow_test_opcodes,
+                context.trust.as_ref().as_ref(),
+                context.actuator_trust.as_ref().as_ref(),
+                context.delivery_fault_point,
             )
         };
         let fenced = matches!(outcome.as_ref().ok(), Some(value) if value.get("type") == Some(&json!("GenerationFenced")));
@@ -605,7 +650,7 @@ fn serve_connection(
             &serde_json::to_vec(&response).expect("response JSON"),
         );
         if fenced {
-            if let Some(mut child) = child.lock().expect("child mutex poisoned").take() {
+            if let Some(mut child) = context.child.lock().expect("child mutex poisoned").take() {
                 // `persist_fence` does the C-01 append and sync before this
                 // branch is reached.  A Roche carrier therefore gets SIGKILL
                 // with no grace window after the durable fence.
@@ -617,31 +662,14 @@ fn serve_connection(
 
 fn serve_listener(
     listener: UnixListener,
-    authority: Arc<Mutex<D1GovernedTurnAuthority>>,
-    child: Arc<Mutex<Option<SupervisedChild>>>,
     channel: SocketChannel,
-    allow_test_opcodes: bool,
-    trust: Arc<Option<evidence::EvidenceTrust>>,
-    actuator_trust: Arc<Option<actuator::ActuatorTrust>>,
+    context: ServerContext,
 ) -> io::Result<()> {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                let authority = Arc::clone(&authority);
-                let child = Arc::clone(&child);
-                let trust = Arc::clone(&trust);
-                let actuator_trust = Arc::clone(&actuator_trust);
-                thread::spawn(move || {
-                    serve_connection(
-                        stream,
-                        authority,
-                        child,
-                        channel,
-                        allow_test_opcodes,
-                        trust,
-                        actuator_trust,
-                    )
-                });
+                let context = context.clone();
+                thread::spawn(move || serve_connection(stream, channel, context));
             }
             Err(error) => return Err(error),
         }
@@ -652,6 +680,7 @@ fn serve_listener(
 fn run(config: Config) -> io::Result<()> {
     let trust = Arc::new(evidence::EvidenceTrust::load()?);
     let actuator_trust = Arc::new(actuator::ActuatorTrust::load()?);
+    let delivery_fault_point = DeliveryFaultPoint::load(config.allow_test_opcodes)?;
     if config.actuator_socket.is_some() && actuator_trust.is_none() {
         return Err(io::Error::new(
             ErrorKind::InvalidInput,
@@ -715,66 +744,36 @@ fn run(config: Config) -> io::Result<()> {
         )),
         None => None,
     }));
+    let context = ServerContext {
+        authority,
+        child,
+        allow_test_opcodes: config.allow_test_opcodes,
+        trust,
+        actuator_trust,
+        delivery_fault_point,
+    };
     {
-        let authority = Arc::clone(&authority);
-        let child = Arc::clone(&child);
-        let trust = Arc::clone(&trust);
-        let actuator_trust = Arc::clone(&actuator_trust);
+        let evidence_context = ServerContext {
+            allow_test_opcodes: false,
+            ..context.clone()
+        };
         thread::spawn(move || {
-            let _ = serve_listener(
-                evidence_listener,
-                authority,
-                child,
-                SocketChannel::Evidence,
-                false,
-                trust,
-                actuator_trust,
-            );
+            let _ = serve_listener(evidence_listener, SocketChannel::Evidence, evidence_context);
         });
     }
     if let Some(control_listener) = control_listener {
-        let trust = Arc::clone(&trust);
-        let actuator_trust = Arc::clone(&actuator_trust);
-        let authority = Arc::clone(&authority);
-        let child = Arc::clone(&child);
+        let control_context = context.clone();
         thread::spawn(move || {
-            let _ = serve_listener(
-                control_listener,
-                authority,
-                child,
-                SocketChannel::Control,
-                config.allow_test_opcodes,
-                trust,
-                actuator_trust,
-            );
+            let _ = serve_listener(control_listener, SocketChannel::Control, control_context);
         });
     }
     if let Some(actuator_listener) = actuator_listener {
-        let trust = Arc::clone(&trust);
-        let actuator_trust = Arc::clone(&actuator_trust);
-        let authority = Arc::clone(&authority);
-        let child = Arc::clone(&child);
+        let actuator_context = context.clone();
         thread::spawn(move || {
-            let _ = serve_listener(
-                actuator_listener,
-                authority,
-                child,
-                SocketChannel::Actuator,
-                false,
-                trust,
-                actuator_trust,
-            );
+            let _ = serve_listener(actuator_listener, SocketChannel::Actuator, actuator_context);
         });
     }
-    serve_listener(
-        listener,
-        authority,
-        child,
-        SocketChannel::Agent,
-        config.allow_test_opcodes,
-        trust,
-        actuator_trust,
-    )
+    serve_listener(listener, SocketChannel::Agent, context)
 }
 
 /// Compatibility-only read path retained for the earlier vertical-slice

@@ -11,8 +11,15 @@ use castor_kernel::c06_composition::{
     PresentAdmissionCertificateRequest, PresentSettlementCertificateRequest,
     RecordDispatchAttemptRequest, RequestInteractionRequest,
 };
+use castor_kernel::host::{GatewayClient, SyscallRequest};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::fs;
+use std::os::unix::fs::MetadataExt;
+use std::os::unix::net::UnixStream;
+use std::process::Command;
+use std::thread;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 const AGENT: &str = "agent-actuator-test";
@@ -271,4 +278,141 @@ fn terminal_attempt_cannot_be_reacquired() {
         Err(GovernedTurnOutcome::RejectedCurrentState)
     );
     assert_eq!(fixture.authority.inspect_journal().len(), before);
+}
+
+fn daemon_command(root: &TempDir) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_castord"));
+    command.args([
+        "--storage-root",
+        root.path().to_str().unwrap(),
+        "--socket",
+        root.path().join("agent.sock").to_str().unwrap(),
+        "--actuator-socket",
+        root.path().join("actuator.sock").to_str().unwrap(),
+    ]);
+    command
+}
+
+fn write_actuator_trust(root: &TempDir, value: serde_json::Value) -> std::path::PathBuf {
+    let path = root.path().join("actuator-trust.json");
+    fs::write(&path, serde_json::to_vec(&value).expect("trust JSON")).expect("write trust config");
+    path
+}
+
+#[test]
+fn actuator_socket_requires_strict_nonempty_trust_configuration() {
+    let missing_root = tempfile::tempdir().expect("missing trust root");
+    let missing = daemon_command(&missing_root)
+        .env_remove("CASTORD_ACTUATOR_TRUST_CONFIG")
+        .output()
+        .expect("run daemon without actuator trust");
+    assert!(!missing.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("requires CASTORD_ACTUATOR_TRUST_CONFIG")
+    );
+
+    for value in [
+        serde_json::json!({ "peer_uid": 1, "actuator_id": "  " }),
+        serde_json::json!({ "peer_uid": 1, "actuator_id": ACTUATOR, "extra": true }),
+    ] {
+        let root = tempfile::tempdir().expect("invalid trust root");
+        let trust = write_actuator_trust(&root, value);
+        let output = daemon_command(&root)
+            .env("CASTORD_ACTUATOR_TRUST_CONFIG", trust)
+            .output()
+            .expect("run daemon with invalid actuator trust");
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("actuator trust"));
+    }
+}
+
+#[test]
+fn all_configured_socket_paths_must_be_distinct() {
+    let root = tempfile::tempdir().expect("duplicate socket root");
+    let trust = write_actuator_trust(
+        &root,
+        serde_json::json!({
+            "peer_uid": fs::metadata(root.path()).expect("root metadata").uid(),
+            "actuator_id": ACTUATOR
+        }),
+    );
+    let same_socket = root.path().join("same.sock");
+    let output = Command::new(env!("CARGO_BIN_EXE_castord"))
+        .args([
+            "--storage-root",
+            root.path().to_str().unwrap(),
+            "--socket",
+            same_socket.to_str().unwrap(),
+            "--actuator-socket",
+            same_socket.to_str().unwrap(),
+        ])
+        .env("CASTORD_ACTUATOR_TRUST_CONFIG", trust)
+        .output()
+        .expect("run daemon with duplicate socket paths");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("distinct paths"));
+}
+
+#[test]
+fn unknown_delivery_fault_point_is_rejected_when_test_hooks_are_enabled() {
+    let root = tempfile::tempdir().expect("unknown fault root");
+    let trust = write_actuator_trust(
+        &root,
+        serde_json::json!({
+            "peer_uid": fs::metadata(root.path()).expect("root metadata").uid(),
+            "actuator_id": ACTUATOR
+        }),
+    );
+    let output = daemon_command(&root)
+        .arg("--allow-test-opcodes")
+        .env("CASTORD_ACTUATOR_TRUST_CONFIG", trust)
+        .env("CASTORD_TEST_FAULT_POINT", "unknown-seam")
+        .output()
+        .expect("run daemon with unknown delivery fault point");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("unsupported CASTORD_TEST_FAULT_POINT")
+    );
+}
+
+#[test]
+fn actuator_socket_rejects_a_peer_uid_not_named_by_trust() {
+    let root = tempfile::tempdir().expect("wrong peer root");
+    let current_uid = fs::metadata(root.path()).expect("root metadata").uid();
+    let trust = write_actuator_trust(
+        &root,
+        serde_json::json!({
+            "peer_uid": current_uid.saturating_add(1),
+            "actuator_id": ACTUATOR
+        }),
+    );
+    let actuator_socket = root.path().join("actuator.sock");
+    let mut daemon = daemon_command(&root)
+        .env("CASTORD_ACTUATOR_TRUST_CONFIG", trust)
+        .spawn()
+        .expect("start daemon with nonmatching peer uid");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while UnixStream::connect(&actuator_socket).is_err() {
+        assert!(Instant::now() < deadline, "actuator socket start timeout");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut client = GatewayClient::connect(&actuator_socket).expect("connect actuator socket");
+    let response = client
+        .request(&SyscallRequest {
+            request_id: "wrong-peer".into(),
+            op: "AcquireDispatch".into(),
+            payload: serde_json::json!({
+                "attempt_id": 1,
+                "dispatch_identity": DISPATCH,
+                "actuator_id": ACTUATOR
+            }),
+        })
+        .expect("wrong peer receives framed rejection");
+    assert_eq!(response.status, "Error");
+    assert_eq!(
+        response.error.expect("wrong peer error").code,
+        "RejectedBindingOrIssuer"
+    );
+    let _ = daemon.kill();
+    let _ = daemon.wait();
 }
