@@ -27,6 +27,15 @@ fn setup_awaiting_interaction() -> (TempDir, D1GovernedTurnAuthority, Vec<u8>, S
         ),
         castor_kernel::c01_storage::EnsureRegionOutcome::Success(_)
     ));
+    assert!(matches!(
+        storage.ensure_region(
+            "region://next-observation",
+            &digest(b"the next bound observation"),
+            b"the next bound observation",
+            DurabilityProfile::D1,
+        ),
+        castor_kernel::c01_storage::EnsureRegionOutcome::Success(_)
+    ));
     let mut authority = D1GovernedTurnAuthority::for_test(storage);
     assert!(matches!(
         authority.admit_turn(AdmitTurnRequest {
@@ -238,6 +247,62 @@ fn a_later_interaction_cannot_reauthorize_an_already_consumed_binding() {
         }),
         GovernedTurnOutcome::InteractionConsumed(_)
     ));
+}
+
+#[test]
+fn recovery_rejects_historical_binding_but_allows_latest_binding_with_fresh_lease() {
+    let (_root, mut authority, _content, _digest) = setup_bound_interaction();
+    assert!(matches!(
+        authority.consume_interaction(ConsumeInteractionRequest {
+            interaction_id: "interaction-1".into(),
+            lease_epoch: 1,
+        }),
+        GovernedTurnOutcome::InteractionConsumed(_)
+    ));
+    assert_eq!(
+        authority.request_interaction(RequestInteractionRequest {
+            query_operation: None,
+            interaction_id: "interaction-2".into(),
+            lease_epoch: 1,
+            request_digest: digest(b"second request"),
+        }),
+        GovernedTurnOutcome::InteractionRequested
+    );
+    assert_eq!(
+        authority.report_outcome(InteractionOutcomeReport {
+            interaction_id: "interaction-2".into(),
+            observation_region_id: "region://next-observation".into(),
+            observation_digest: digest(b"the next bound observation"),
+        }),
+        GovernedTurnOutcome::InteractionBound
+    );
+    assert_eq!(
+        authority.reconstruct_after_crash(),
+        GovernedTurnOutcome::Reconstructed
+    );
+
+    let before = authority.inspect_journal();
+    assert_eq!(
+        authority.consume_interaction(ConsumeInteractionRequest {
+            interaction_id: "interaction-1".into(),
+            lease_epoch: 2,
+        }),
+        GovernedTurnOutcome::RejectedStaleAuthority
+    );
+    assert_eq!(authority.inspect_journal(), before);
+    assert_eq!(
+        authority.consume_interaction(ConsumeInteractionRequest {
+            interaction_id: "interaction-2".into(),
+            lease_epoch: 2,
+        }),
+        GovernedTurnOutcome::InteractionConsumed(ConsumedInteractionPayload {
+            interaction_id: "interaction-2".into(),
+            observation_region_id: "region://next-observation".into(),
+            observation_digest: digest(b"the next bound observation"),
+            content: b"the next bound observation".to_vec(),
+            lease_epoch: 2,
+        })
+    );
 }
 
 #[test]

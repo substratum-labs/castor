@@ -1456,6 +1456,7 @@ impl D1GovernedTurnAuthority {
             return self.consumed_interaction_outcome(&request, &binding);
         }
         if turn.status != TurnStatus::Ready
+            || turn.last_bound_interaction.as_deref() != Some(request.interaction_id.as_str())
             || turn
                 .consumed_interactions
                 .get(&request.interaction_id)
