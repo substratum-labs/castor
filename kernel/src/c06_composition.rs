@@ -19,7 +19,7 @@ pub enum GovernedTurnOutcome {
     },
     InteractionRequested,
     InteractionBound,
-    InteractionConsumed,
+    InteractionConsumed(ConsumedInteractionPayload),
     TurnCommitted,
     ActionRegistered,
     AttemptArmed {
@@ -53,6 +53,15 @@ pub enum GovernedTurnOutcome {
     RejectedPrecondition,
     IntegrityOrProtocolFault,
     UnavailableBeforeAck,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConsumedInteractionPayload {
+    pub interaction_id: String,
+    pub observation_region_id: String,
+    pub observation_digest: String,
+    pub content: Vec<u8>,
+    pub lease_epoch: u64,
 }
 
 /// Core-authored, immutable observation of unsettled effects at Turn admission.
@@ -263,9 +272,21 @@ struct Turn {
     active_lease: Option<u64>,
     status: TurnStatus,
     requested: HashSet<String>,
-    interactions: HashMap<String, String>,
+    interactions: HashMap<String, BoundInteraction>,
+    #[serde(default)]
+    last_bound_interaction: Option<String>,
+    #[serde(default)]
+    consumed_interaction: Option<String>,
+    #[serde(default)]
+    consumed_interactions: HashMap<String, (u64, u64)>,
     #[serde(default)]
     query_operations: HashSet<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BoundInteraction {
+    observation_region_id: String,
+    observation_digest: String,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum AttemptStatus {
@@ -697,6 +718,25 @@ impl D1GovernedTurnAuthority {
             .read_region(id)
             .is_some_and(|bytes| format!("sha256:{:x}", Sha256::digest(bytes)) == digest)
     }
+    fn consumed_interaction_outcome(
+        &self,
+        request: &ConsumeInteractionRequest,
+        binding: &BoundInteraction,
+    ) -> GovernedTurnOutcome {
+        let Some(content) = self.storage().read_region(&binding.observation_region_id) else {
+            return GovernedTurnOutcome::IntegrityOrProtocolFault;
+        };
+        if format!("sha256:{:x}", Sha256::digest(&content)) != binding.observation_digest {
+            return GovernedTurnOutcome::IntegrityOrProtocolFault;
+        }
+        GovernedTurnOutcome::InteractionConsumed(ConsumedInteractionPayload {
+            interaction_id: request.interaction_id.clone(),
+            observation_region_id: binding.observation_region_id.clone(),
+            observation_digest: binding.observation_digest.clone(),
+            content,
+            lease_epoch: request.lease_epoch,
+        })
+    }
     fn query_operation_matches(&self, query: &QueryOperation) -> bool {
         let Some(attempt) = self.attempts.get(&query.attempt_id) else {
             return false;
@@ -833,6 +873,7 @@ impl D1GovernedTurnAuthority {
             requests
         };
         for request in requests {
+            let entry_core_epoch = request.expected_core_epoch;
             let proof_digest = self
                 .storage()
                 .read_entry(&request.agent_id, request.entry_id)
@@ -854,6 +895,11 @@ impl D1GovernedTurnAuthority {
                     {
                         turn.last_lease = lease_epoch;
                         turn.active_lease = Some(lease_epoch);
+                        turn.consumed_interaction = turn.last_bound_interaction.clone();
+                        if let Some(interaction_id) = turn.last_bound_interaction.clone() {
+                            turn.consumed_interactions
+                                .insert(interaction_id, (lease_epoch, entry_core_epoch));
+                        }
                         turn.status = TurnStatus::Ready;
                     } else {
                         let base = request.expected_base_projection_digest.unwrap_or_default();
@@ -866,6 +912,9 @@ impl D1GovernedTurnAuthority {
                             status: TurnStatus::Ready,
                             requested: HashSet::new(),
                             interactions: HashMap::new(),
+                            last_bound_interaction: None,
+                            consumed_interaction: None,
+                            consumed_interactions: HashMap::new(),
                             query_operations: HashSet::new(),
                         });
                     }
@@ -897,11 +946,19 @@ impl D1GovernedTurnAuthority {
                     turn_id,
                     interaction_id,
                     region_id,
+                    result_digest,
                     ..
                 } => {
                     if let Some(turn) = self.turn.as_mut() {
                         if turn.turn_id == turn_id {
-                            turn.interactions.insert(interaction_id, region_id);
+                            turn.interactions.insert(
+                                interaction_id.clone(),
+                                BoundInteraction {
+                                    observation_region_id: region_id,
+                                    observation_digest: result_digest,
+                                },
+                            );
+                            turn.last_bound_interaction = Some(interaction_id);
                             turn.status = TurnStatus::Ready;
                         }
                     }
@@ -1264,6 +1321,9 @@ impl D1GovernedTurnAuthority {
             status: TurnStatus::Ready,
             requested: HashSet::new(),
             interactions: HashMap::new(),
+            last_bound_interaction: None,
+            consumed_interaction: None,
+            consumed_interactions: HashMap::new(),
             query_operations: HashSet::new(),
         });
         GovernedTurnOutcome::Admitted {
@@ -1355,7 +1415,7 @@ impl D1GovernedTurnAuthority {
                 turn_id: id,
                 interaction_id: report.interaction_id.clone(),
                 region_id: report.observation_region_id.clone(),
-                result_digest: report.observation_digest,
+                result_digest: report.observation_digest.clone(),
                 disposition: "Bound".into(),
             },
             vec![report.observation_region_id.clone()],
@@ -1366,8 +1426,14 @@ impl D1GovernedTurnAuthority {
             return outcome;
         }
         let turn = self.turn.as_mut().expect("turn exists");
-        turn.interactions
-            .insert(report.interaction_id, report.observation_region_id);
+        turn.interactions.insert(
+            report.interaction_id.clone(),
+            BoundInteraction {
+                observation_region_id: report.observation_region_id,
+                observation_digest: report.observation_digest,
+            },
+        );
+        turn.last_bound_interaction = Some(report.interaction_id);
         turn.status = TurnStatus::Ready;
         GovernedTurnOutcome::InteractionBound
     }
@@ -1378,8 +1444,22 @@ impl D1GovernedTurnAuthority {
         let Some(turn) = self.turn.as_ref() else {
             return GovernedTurnOutcome::RejectedStaleAuthority;
         };
+        let Some(binding) = turn.interactions.get(&request.interaction_id).cloned() else {
+            return GovernedTurnOutcome::RejectedStaleAuthority;
+        };
+        if turn.status == TurnStatus::Ready
+            && turn.active_lease == Some(request.lease_epoch)
+            && turn.consumed_interaction.as_deref() == Some(request.interaction_id.as_str())
+            && turn.consumed_interactions.get(&request.interaction_id)
+                == Some(&(request.lease_epoch, self.core_epoch))
+        {
+            return self.consumed_interaction_outcome(&request, &binding);
+        }
         if turn.status != TurnStatus::Ready
-            || !turn.interactions.contains_key(&request.interaction_id)
+            || turn
+                .consumed_interactions
+                .get(&request.interaction_id)
+                .is_some_and(|(_, core_epoch)| *core_epoch == self.core_epoch)
             || request.lease_epoch <= turn.last_lease
             || turn.active_lease.is_some()
         {
@@ -1398,10 +1478,16 @@ impl D1GovernedTurnAuthority {
         ) {
             return outcome;
         }
+        let core_epoch = self.core_epoch;
         let turn = self.turn.as_mut().expect("turn exists");
         turn.last_lease = request.lease_epoch;
         turn.active_lease = Some(request.lease_epoch);
-        GovernedTurnOutcome::InteractionConsumed
+        turn.consumed_interaction = Some(request.interaction_id.clone());
+        turn.consumed_interactions.insert(
+            request.interaction_id.clone(),
+            (request.lease_epoch, core_epoch),
+        );
+        self.consumed_interaction_outcome(&request, &binding)
     }
     pub fn commit_turn(&mut self, request: CommitTurnRequest) -> GovernedTurnOutcome {
         let Some(turn) = self.turn.as_ref() else {

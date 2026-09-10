@@ -340,14 +340,25 @@ fn commit_ready_turn(client: &mut GatewayClient, action_manifest: &[&str]) {
         ),
         "InteractionBound",
     );
-    assert_outcome(
-        call(
-            client,
-            "consume",
-            "ConsumeInteraction",
-            json!({ "interaction_id": "interaction-1", "lease_epoch": 1 }),
-        ),
-        "InteractionConsumed",
+    let consumed = call(
+        client,
+        "consume",
+        "ConsumeInteraction",
+        json!({ "interaction_id": "interaction-1", "lease_epoch": 1 }),
+    );
+    assert_eq!(consumed.status, "Ok");
+    assert_eq!(
+        consumed.outcome,
+        Some(json!({
+            "type": "InteractionConsumed",
+            "payload": {
+                "interaction_id": "interaction-1",
+                "observation_region_id": "region://observation",
+                "observation_digest": DIGEST,
+                "content": [],
+                "lease_epoch": 1
+            }
+        }))
     );
     assert_outcome(
         call(
@@ -895,6 +906,26 @@ fn malformed_action_binding_is_rejected_at_gateway_boundary() {
     let error = response.error.expect("malformed binding error");
     assert_eq!(error.code, "MalformedRequest");
     assert!(error.message.contains("invalid action_bindings"));
+}
+
+#[test]
+fn consume_interaction_rejects_arbitrary_region_selector_at_gateway_boundary() {
+    let harness = ContractHarness::new();
+    let response = call(
+        &mut harness.client(),
+        "consume-region-selector",
+        "ConsumeInteraction",
+        json!({
+            "interaction_id": "interaction-1",
+            "lease_epoch": 1,
+            "observation_region_id": "region://attacker-selected"
+        }),
+    );
+    assert_eq!(response.status, "Error");
+    assert_eq!(
+        response.error.expect("strict request error").code,
+        "MalformedRequest"
+    );
 }
 
 #[test]

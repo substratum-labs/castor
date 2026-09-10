@@ -86,10 +86,10 @@ impl Fixture {
             self.authority.report_outcome(report_interaction()),
             GovernedTurnOutcome::InteractionBound
         );
-        assert_eq!(
+        assert!(matches!(
             self.authority.consume_interaction(consume()),
-            GovernedTurnOutcome::InteractionConsumed
-        );
+            GovernedTurnOutcome::InteractionConsumed(_)
+        ));
     }
 
     fn committed_action(&mut self) {
@@ -292,10 +292,10 @@ fn test_comp_observation_consumed_only_under_strictly_monotonic_fresh_lease() {
         c.authority.consume_interaction(stale),
         GovernedTurnOutcome::RejectedStaleAuthority
     );
-    assert_eq!(
+    assert!(matches!(
         c.authority.consume_interaction(consume()),
-        GovernedTurnOutcome::InteractionConsumed
-    );
+        GovernedTurnOutcome::InteractionConsumed(_)
+    ));
 }
 #[test]
 fn test_comp_recovery_stales_pre_crash_lease_and_allows_fresh_lease_for_turn_commit() {
@@ -315,10 +315,10 @@ fn test_comp_recovery_stales_pre_crash_lease_and_allows_fresh_lease_for_turn_com
     );
     let mut fresh_lease = consume();
     fresh_lease.lease_epoch = 2;
-    assert_eq!(
+    assert!(matches!(
         authority.consume_interaction(fresh_lease),
-        GovernedTurnOutcome::InteractionConsumed
-    );
+        GovernedTurnOutcome::InteractionConsumed(_)
+    ));
     let mut fresh_commit = commit();
     fresh_commit.lease_epoch = 2;
     assert_eq!(
@@ -779,10 +779,10 @@ fn test_c2_effect_transition_during_turn_preserves_fresh_commit_and_fence() {
                 c.authority.report_outcome(report),
                 GovernedTurnOutcome::InteractionBound
             );
-            assert_eq!(
+            assert!(matches!(
                 c.authority.consume_interaction(consumption),
-                GovernedTurnOutcome::InteractionConsumed
-            );
+                GovernedTurnOutcome::InteractionConsumed(_)
+            ));
             let mut request = commit();
             request.base_projection_digest = base;
             assert_eq!(
@@ -1102,10 +1102,10 @@ fn test_c2_probe_budget_survives_snapshot_tail_and_exhaustion() {
         let mut consume = consume();
         consume.interaction_id = format!("probe-{index}");
         consume.lease_epoch = index + 1;
-        assert_eq!(
+        assert!(matches!(
             f.authority.consume_interaction(consume),
-            GovernedTurnOutcome::InteractionConsumed
-        );
+            GovernedTurnOutcome::InteractionConsumed(_)
+        ));
     }
     f.authority.create_snapshot("budget-cache").unwrap();
     assert_eq!(
@@ -1123,10 +1123,10 @@ fn test_c2_probe_budget_survives_snapshot_tail_and_exhaustion() {
     let mut fresh_lease = consume();
     fresh_lease.interaction_id = "probe-2".into();
     fresh_lease.lease_epoch = 4;
-    assert_eq!(
+    assert!(matches!(
         f.authority.consume_interaction(fresh_lease),
-        GovernedTurnOutcome::InteractionConsumed
-    );
+        GovernedTurnOutcome::InteractionConsumed(_)
+    ));
     let before = f.authority.inspect_journal();
     let mut request = request_interaction();
     request.query_operation = Some(QueryOperation {

@@ -99,14 +99,14 @@ impl Fixture {
             }),
             GovernedTurnOutcome::InteractionBound
         );
-        assert_eq!(
+        assert!(matches!(
             self.authority
                 .consume_interaction(ConsumeInteractionRequest {
                     interaction_id,
                     lease_epoch,
                 }),
-            GovernedTurnOutcome::InteractionConsumed
-        );
+            GovernedTurnOutcome::InteractionConsumed(_)
+        ));
     }
 
     fn first_commit(&mut self, bindings: Vec<ActionBinding>) -> GovernedTurnOutcome {

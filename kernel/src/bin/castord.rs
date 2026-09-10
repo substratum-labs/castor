@@ -97,6 +97,13 @@ struct QueryOperationDescriptor {
     adapter_id: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConsumeInteractionPayload {
+    interaction_id: String,
+    lease_epoch: u64,
+}
+
 enum SupervisedChild {
     Bare(Child),
     Roche(RocheProcessSupervisor),
@@ -289,11 +296,14 @@ fn outcome_value(outcome: GovernedTurnOutcome) -> Value {
         GovernedTurnOutcome::Settled { resolution } => {
             json!({"type":"Settled","resolution":resolution})
         }
+        GovernedTurnOutcome::InteractionConsumed(payload) => {
+            json!({"type":"InteractionConsumed","payload":payload})
+        }
         GovernedTurnOutcome::RejectedStaleGeneration { current_generation } => {
             json!({"type":"RejectedStaleGeneration","current_generation":current_generation})
         }
         other => json!({"type": match other {
-            GovernedTurnOutcome::EntryPersisted => "EntryPersisted", GovernedTurnOutcome::InteractionRequested => "InteractionRequested", GovernedTurnOutcome::InteractionBound => "InteractionBound", GovernedTurnOutcome::InteractionConsumed => "InteractionConsumed", GovernedTurnOutcome::TurnCommitted => "TurnCommitted", GovernedTurnOutcome::ActionRegistered => "ActionRegistered", GovernedTurnOutcome::DispatchRecorded => "DispatchRecorded", GovernedTurnOutcome::Delivered => "Delivered", GovernedTurnOutcome::DuplicateDelivery => "DuplicateDelivery", GovernedTurnOutcome::QuarantinedDispute => "QuarantinedDispute", GovernedTurnOutcome::CapabilityGranted => "CapabilityGranted", GovernedTurnOutcome::CapabilityRevoked => "CapabilityRevoked", GovernedTurnOutcome::DecisionSubmitted => "DecisionSubmitted", GovernedTurnOutcome::Reconstructed => "Reconstructed", GovernedTurnOutcome::Ambiguous => "Ambiguous", GovernedTurnOutcome::RejectedStaleAuthority => "RejectedStaleAuthority", GovernedTurnOutcome::RejectedCapabilityRevoked => "RejectedCapabilityRevoked", GovernedTurnOutcome::RejectedBindingOrIssuer => "RejectedBindingOrIssuer", GovernedTurnOutcome::RejectedInvalidProofClass => "RejectedInvalidProofClass", GovernedTurnOutcome::RejectedLateOrClosedTurn => "RejectedLateOrClosedTurn", GovernedTurnOutcome::RejectedCurrentState => "RejectedCurrentState", GovernedTurnOutcome::RejectedNotFound => "RejectedNotFound", GovernedTurnOutcome::RejectedPrecondition => "RejectedPrecondition", GovernedTurnOutcome::IntegrityOrProtocolFault => "IntegrityOrProtocolFault", GovernedTurnOutcome::UnavailableBeforeAck => "UnavailableBeforeAck", _ => unreachable!() }}),
+            GovernedTurnOutcome::EntryPersisted => "EntryPersisted", GovernedTurnOutcome::InteractionRequested => "InteractionRequested", GovernedTurnOutcome::InteractionBound => "InteractionBound", GovernedTurnOutcome::TurnCommitted => "TurnCommitted", GovernedTurnOutcome::ActionRegistered => "ActionRegistered", GovernedTurnOutcome::DispatchRecorded => "DispatchRecorded", GovernedTurnOutcome::Delivered => "Delivered", GovernedTurnOutcome::DuplicateDelivery => "DuplicateDelivery", GovernedTurnOutcome::QuarantinedDispute => "QuarantinedDispute", GovernedTurnOutcome::CapabilityGranted => "CapabilityGranted", GovernedTurnOutcome::CapabilityRevoked => "CapabilityRevoked", GovernedTurnOutcome::DecisionSubmitted => "DecisionSubmitted", GovernedTurnOutcome::Reconstructed => "Reconstructed", GovernedTurnOutcome::Ambiguous => "Ambiguous", GovernedTurnOutcome::RejectedStaleAuthority => "RejectedStaleAuthority", GovernedTurnOutcome::RejectedCapabilityRevoked => "RejectedCapabilityRevoked", GovernedTurnOutcome::RejectedBindingOrIssuer => "RejectedBindingOrIssuer", GovernedTurnOutcome::RejectedInvalidProofClass => "RejectedInvalidProofClass", GovernedTurnOutcome::RejectedLateOrClosedTurn => "RejectedLateOrClosedTurn", GovernedTurnOutcome::RejectedCurrentState => "RejectedCurrentState", GovernedTurnOutcome::RejectedNotFound => "RejectedNotFound", GovernedTurnOutcome::RejectedPrecondition => "RejectedPrecondition", GovernedTurnOutcome::IntegrityOrProtocolFault => "IntegrityOrProtocolFault", GovernedTurnOutcome::UnavailableBeforeAck => "UnavailableBeforeAck", _ => unreachable!() }}),
     }
 }
 fn ensure_value(outcome: EnsureRegionOutcome) -> Value {
@@ -403,10 +413,14 @@ fn dispatch(
                 observation_digest: string(p, "observation_digest")?,
             })
         }
-        "ConsumeInteraction" => authority.consume_interaction(ConsumeInteractionRequest {
-            interaction_id: string(p, "interaction_id")?,
-            lease_epoch: number(p, "lease_epoch")?,
-        }),
+        "ConsumeInteraction" => {
+            let payload: ConsumeInteractionPayload =
+                serde_json::from_value(p.clone()).map_err(|error| error.to_string())?;
+            authority.consume_interaction(ConsumeInteractionRequest {
+                interaction_id: payload.interaction_id,
+                lease_epoch: payload.lease_epoch,
+            })
+        }
         "CommitTurn" => authority.commit_turn(CommitTurnRequest {
             lease_epoch: number(p, "lease_epoch")?,
             base_projection_digest: string(p, "base_projection_digest")?,

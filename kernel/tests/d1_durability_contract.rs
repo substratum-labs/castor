@@ -313,13 +313,13 @@ fn test_d4_crash_advances_core_epoch_staling_pre_crash_lease() {
     let root = tempfile::tempdir().unwrap();
     let mut authority = authority(&root);
     ready_to_commit(&mut authority);
-    assert_eq!(
+    assert!(matches!(
         authority.consume_interaction(ConsumeInteractionRequest {
             interaction_id: "interaction-1".into(),
             lease_epoch: 1
         }),
-        GovernedTurnOutcome::InteractionConsumed
-    );
+        GovernedTurnOutcome::InteractionConsumed(_)
+    ));
     assert_eq!(authority.core_epoch(), 1);
     assert_eq!(
         authority.reconstruct_after_crash(),
@@ -557,13 +557,13 @@ fn test_d15_fresh_lease_acquired_after_restart_for_open_turn() {
     ready_to_commit(&mut authority);
     drop(authority);
     let mut recovered = D1GovernedTurnAuthority::open(root.path()).unwrap();
-    assert_eq!(
+    assert!(matches!(
         recovered.consume_interaction(ConsumeInteractionRequest {
             interaction_id: "interaction-1".into(),
             lease_epoch: 2
         }),
-        GovernedTurnOutcome::InteractionConsumed
-    );
+        GovernedTurnOutcome::InteractionConsumed(_)
+    ));
     assert_eq!(
         recovered.commit_turn(commit_request(2)),
         GovernedTurnOutcome::TurnCommitted

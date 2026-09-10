@@ -98,13 +98,13 @@ impl Fixture {
             }),
             GovernedTurnOutcome::InteractionBound
         );
-        assert_eq!(
+        assert!(matches!(
             authority.consume_interaction(ConsumeInteractionRequest {
                 interaction_id: "interaction-1".into(),
                 lease_epoch: 1,
             }),
-            GovernedTurnOutcome::InteractionConsumed
-        );
+            GovernedTurnOutcome::InteractionConsumed(_)
+        ));
         assert_eq!(
             authority.commit_turn(CommitTurnRequest {
                 lease_epoch: 1,
