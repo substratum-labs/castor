@@ -517,6 +517,12 @@ class ProviderProxyPolicyTests(unittest.TestCase):
         self.assertEqual(
             parse_allowed_connect_target("API.OPENAI.COM:443"), ("api.openai.com", 443)
         )
+        self.assertEqual(
+            parse_allowed_connect_target("chatgpt.com:443"), ("chatgpt.com", 443)
+        )
+        self.assertEqual(
+            parse_allowed_connect_target("CHATGPT.COM:443"), ("chatgpt.com", 443)
+        )
 
     def test_denies_raw_ips_userinfo_ports_and_other_destinations(self) -> None:
         denied = (

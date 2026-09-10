@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlsplit
 
-ALLOWED_HOST = "api.openai.com"
+ALLOWED_HOSTS = frozenset(("api.openai.com", "chatgpt.com"))
 ALLOWED_PORT = 443
 
 
@@ -44,7 +44,7 @@ def parse_allowed_connect_target(authority: str) -> tuple[str, int]:
         pass
     else:
         raise ProxyPolicyError("raw IP destinations are forbidden")
-    if host != ALLOWED_HOST or port_text != str(ALLOWED_PORT):
+    if host not in ALLOWED_HOSTS or port_text != str(ALLOWED_PORT):
         raise ProxyPolicyError("CONNECT destination is not allowlisted")
     return host, ALLOWED_PORT
 
@@ -60,7 +60,7 @@ def validate_redirect_target(location: str) -> None:
         or parsed.username is not None
         or parsed.password is not None
         or parsed.hostname is None
-        or parsed.hostname.rstrip(".").lower() != ALLOWED_HOST
+        or parsed.hostname.rstrip(".").lower() not in ALLOWED_HOSTS
         or port not in (None, ALLOWED_PORT)
     ):
         raise ProxyPolicyError("redirect leaves the allowlisted provider origin")
