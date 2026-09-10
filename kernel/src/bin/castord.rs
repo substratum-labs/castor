@@ -1,3 +1,5 @@
+#[path = "castord/actuator.rs"]
+mod actuator;
 #[path = "castord/evidence.rs"]
 mod evidence;
 
@@ -27,7 +29,7 @@ use std::thread;
 use std::time::Duration;
 
 fn usage() -> &'static str {
-    "usage: castord --storage-root PATH --socket PATH [--control-socket PATH] [--evidence-socket PATH] [--allow-test-opcodes] [--child CMD] [--sandbox roche|none] [--sandbox-image IMAGE]"
+    "usage: castord --storage-root PATH --socket PATH [--control-socket PATH] [--evidence-socket PATH] [--actuator-socket PATH] [--allow-test-opcodes] [--child CMD] [--sandbox roche|none] [--sandbox-image IMAGE]"
 }
 
 struct Config {
@@ -35,6 +37,7 @@ struct Config {
     socket: PathBuf,
     control_socket: Option<PathBuf>,
     evidence_socket: Option<PathBuf>,
+    actuator_socket: Option<PathBuf>,
     allow_test_opcodes: bool,
     child: Option<String>,
     sandbox: SandboxMode,
@@ -52,6 +55,7 @@ enum SocketChannel {
     Agent,
     Control,
     Evidence,
+    Actuator,
 }
 
 #[derive(Deserialize)]
@@ -89,6 +93,7 @@ fn parse_args() -> Result<Config, String> {
     let mut socket = None;
     let mut control_socket = None;
     let mut evidence_socket = None;
+    let mut actuator_socket = None;
     let mut allow_test_opcodes = false;
     let mut child = None;
     let mut sandbox = SandboxMode::None;
@@ -116,6 +121,11 @@ fn parse_args() -> Result<Config, String> {
             "--evidence-socket" => {
                 evidence_socket = Some(PathBuf::from(
                     args.next().ok_or("--evidence-socket requires a path")?,
+                ));
+            }
+            "--actuator-socket" => {
+                actuator_socket = Some(PathBuf::from(
+                    args.next().ok_or("--actuator-socket requires a path")?,
                 ));
             }
             "--allow-test-opcodes" => allow_test_opcodes = true,
@@ -149,6 +159,7 @@ fn parse_args() -> Result<Config, String> {
         socket: socket.ok_or_else(|| "--socket is required".to_string())?,
         control_socket,
         evidence_socket,
+        actuator_socket,
         allow_test_opcodes,
         child,
         sandbox,
@@ -256,6 +267,7 @@ fn dispatch(
     channel: SocketChannel,
     allow_test_opcodes: bool,
     trust: Option<&evidence::EvidenceTrust>,
+    actuator_trust: Option<&actuator::ActuatorTrust>,
 ) -> Result<Value, String> {
     let agent_allowed = matches!(
         request.op.as_str(),
@@ -290,6 +302,7 @@ fn dispatch(
     if (channel == SocketChannel::Agent && !agent_allowed && !test_opcode_allowed)
         || (channel == SocketChannel::Control && !control_allowed)
         || (channel == SocketChannel::Evidence && request.op != "PresentSettlementCertificate")
+        || (channel == SocketChannel::Actuator && request.op != "AcquireDispatch")
     {
         return Err("UnauthorizedOpcode".into());
     }
@@ -440,6 +453,18 @@ fn dispatch(
             attempt_id: number(p, "attempt_id")?,
             dispatch_identity: string(p, "dispatch_identity")?,
         }),
+        "AcquireDispatch" => {
+            let actuator_trust = actuator_trust.ok_or("RejectedBindingOrIssuer")?;
+            let request: AcquireDispatchRequest =
+                serde_json::from_value(p.clone()).map_err(|error| error.to_string())?;
+            if request.actuator_id != actuator_trust.actuator_id {
+                return Ok(outcome_value(GovernedTurnOutcome::RejectedBindingOrIssuer));
+            }
+            return match authority.acquire_dispatch(request) {
+                Ok(envelope) => serde_json::to_value(envelope).map_err(|error| error.to_string()),
+                Err(outcome) => Ok(outcome_value(outcome)),
+            };
+        }
         "PresentSettlementCertificate" => {
             let trust = trust.ok_or("RejectedBindingOrIssuer")?;
             trust
@@ -468,7 +493,9 @@ fn dispatch(
                 &string(p, "capability_id")?,
             ),
             SocketChannel::Control => authority.revoke_capability(&string(p, "capability_id")?),
-            SocketChannel::Evidence => return Err("UnauthorizedOpcode".into()),
+            SocketChannel::Evidence | SocketChannel::Actuator => {
+                return Err("UnauthorizedOpcode".into())
+            }
         },
         "Replay" => authority.reconstruct_after_crash(),
         "EnsureRegion" => {
@@ -512,6 +539,7 @@ fn serve_connection(
     channel: SocketChannel,
     allow_test_opcodes: bool,
     trust: Arc<Option<evidence::EvidenceTrust>>,
+    actuator_trust: Arc<Option<actuator::ActuatorTrust>>,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     loop {
@@ -536,11 +564,17 @@ fn serve_connection(
                 return;
             }
         };
-        let peer_authorized = channel != SocketChannel::Evidence
-            || trust
+        let peer_authorized = match channel {
+            SocketChannel::Evidence => trust
                 .as_ref()
                 .as_ref()
-                .is_some_and(|trust| evidence::peer_uid(&stream).ok() == Some(trust.peer_uid));
+                .is_some_and(|trust| evidence::peer_uid(&stream).ok() == Some(trust.peer_uid)),
+            SocketChannel::Actuator => actuator_trust
+                .as_ref()
+                .as_ref()
+                .is_some_and(|trust| trust.matches_peer(&stream)),
+            SocketChannel::Agent | SocketChannel::Control => true,
+        };
         let outcome = if !peer_authorized {
             Err("RejectedBindingOrIssuer".into())
         } else {
@@ -550,6 +584,7 @@ fn serve_connection(
                 channel,
                 allow_test_opcodes,
                 trust.as_ref().as_ref(),
+                actuator_trust.as_ref().as_ref(),
             )
         };
         let fenced = matches!(outcome.as_ref().ok(), Some(value) if value.get("type") == Some(&json!("GenerationFenced")));
@@ -587,6 +622,7 @@ fn serve_listener(
     channel: SocketChannel,
     allow_test_opcodes: bool,
     trust: Arc<Option<evidence::EvidenceTrust>>,
+    actuator_trust: Arc<Option<actuator::ActuatorTrust>>,
 ) -> io::Result<()> {
     for stream in listener.incoming() {
         match stream {
@@ -594,8 +630,17 @@ fn serve_listener(
                 let authority = Arc::clone(&authority);
                 let child = Arc::clone(&child);
                 let trust = Arc::clone(&trust);
+                let actuator_trust = Arc::clone(&actuator_trust);
                 thread::spawn(move || {
-                    serve_connection(stream, authority, child, channel, allow_test_opcodes, trust)
+                    serve_connection(
+                        stream,
+                        authority,
+                        child,
+                        channel,
+                        allow_test_opcodes,
+                        trust,
+                        actuator_trust,
+                    )
                 });
             }
             Err(error) => return Err(error),
@@ -606,6 +651,13 @@ fn serve_listener(
 
 fn run(config: Config) -> io::Result<()> {
     let trust = Arc::new(evidence::EvidenceTrust::load()?);
+    let actuator_trust = Arc::new(actuator::ActuatorTrust::load()?);
+    if config.actuator_socket.is_some() && actuator_trust.is_none() {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            "--actuator-socket requires CASTORD_ACTUATOR_TRUST_CONFIG",
+        ));
+    }
     fs::create_dir_all(&config.storage_root)?;
     fs::set_permissions(&config.storage_root, fs::Permissions::from_mode(0o700))?;
     let authority = Arc::new(Mutex::new(D1GovernedTurnAuthority::open(
@@ -615,8 +667,15 @@ fn run(config: Config) -> io::Result<()> {
         .evidence_socket
         .clone()
         .unwrap_or_else(|| config.socket.parent().unwrap().join("evidence.sock"));
-    if evidence_socket == config.socket || config.control_socket.as_ref() == Some(&evidence_socket)
-    {
+    let mut socket_paths = vec![config.socket.clone(), evidence_socket.clone()];
+    if let Some(path) = &config.control_socket {
+        socket_paths.push(path.clone());
+    }
+    if let Some(path) = &config.actuator_socket {
+        socket_paths.push(path.clone());
+    }
+    let unique_socket_paths: std::collections::HashSet<_> = socket_paths.iter().collect();
+    if unique_socket_paths.len() != socket_paths.len() {
         return Err(io::Error::new(
             ErrorKind::InvalidInput,
             "socket channels require distinct paths",
@@ -626,6 +685,11 @@ fn run(config: Config) -> io::Result<()> {
     let listener = bind_socket(&config.socket)?;
     let control_listener = config
         .control_socket
+        .as_deref()
+        .map(bind_socket)
+        .transpose()?;
+    let actuator_listener = config
+        .actuator_socket
         .as_deref()
         .map(bind_socket)
         .transpose()?;
@@ -655,6 +719,7 @@ fn run(config: Config) -> io::Result<()> {
         let authority = Arc::clone(&authority);
         let child = Arc::clone(&child);
         let trust = Arc::clone(&trust);
+        let actuator_trust = Arc::clone(&actuator_trust);
         thread::spawn(move || {
             let _ = serve_listener(
                 evidence_listener,
@@ -663,11 +728,13 @@ fn run(config: Config) -> io::Result<()> {
                 SocketChannel::Evidence,
                 false,
                 trust,
+                actuator_trust,
             );
         });
     }
     if let Some(control_listener) = control_listener {
         let trust = Arc::clone(&trust);
+        let actuator_trust = Arc::clone(&actuator_trust);
         let authority = Arc::clone(&authority);
         let child = Arc::clone(&child);
         thread::spawn(move || {
@@ -678,6 +745,24 @@ fn run(config: Config) -> io::Result<()> {
                 SocketChannel::Control,
                 config.allow_test_opcodes,
                 trust,
+                actuator_trust,
+            );
+        });
+    }
+    if let Some(actuator_listener) = actuator_listener {
+        let trust = Arc::clone(&trust);
+        let actuator_trust = Arc::clone(&actuator_trust);
+        let authority = Arc::clone(&authority);
+        let child = Arc::clone(&child);
+        thread::spawn(move || {
+            let _ = serve_listener(
+                actuator_listener,
+                authority,
+                child,
+                SocketChannel::Actuator,
+                false,
+                trust,
+                actuator_trust,
             );
         });
     }
@@ -688,6 +773,7 @@ fn run(config: Config) -> io::Result<()> {
         SocketChannel::Agent,
         config.allow_test_opcodes,
         trust,
+        actuator_trust,
     )
 }
 

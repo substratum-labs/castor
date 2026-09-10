@@ -220,6 +220,25 @@ pub struct DeliverArmedAttemptRequest {
     pub attempt_id: u64,
     pub dispatch_identity: String,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcquireDispatchRequest {
+    pub attempt_id: u64,
+    pub dispatch_identity: String,
+    pub actuator_id: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeliveredActionEnvelope {
+    pub delivery_outcome: String,
+    pub attempt_id: u64,
+    pub action_id: String,
+    pub dispatch_identity: String,
+    pub target_scope: String,
+    pub payload_region_ref: String,
+    pub payload_digest: String,
+    pub actuator_id: String,
+    pub payload: Vec<u8>,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PresentSettlementCertificateRequest {
     pub attempt_id: u64,
@@ -1753,6 +1772,48 @@ impl D1GovernedTurnAuthority {
             .expect("attempt exists")
             .delivered = true;
         GovernedTurnOutcome::Delivered
+    }
+    pub fn acquire_dispatch(
+        &mut self,
+        request: AcquireDispatchRequest,
+    ) -> Result<DeliveredActionEnvelope, GovernedTurnOutcome> {
+        let Some(attempt) = self.attempts.get(&request.attempt_id).cloned() else {
+            return Err(GovernedTurnOutcome::RejectedCurrentState);
+        };
+        if attempt.status != AttemptStatus::Dispatched {
+            return Err(GovernedTurnOutcome::RejectedCurrentState);
+        }
+        if attempt.dispatch_identity.as_deref() != Some(request.dispatch_identity.as_str())
+            || attempt.actuator_id.as_deref() != Some(request.actuator_id.as_str())
+        {
+            return Err(GovernedTurnOutcome::RejectedBindingOrIssuer);
+        }
+        let delivery_outcome = match self.deliver_armed_attempt(DeliverArmedAttemptRequest {
+            attempt_id: request.attempt_id,
+            dispatch_identity: request.dispatch_identity.clone(),
+        }) {
+            GovernedTurnOutcome::Delivered => "Delivered",
+            GovernedTurnOutcome::DuplicateDelivery => "DuplicateDelivery",
+            other => return Err(other),
+        };
+        let payload = self
+            .storage()
+            .read_region(&attempt.action_region_ref)
+            .ok_or(GovernedTurnOutcome::IntegrityOrProtocolFault)?;
+        if format!("sha256:{:x}", Sha256::digest(&payload)) != attempt.action_digest {
+            return Err(GovernedTurnOutcome::IntegrityOrProtocolFault);
+        }
+        Ok(DeliveredActionEnvelope {
+            delivery_outcome: delivery_outcome.into(),
+            attempt_id: request.attempt_id,
+            action_id: attempt.action_id,
+            dispatch_identity: request.dispatch_identity,
+            target_scope: attempt.target_scope,
+            payload_region_ref: attempt.action_region_ref,
+            payload_digest: attempt.action_digest,
+            actuator_id: request.actuator_id,
+            payload,
+        })
     }
     /// Read-only binding check for the host EvidenceService verifier.
     pub fn settlement_binding_matches(

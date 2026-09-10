@@ -36,6 +36,7 @@ struct ContractHarness {
     socket: PathBuf,
     control_socket: PathBuf,
     evidence_socket: PathBuf,
+    actuator_socket: PathBuf,
     daemon: Mutex<Child>,
 }
 
@@ -61,7 +62,9 @@ impl ContractHarness {
         let socket = root.path().join("castord.sock");
         let control_socket = root.path().join("control.sock");
         let evidence_socket = root.path().join("evidence.sock");
+        let actuator_socket = root.path().join("actuator.sock");
         let trust_config = root.path().join("evidence-trust.json");
+        let actuator_trust_config = root.path().join("actuator-trust.json");
         fs::write(
             &trust_config,
             serde_json::to_vec(&json!({
@@ -78,6 +81,15 @@ impl ContractHarness {
             .expect("serialize evidence trust config"),
         )
         .expect("write evidence trust config");
+        fs::write(
+            &actuator_trust_config,
+            serde_json::to_vec(&json!({
+                "peer_uid": fs::metadata(root.path()).expect("root metadata").uid(),
+                "actuator_id": "c04:generic"
+            }))
+            .expect("serialize actuator trust config"),
+        )
+        .expect("write actuator trust config");
         // The daemon's safe-bind algorithm must remove a stale inode without
         // touching an active listener.
         drop(UnixListener::bind(&socket).expect("create stale socket inode"));
@@ -91,8 +103,11 @@ impl ContractHarness {
             control_socket.to_str().unwrap(),
             "--evidence-socket",
             evidence_socket.to_str().unwrap(),
+            "--actuator-socket",
+            actuator_socket.to_str().unwrap(),
         ]);
         command.env("CASTORD_EVIDENCE_TRUST_CONFIG", &trust_config);
+        command.env("CASTORD_ACTUATOR_TRUST_CONFIG", &actuator_trust_config);
         if allow_test_opcodes {
             command.arg("--allow-test-opcodes");
         }
@@ -101,6 +116,7 @@ impl ContractHarness {
         while UnixStream::connect(&socket).is_err()
             || UnixStream::connect(&control_socket).is_err()
             || UnixStream::connect(&evidence_socket).is_err()
+            || UnixStream::connect(&actuator_socket).is_err()
         {
             assert!(
                 Instant::now() < deadline,
@@ -117,6 +133,7 @@ impl ContractHarness {
             socket,
             control_socket,
             evidence_socket,
+            actuator_socket,
             daemon: Mutex::new(daemon),
         }
     }
@@ -135,6 +152,11 @@ impl ContractHarness {
     fn evidence_client(&self) -> GatewayClient {
         GatewayClient::connect(&self.evidence_socket)
             .expect("evidence socket must accept the configured trusted client")
+    }
+
+    fn actuator_client(&self) -> GatewayClient {
+        GatewayClient::connect(&self.actuator_socket)
+            .expect("actuator socket must accept the configured trusted client")
     }
 
     fn storage_root(&self) -> &std::path::Path {
@@ -994,5 +1016,98 @@ fn opcode_isolation_without_test_flag() {
             }),
         ),
         "Admitted",
+    );
+}
+
+#[test]
+fn scenario_20_actuator_socket_is_closed_and_returns_only_bound_payload() {
+    let harness = ContractHarness::new();
+    let mut agent = harness.client();
+    commit_ready_turn(&mut agent, &["action-1"]);
+    arm_action(&mut agent, "action-1", "scope-1");
+    assert_outcome(
+        call(
+            &mut agent,
+            "record-dispatch",
+            "RecordDispatchAttempt",
+            json!({ "attempt_id": 1, "dispatch_identity": "dispatch-1" }),
+        ),
+        "DispatchRecorded",
+    );
+
+    for (name, mut client) in [
+        ("agent", harness.client()),
+        ("control", harness.control_client()),
+        ("evidence", harness.evidence_client()),
+    ] {
+        let response = call(
+            &mut client,
+            &format!("{name}-acquire"),
+            "AcquireDispatch",
+            json!({
+                "attempt_id": 1,
+                "dispatch_identity": "dispatch-1",
+                "actuator_id": "c04:generic"
+            }),
+        );
+        assert_eq!(response.status, "Error");
+        assert_eq!(
+            response.error.expect("closed channel error").code,
+            "UnauthorizedOpcode"
+        );
+    }
+
+    let mut actuator = harness.actuator_client();
+    let first = call(
+        &mut actuator,
+        "actuator-acquire",
+        "AcquireDispatch",
+        json!({
+            "attempt_id": 1,
+            "dispatch_identity": "dispatch-1",
+            "actuator_id": "c04:generic"
+        }),
+    );
+    assert_eq!(first.status, "Ok");
+    let first = first.outcome.expect("delivered payload envelope");
+    assert_eq!(first["delivery_outcome"], json!("Delivered"));
+    assert_eq!(first["action_id"], json!("action-1"));
+    assert_eq!(
+        first["payload_region_ref"],
+        json!("region://payload/action-1")
+    );
+    assert_eq!(first["payload"], json!(b"payload-action-1"));
+
+    let duplicate = call(
+        &mut actuator,
+        "actuator-acquire-duplicate",
+        "AcquireDispatch",
+        json!({
+            "attempt_id": 1,
+            "dispatch_identity": "dispatch-1",
+            "actuator_id": "c04:generic"
+        }),
+    );
+    assert_eq!(duplicate.status, "Ok");
+    let duplicate = duplicate.outcome.expect("duplicate payload envelope");
+    assert_eq!(duplicate["delivery_outcome"], json!("DuplicateDelivery"));
+    assert_eq!(duplicate["payload"], first["payload"]);
+    assert_eq!(duplicate["payload_digest"], first["payload_digest"]);
+
+    let malformed = call(
+        &mut actuator,
+        "actuator-selector-injection",
+        "AcquireDispatch",
+        json!({
+            "attempt_id": 1,
+            "dispatch_identity": "dispatch-1",
+            "actuator_id": "c04:generic",
+            "payload_region_ref": "region://attacker-selected"
+        }),
+    );
+    assert_eq!(malformed.status, "Error");
+    assert_eq!(
+        malformed.error.expect("strict request error").code,
+        "MalformedRequest"
     );
 }
