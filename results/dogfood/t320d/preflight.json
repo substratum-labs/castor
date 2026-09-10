@@ -1,0 +1,9 @@
+{
+  "implementation_commit": "e772148b73ddb82a2f78925cd3910862d9b3f899",
+  "castord_binary_sha256": "0ef37dfdfde38fa42e7aa465f9bda4e67b2c2a1a26b96cded36bfa0805058e14",
+  "agent_image_digest": "sha256:a25d7d71a416b832e1946232a70007c75d04c3b0c8280033125e8d9ff69fbb95",
+  "model_image_digest": "sha256:f0ab2258bca8bdec55d2c22b061a896a68af1119e6e8411e9d3d64571b698635",
+  "bundle_schema_sha256": "19b2a051c859c3df210f599a9418680f75725fb2609c08f8eed4496a7a774185",
+  "timestamp_iso8601": "2026-09-10T14:57:32Z",
+  "verification_summary": "Rust 225 passed, Python 13 passed, Dogfood 66 passed, preflight: pass"
+}
