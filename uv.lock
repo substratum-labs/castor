@@ -510,7 +510,7 @@ wheels = [
 
 [[package]]
 name = "castor-kernel"
-version = "0.5.1"
+version = "0.6.0a1"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },
