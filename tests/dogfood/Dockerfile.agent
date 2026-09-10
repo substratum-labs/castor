@@ -1,0 +1,11 @@
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
+
+RUN groupadd --gid 10001 castor \
+    && useradd --uid 10001 --gid 10001 --no-create-home \
+        --shell /usr/sbin/nologin castor
+
+COPY --chown=10001:10001 tests/dogfood/ring3_agent.py /opt/castor/ring3_agent.py
+
+USER 10001:10001
+WORKDIR /opt/castor
+ENTRYPOINT ["python", "-B", "/opt/castor/ring3_agent.py"]
