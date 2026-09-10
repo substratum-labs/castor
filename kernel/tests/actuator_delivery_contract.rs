@@ -1,8 +1,8 @@
 //! T-320-D2 contract: only the bound actuator may acquire one Attempt's payload.
 
 use castor_kernel::c01_storage::{
-    ActionBinding, CoreEntry, D1DurableStorage, DurabilityProfile, DurableStorage,
-    EnsureRegionOutcome,
+    ActionBinding, AppendConditionalOutcome, AppendConditionalRequest, CoreEntry, D1DurableStorage,
+    DurabilityProfile, DurableStorage, EnsureRegionOutcome,
 };
 use castor_kernel::c06_composition::{
     AcquireDispatchRequest, ActionRegistrationRequest, AdmitTurnRequest, CapabilityGrant,
@@ -412,6 +412,76 @@ fn actuator_socket_rejects_a_peer_uid_not_named_by_trust() {
     assert_eq!(
         response.error.expect("wrong peer error").code,
         "RejectedBindingOrIssuer"
+    );
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+}
+
+#[test]
+fn replayed_reservation_without_submission_is_ambiguous_and_returns_no_payload() {
+    let Fixture {
+        _root: root,
+        authority,
+    } = Fixture::dispatched();
+    drop(authority);
+    let mut storage = D1DurableStorage::open(root.path()).expect("open dispatched history");
+    let last = storage
+        .journal_requests()
+        .pop()
+        .expect("dispatch journal request");
+    let dispatch_proof = storage
+        .read_entry(&last.agent_id, last.entry_id)
+        .expect("dispatch proof");
+    assert!(matches!(last.entry, CoreEntry::DispatchAttempt { .. }));
+    assert!(matches!(
+        storage.append_conditional(AppendConditionalRequest {
+            agent_id: AGENT.into(),
+            entry_id: last.entry_id + 1,
+            expected_core_epoch: 1,
+            expected_agent_generation: Some(1),
+            expected_turn_id: None,
+            expected_lease_epoch: None,
+            expected_base_projection_digest: Some(dispatch_proof.entry_digest),
+            entry: CoreEntry::AdapterReservation { attempt_id: 1 },
+            region_refs: vec![],
+        }),
+        AppendConditionalOutcome::EntryPersisted(_)
+    ));
+    drop(storage);
+
+    let trust = write_actuator_trust(
+        &root,
+        serde_json::json!({
+            "peer_uid": fs::metadata(root.path()).expect("root metadata").uid(),
+            "actuator_id": ACTUATOR
+        }),
+    );
+    let actuator_socket = root.path().join("actuator.sock");
+    let mut daemon = daemon_command(&root)
+        .env("CASTORD_ACTUATOR_TRUST_CONFIG", trust)
+        .spawn()
+        .expect("start daemon over ambiguous history");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while UnixStream::connect(&actuator_socket).is_err() {
+        assert!(Instant::now() < deadline, "actuator socket start timeout");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut client = GatewayClient::connect(&actuator_socket).expect("connect actuator socket");
+    let response = client
+        .request(&SyscallRequest {
+            request_id: "ambiguous-acquire".into(),
+            op: "AcquireDispatch".into(),
+            payload: serde_json::json!({
+                "attempt_id": 1,
+                "dispatch_identity": DISPATCH,
+                "actuator_id": ACTUATOR
+            }),
+        })
+        .expect("ambiguous attempt receives framed outcome");
+    assert_eq!(response.status, "Ok");
+    assert_eq!(
+        response.outcome,
+        Some(serde_json::json!({ "type": "Ambiguous" }))
     );
     let _ = daemon.kill();
     let _ = daemon.wait();

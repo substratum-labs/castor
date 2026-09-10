@@ -166,6 +166,7 @@ class Daemon:
         self.agent = self.root / "agent.sock"
         self.control = self.root / "control.sock"
         self.evidence = self.root / "evidence.sock"
+        self.delivery = self.root / "actuator.sock"
         self.log = self.root / "daemon.log"
         self.process = None
         self.turn = 1
@@ -192,6 +193,11 @@ class Daemon:
             )
         )
         self.trust.chmod(0o600)
+        self.actuator_trust = self.root / "actuator-trust.json"
+        self.actuator_trust.write_bytes(
+            encoded({"peer_uid": os.getuid(), "actuator_id": ADAPTER})
+        )
+        self.actuator_trust.chmod(0o600)
         self.start()
 
     def start(self):
@@ -208,10 +214,16 @@ class Daemon:
                     str(self.agent),
                     "--control-socket",
                     str(self.control),
+                    "--actuator-socket",
+                    str(self.delivery),
                 ],
                 stdout=output,
                 stderr=output,
-                env={**os.environ, "CASTORD_EVIDENCE_TRUST_CONFIG": str(self.trust)},
+                env={
+                    **os.environ,
+                    "CASTORD_EVIDENCE_TRUST_CONFIG": str(self.trust),
+                    "CASTORD_ACTUATOR_TRUST_CONFIG": str(self.actuator_trust),
+                },
             )
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
@@ -265,6 +277,24 @@ class Daemon:
 
     def ok(self, op, payload, expected, channel="agent"):
         return expect(self.call(op, payload, channel), expected)
+
+    def acquire(self):
+        response = self.call(
+            "AcquireDispatch",
+            {
+                "attempt_id": 1,
+                "dispatch_identity": OP_ID,
+                "actuator_id": ADAPTER,
+            },
+            "delivery",
+        )
+        assert response["status"] == "Ok", response
+        outcome = response["outcome"]
+        assert outcome.get("delivery_outcome") in {
+            "Delivered",
+            "DuplicateDelivery",
+        }, outcome
+        return outcome
 
     def summary(self):
         return self.call("GetProjectionSummary", {}, "control")["outcome"]
@@ -533,6 +563,8 @@ class CognitiveRecovery(unittest.TestCase):
         d = self.fixture()
         d.arm()
         d.restart()
+        envelope = d.acquire()
+        self.assertEqual(envelope["delivery_outcome"], "Delivered")
         admitted = d.next_turn()
         self.assertEqual(d.actuator.query(), "not_found")
         expect(d.probe(), "InteractionRequested")
@@ -550,7 +582,7 @@ class CognitiveRecovery(unittest.TestCase):
         self.assertEqual(d.actuator.count(), 1)
         # Check the kernel recovery view too; mock correctness alone cannot pass.
         d.snapshot(admitted, "Dispatched")
-        self.assertTrue(
+        self.assertFalse(
             admitted["unsettled_effects_snapshot"]["attempts"][0]["ambiguous_delivery"]
         )
         expect(d.settle(d.certificate()), "Settled")
@@ -698,11 +730,7 @@ class CognitiveRecovery(unittest.TestCase):
                 self.assertEqual(d.summary()["locked_scopes"], 1)
                 d.ok("CommitTurn", d.commit_payload(1), "RejectedStaleAuthority")
                 if seam != "arm":
-                    d.ok(
-                        "DeliverArmedAttempt",
-                        {"attempt_id": 1, "dispatch_identity": OP_ID},
-                        "Ambiguous",
-                    )
+                    self.assertEqual(d.acquire()["delivery_outcome"], "Delivered")
                 admitted = d.next_turn()
                 d.snapshot(admitted, "ArmedUnknown" if seam == "arm" else "Dispatched")
 

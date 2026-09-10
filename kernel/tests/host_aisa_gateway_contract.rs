@@ -249,6 +249,32 @@ fn assert_attempt_armed(response: SyscallResponse, attempt_id: u64) {
     );
 }
 
+fn acquire_action(
+    harness: &ContractHarness,
+    request_id: &str,
+    attempt_id: u64,
+    dispatch_identity: &str,
+) -> SyscallResponse {
+    call(
+        &mut harness.actuator_client(),
+        request_id,
+        "AcquireDispatch",
+        json!({
+            "attempt_id": attempt_id,
+            "dispatch_identity": dispatch_identity,
+            "actuator_id": "c04:generic"
+        }),
+    )
+}
+
+fn assert_delivery_envelope(response: SyscallResponse, expected: &str) {
+    assert_eq!(response.status, "Ok");
+    assert_eq!(
+        response.outcome.expect("delivery envelope")["delivery_outcome"],
+        json!(expected)
+    );
+}
+
 fn commit_ready_turn(client: &mut GatewayClient, action_manifest: &[&str]) {
     let manifest_content = format!("{}\n", action_manifest.join("\n")).into_bytes();
     let manifest_digest = format!("sha256:{:x}", Sha256::digest(&manifest_content));
@@ -384,13 +410,8 @@ fn scenario_01_end_to_end_governed_turn_over_socket() {
         ),
         "DispatchRecorded",
     );
-    assert_outcome(
-        call(
-            &mut client,
-            "deliver",
-            "DeliverArmedAttempt",
-            json!({ "attempt_id": 1, "dispatch_identity": "dispatch-1" }),
-        ),
+    assert_delivery_envelope(
+        acquire_action(&harness, "deliver", 1, "dispatch-1"),
         "Delivered",
     );
     let mut receipt = json!({
@@ -561,12 +582,7 @@ fn scenario_06_deliver_without_record_is_rejected_without_provider_submission() 
     commit_ready_turn(&mut client, &["action-1"]);
     arm_action(&mut client, "action-1", "scope-1");
     assert_outcome(
-        call(
-            &mut client,
-            "deliver",
-            "DeliverArmedAttempt",
-            json!({ "attempt_id": 1, "dispatch_identity": "dispatch-1" }),
-        ),
+        acquire_action(&harness, "deliver", 1, "dispatch-1"),
         "RejectedCurrentState",
     );
     assert_eq!(harness.provider_submission_count(), 0);
@@ -587,22 +603,12 @@ fn scenario_07_duplicate_deliver_is_deduplicated_over_socket() {
         ),
         "DispatchRecorded",
     );
-    assert_outcome(
-        call(
-            &mut client,
-            "deliver-1",
-            "DeliverArmedAttempt",
-            json!({ "attempt_id": 1, "dispatch_identity": "dispatch-1" }),
-        ),
+    assert_delivery_envelope(
+        acquire_action(&harness, "deliver-1", 1, "dispatch-1"),
         "Delivered",
     );
-    assert_outcome(
-        call(
-            &mut client,
-            "deliver-2",
-            "DeliverArmedAttempt",
-            json!({ "attempt_id": 1, "dispatch_identity": "dispatch-1" }),
-        ),
+    assert_delivery_envelope(
+        acquire_action(&harness, "deliver-2", 1, "dispatch-1"),
         "DuplicateDelivery",
     );
     assert_eq!(harness.provider_submission_count(), 1);
@@ -624,15 +630,18 @@ fn scenario_08_missing_adapter_dedup_after_dispatch_is_ambiguous() {
         "DispatchRecorded",
     );
     harness.lose_adapter_dedup_state();
-    assert_outcome(
-        call(
-            &mut client,
-            "deliver",
-            "DeliverArmedAttempt",
-            json!({ "attempt_id": 1, "dispatch_identity": "dispatch-1" }),
-        ),
-        "Ambiguous",
+    let response = call(
+        &mut harness.actuator_client(),
+        "acquire-ambiguous",
+        "AcquireDispatch",
+        json!({
+            "attempt_id": 1,
+            "dispatch_identity": "dispatch-1",
+            "actuator_id": "c04:generic"
+        }),
     );
+    assert_eq!(response.status, "Ok");
+    assert_eq!(response.outcome, Some(json!({ "type": "Ambiguous" })));
 }
 
 #[test]
@@ -1061,6 +1070,21 @@ fn scenario_20_actuator_socket_is_closed_and_returns_only_bound_payload() {
         "DispatchRecorded",
     );
 
+    let guest_delivery = call(
+        &mut agent,
+        "guest-delivery-preemption",
+        "DeliverArmedAttempt",
+        json!({ "attempt_id": 1, "dispatch_identity": "dispatch-1" }),
+    );
+    assert_eq!(guest_delivery.status, "Error");
+    assert_eq!(
+        guest_delivery
+            .error
+            .expect("closed legacy delivery error")
+            .code,
+        "UnauthorizedOpcode"
+    );
+
     for (name, mut client) in [
         ("agent", harness.client()),
         ("control", harness.control_client()),
@@ -1190,17 +1214,22 @@ fn scenario_21_delivery_fault_points_select_the_durable_journal_seam() {
             has_submission, submission_persisted,
             "{fault_point} journal seam"
         );
-        if submission_persisted {
-            let envelope = recovered
-                .acquire_dispatch(AcquireDispatchRequest {
-                    attempt_id: 1,
-                    dispatch_identity: "dispatch-1".into(),
-                    actuator_id: "c04:generic".into(),
-                })
-                .expect("durably delivered attempt recovers as duplicate");
-            assert_eq!(envelope.delivery_outcome, "DuplicateDelivery");
-            assert_eq!(envelope.payload, b"payload-action-1");
-        }
+        let envelope = recovered
+            .acquire_dispatch(AcquireDispatchRequest {
+                attempt_id: 1,
+                dispatch_identity: "dispatch-1".into(),
+                actuator_id: "c04:generic".into(),
+            })
+            .expect("recovered actuator acquisition");
+        assert_eq!(
+            envelope.delivery_outcome,
+            if submission_persisted {
+                "DuplicateDelivery"
+            } else {
+                "Delivered"
+            }
+        );
+        assert_eq!(envelope.payload, b"payload-action-1");
     }
 }
 

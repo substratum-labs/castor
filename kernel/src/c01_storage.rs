@@ -251,12 +251,15 @@ impl AuthorityState {
     }
 
     /// A restart advances the Core epoch without rewriting old journal
-    /// records. Only a fresh lease or an authenticated control-plane recovery
-    /// decision may bridge that boundary; guest commits remain fenced.
+    /// records. Only a fresh lease, an authenticated control-plane recovery
+    /// decision, or a trusted actuator reservation may bridge that boundary;
+    /// guest commits remain fenced.
     fn accepts_recovery_lease(&self, request: &AppendConditionalRequest) -> bool {
         matches!(
             request.entry,
-            CoreEntry::LeaseGranted { .. } | CoreEntry::RecoveryDecision { .. }
+            CoreEntry::LeaseGranted { .. }
+                | CoreEntry::RecoveryDecision { .. }
+                | CoreEntry::AdapterReservation { .. }
         ) && request.expected_core_epoch == self.core_epoch + 1
             && self.agent_generation == request.expected_agent_generation
             && self.turn_id == request.expected_turn_id

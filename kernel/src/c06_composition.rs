@@ -1035,7 +1035,6 @@ impl D1GovernedTurnAuthority {
                     if let Some(attempt) = self.attempts.get_mut(&attempt_id) {
                         attempt.status = AttemptStatus::Dispatched;
                         attempt.dispatch_identity = Some(adapter_id);
-                        attempt.ambiguous_delivery = true;
                     }
                     self.projection_digest = proof_digest;
                 }

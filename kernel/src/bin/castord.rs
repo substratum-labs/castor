@@ -316,7 +316,6 @@ fn dispatch(
             | "RegisterAction"
             | "PresentAdmissionCertificate"
             | "RecordDispatchAttempt"
-            | "DeliverArmedAttempt"
             | "PersistFence"
             | "RevokeCapability"
             | "EnsureRegion"
@@ -489,10 +488,6 @@ fn dispatch(
                 dispatch_identity: string(p, "dispatch_identity")?,
             })
         }
-        "DeliverArmedAttempt" => authority.deliver_armed_attempt(DeliverArmedAttemptRequest {
-            attempt_id: number(p, "attempt_id")?,
-            dispatch_identity: string(p, "dispatch_identity")?,
-        }),
         "AcquireDispatch" => {
             let actuator_trust = actuator_trust.ok_or("RejectedBindingOrIssuer")?;
             let request: AcquireDispatchRequest =

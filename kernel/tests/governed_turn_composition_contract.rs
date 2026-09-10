@@ -4,8 +4,8 @@ use castor_kernel::c01_storage::{
     ActionBinding, D1DurableStorage, DurabilityProfile, DurableStorage,
 };
 use castor_kernel::c06_composition::{
-    ActionRegistrationRequest, AdmitTurnRequest, CapabilityGrant, CapabilityRight,
-    CommitTurnRequest, ConsumeInteractionRequest, D1GovernedTurnAuthority,
+    AcquireDispatchRequest, ActionRegistrationRequest, AdmitTurnRequest, CapabilityGrant,
+    CapabilityRight, CommitTurnRequest, ConsumeInteractionRequest, D1GovernedTurnAuthority,
     DeliverArmedAttemptRequest, DisputeResolution, GovernedTurnOutcome, GrantCapabilityRequest,
     InteractionOutcomeReport, PresentAdmissionCertificateRequest,
     PresentSettlementCertificateRequest, QueryOperation, RecordDispatchAttemptRequest,
@@ -498,7 +498,7 @@ fn test_comp_scenario_12_crash_after_submission_resets_count_and_blocks_retry() 
     assert_eq!(c.authority.provider_submission_count(), 0);
 }
 #[test]
-fn test_comp_crash_after_dispatch_with_missing_dedup_fails_closed_as_ambiguous() {
+fn test_comp_crash_after_dispatch_before_reservation_retries_bound_delivery() {
     let mut c = Fixture::new();
     c.dispatched_action();
     assert_eq!(
@@ -506,12 +506,22 @@ fn test_comp_crash_after_dispatch_with_missing_dedup_fails_closed_as_ambiguous()
         GovernedTurnOutcome::Reconstructed
     );
     assert_eq!(
-        c.authority
-            .deliver_armed_attempt(DeliverArmedAttemptRequest {
-                attempt_id: 1,
-                dispatch_identity: "dispatch-1".into()
-            }),
-        GovernedTurnOutcome::Ambiguous
+        c.authority.acquire_dispatch(AcquireDispatchRequest {
+            attempt_id: 1,
+            dispatch_identity: "dispatch-1".into(),
+            actuator_id: "c04:generic".into(),
+        }),
+        Ok(castor_kernel::c06_composition::DeliveredActionEnvelope {
+            delivery_outcome: "Delivered".into(),
+            attempt_id: 1,
+            action_id: "action-1".into(),
+            dispatch_identity: "dispatch-1".into(),
+            target_scope: String::new(),
+            payload_region_ref: "region://action-1".into(),
+            payload_digest: digest(b"payload-action-1"),
+            actuator_id: "c04:generic".into(),
+            payload: b"payload-action-1".to_vec(),
+        })
     );
 }
 #[test]
@@ -917,7 +927,7 @@ fn test_c2_orphan_snapshot_after_crash_does_not_poison_admission() {
         panic!("{outcome:?}")
     };
     assert_eq!(snapshot.attempts[0].status, "Dispatched");
-    assert!(snapshot.attempts[0].ambiguous_delivery);
+    assert!(!snapshot.attempts[0].ambiguous_delivery);
     assert_ne!(
         authority
             .storage()
