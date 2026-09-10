@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://substratum.dev/schemas/castor/dogfood/model-output-openai-v1.json",
+  "title": "Castor dogfood model completion (OpenAI Structured Outputs projection)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "files", "explanation"],
+  "properties": {
+    "schema_version": {
+      "type": "integer"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "content_utf8"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "enum": [
+              "src/castor/ipc_client.py",
+              "tests/test_ipc_client.py"
+            ]
+          },
+          "content_utf8": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "explanation": {
+      "type": "string"
+    }
+  }
+}

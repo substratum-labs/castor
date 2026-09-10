@@ -78,7 +78,19 @@ class ProcessRunner(Protocol):
 PreflightRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
+def project_provider_schema(canonical_schema: Path, provider: str = "openai") -> Path:
+    """Project a canonical Draft 2020-12 schema to a provider-compatible dialect."""
+    if provider == "openai":
+        candidate = canonical_schema.with_name(
+            f"{canonical_schema.stem}_openai.schema.json"
+        )
+        if candidate.is_file():
+            return candidate
+    return canonical_schema
+
+
 def build_codex_argv(config: ModelRunConfig) -> list[str]:
+    provider_schema = project_provider_schema(config.output_schema, "openai")
     return [
         "codex",
         "exec",
@@ -94,7 +106,7 @@ def build_codex_argv(config: ModelRunConfig) -> list[str]:
         str(config.context_dir),
         "--skip-git-repo-check",
         "--output-schema",
-        str(config.output_schema),
+        str(provider_schema),
         "--json",
         "-",
     ]

@@ -19,6 +19,7 @@ from tests.dogfood.model_bridge import (
     build_codex_argv,
     build_model_env,
     context_manifest_sha256,
+    project_provider_schema,
     run_model,
     run_outer_sandbox_preflight,
 )
@@ -32,6 +33,7 @@ from tests.dogfood.provider_proxy import (
 
 DOGFOOD_DIR = Path(__file__).resolve().parent
 OUTPUT_SCHEMA = DOGFOOD_DIR / "model_output.schema.json"
+OPENAI_SCHEMA = DOGFOOD_DIR / "model_output_openai.schema.json"
 RATE_CARD_SCHEMA = DOGFOOD_DIR / "rate_card.schema.json"
 RATE_CARD_FIXTURE = DOGFOOD_DIR / "fixtures" / "rate_card_valid.json"
 
@@ -192,7 +194,7 @@ class ModelBridgeTests(unittest.TestCase):
             str(self.context),
             "--skip-git-repo-check",
             "--output-schema",
-            str(OUTPUT_SCHEMA),
+            str(project_provider_schema(OUTPUT_SCHEMA, "openai")),
             "--json",
             "-",
         ]
@@ -263,14 +265,18 @@ class ModelBridgeTests(unittest.TestCase):
 
     def test_output_and_rate_card_schemas_are_closed_and_valid(self) -> None:
         output_schema = json.loads(OUTPUT_SCHEMA.read_text(encoding="utf-8"))
+        openai_schema = json.loads(OPENAI_SCHEMA.read_text(encoding="utf-8"))
         rate_schema = json.loads(RATE_CARD_SCHEMA.read_text(encoding="utf-8"))
         jsonschema.Draft202012Validator.check_schema(output_schema)
+        jsonschema.Draft202012Validator.check_schema(openai_schema)
         jsonschema.Draft202012Validator.check_schema(rate_schema)
         jsonschema.Draft202012Validator(output_schema).validate(self.completion())
+        jsonschema.Draft202012Validator(openai_schema).validate(self.completion())
         jsonschema.Draft202012Validator(rate_schema).validate(
             json.loads(RATE_CARD_FIXTURE.read_text(encoding="utf-8"))
         )
         self.assertFalse(output_schema["additionalProperties"])
+        self.assertFalse(openai_schema["additionalProperties"])
         self.assertFalse(rate_schema["additionalProperties"])
 
     def test_rejects_extra_missing_and_out_of_order_paths(self) -> None:
