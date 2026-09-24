@@ -5,16 +5,22 @@ from pathlib import Path
 
 try:
     from castor_client import (
+        AgentRequest,
         AgentSession,
         AisaConnectionError,
         AisaProtocolError,
+        AisaResponse,
+        OperatorRequest,
         OperatorSession,
     )
 except ModuleNotFoundError:
     from src.castor_client import (
+        AgentRequest,
         AgentSession,
         AisaConnectionError,
         AisaProtocolError,
+        AisaResponse,
+        OperatorRequest,
         OperatorSession,
     )
 
@@ -54,6 +60,24 @@ class SessionContract(unittest.TestCase):
         self.assertEqual(response["status"], "Ok")
         self.assertEqual(response["outcome"], {"type": "Admitted"})
         self.assertEqual(transport.calls, [("AdmitTurn", payload)])
+
+    def test_typed_agent_request_returns_response_object(self) -> None:
+        transport = self.RecordingTransport()
+        payload = {"agent_id": "a"}
+        response = AgentSession(transport).send(AgentRequest("AdmitTurn", payload))
+        self.assertIsInstance(response, AisaResponse)
+        self.assertEqual(response.request_id, "contract")
+        self.assertEqual(response.outcome_type, "Admitted")
+        self.assertEqual(response.outcome, {"type": "Admitted"})
+        self.assertEqual(transport.calls, [("AdmitTurn", payload)])
+
+    def test_typed_requests_cannot_cross_roles(self) -> None:
+        transport = self.RecordingTransport()
+        with self.assertRaises(TypeError):
+            AgentSession(transport).send(OperatorRequest("GrantCapability", {}))
+        with self.assertRaises(TypeError):
+            OperatorSession(transport).send(AgentRequest("AdmitTurn", {}))
+        self.assertEqual(transport.calls, [])
 
     def test_allowed_agent_operation_fails_closed_when_daemon_is_absent(self) -> None:
         session = AgentSession(Path("/nonexistent/agent.sock"))

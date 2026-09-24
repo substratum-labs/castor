@@ -16,16 +16,17 @@ The client wheel has no runtime dependencies and contains neither the old Python
 ## Agent and operator boundary
 
 ```python
-from castor_client import AgentSession, OperatorSession
+from castor_client import AgentRequest, AgentSession, OperatorSession
 
 # This path exists only inside the Roche guest.
 agent = AgentSession("/run/castor/ipc.sock")
+# outcome = agent.send(AgentRequest("AdmitTurn", admission_payload)).outcome
 
 # A host operator uses a separate control socket outside that guest.
 operator = OperatorSession("/run/castor/control.sock")
 ```
 
-These objects are transport conveniences. `AgentSession.request(op, payload)` accepts only Agent-channel operations and returns the correlated AISA response envelope; `OperatorSession` accepts only management operations. Rust `castord` applies the final channel allowlist and authority checks. The operator socket, evidence socket, actuator socket, durable storage, and target workspace are never mounted into the Agent guest. Each request uses a fresh Unix-socket connection with a five-second default timeout; an uncertain request is never automatically retried as a new action.
+These objects are transport conveniences. `AgentSession.send(AgentRequest(...))` returns a typed response envelope; `OperatorSession.send(OperatorRequest(...))` is the separate management path. The lower-level `request(op, payload)` remains available. Both sessions enforce role-specific operation sets, and Rust `castord` applies the final channel allowlist and authority checks. Individual payload/outcome schemas remain dictionaries validated by `castord`. The operator socket, evidence socket, actuator socket, durable storage, and target workspace are never mounted into the Agent guest. Each request uses a fresh Unix-socket connection with a five-second idle timeout on socket operations, not a total request deadline; an uncertain request is never automatically retried as a new action.
 
 The complete bounded Agent request sequence is exercised in `tests/dogfood/ring3_agent.py`: admit a current Turn, request and consume an Interaction, durably publish Action payloads, commit the Turn, register Actions, present admission, and record dispatch. The trusted actuator separately acquires attempt-bound payload and submits settlement evidence. A Python tool callable inside the Agent is not a trusted actuator.
 

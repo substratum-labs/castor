@@ -3,9 +3,56 @@
 from __future__ import annotations
 
 import os
-from typing import Any, ClassVar, Protocol
+from dataclasses import dataclass
+from typing import Any, ClassVar, Literal, Protocol
 
 from .client import AisaClient, AisaProtocolError
+
+AgentOperation = Literal[
+    "AdmitTurn",
+    "CommitTurn",
+    "RegisterAction",
+    "PresentAdmissionCertificate",
+    "RecordDispatchAttempt",
+    "PersistFence",
+    "RevokeCapability",
+    "EnsureRegion",
+    "RequestInteraction",
+    "ReportOutcome",
+    "ConsumeInteraction",
+]
+OperatorOperation = Literal[
+    "GrantCapability",
+    "RevokeCapability",
+    "ResolveQuarantinedDispute",
+    "PersistFence",
+    "GetProjectionSummary",
+    "InspectJournal",
+    "SubmitDecision",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRequest:
+    op: AgentOperation
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class OperatorRequest:
+    op: OperatorOperation
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class AisaResponse:
+    request_id: str
+    outcome: dict[str, Any]
+
+    @property
+    def outcome_type(self) -> str | None:
+        value = self.outcome.get("type")
+        return value if isinstance(value, str) else None
 
 
 class RequestTransport(Protocol):
@@ -49,6 +96,13 @@ class _Session:
             raise AisaProtocolError(f"{op} returned no outcome type")
         return response
 
+    def _send(self, op: str, payload: dict[str, Any]) -> AisaResponse:
+        response = self.request(op, payload)
+        request_id = response.get("request_id")
+        if not isinstance(request_id, str) or not request_id:
+            raise AisaProtocolError(f"{op} returned no request ID")
+        return AisaResponse(request_id, response["outcome"])
+
 
 class AgentSession(_Session):
     """Thin client for the Roche Agent channel; Rust remains authoritative."""
@@ -69,6 +123,11 @@ class AgentSession(_Session):
         }
     )
 
+    def send(self, request: AgentRequest) -> AisaResponse:
+        if not isinstance(request, AgentRequest):
+            raise TypeError("AgentSession.send requires AgentRequest")
+        return self._send(request.op, request.payload)
+
 
 class OperatorSession(_Session):
     """Thin client for the host-only management channel."""
@@ -85,3 +144,8 @@ class OperatorSession(_Session):
         }
     )
     untyped_read_operations = frozenset({"GetProjectionSummary", "InspectJournal"})
+
+    def send(self, request: OperatorRequest) -> AisaResponse:
+        if not isinstance(request, OperatorRequest):
+            raise TypeError("OperatorSession.send requires OperatorRequest")
+        return self._send(request.op, request.payload)
