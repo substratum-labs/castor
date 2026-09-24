@@ -15,17 +15,30 @@ class RequestTransport(Protocol):
 class _Session:
     allowed_operations: ClassVar[frozenset[str]] = frozenset()
 
-    def __init__(self, endpoint: str | os.PathLike[str] | RequestTransport) -> None:
-        self._transport = (
-            AisaClient(endpoint)
-            if isinstance(endpoint, (str, os.PathLike))
-            else endpoint
-        )
+    def __init__(
+        self,
+        endpoint: str | os.PathLike[str] | RequestTransport,
+        *,
+        timeout_seconds: float = 5.0,
+    ) -> None:
+        if isinstance(endpoint, (str, os.PathLike)):
+            self._socket_path = os.fspath(endpoint)
+            self._transport: RequestTransport | None = None
+        else:
+            self._socket_path = None
+            self._transport = endpoint
+        self._timeout_seconds = timeout_seconds
 
     def request(self, op: str, payload: dict[str, Any]) -> dict[str, Any]:
         if op not in self.allowed_operations:
             raise ValueError(f"{op} is unavailable on this AISA channel")
-        response = self._transport.request(op, payload)
+        if self._socket_path is not None:
+            client = AisaClient(self._socket_path, timeout=self._timeout_seconds)
+            with client as transport:
+                response = transport.request(op, payload)
+        else:
+            assert self._transport is not None
+            response = self._transport.request(op, payload)
         outcome = response.get("outcome")
         if not isinstance(outcome, dict):
             raise AisaProtocolError(f"{op} returned no outcome object")

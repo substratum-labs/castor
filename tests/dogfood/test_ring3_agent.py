@@ -7,11 +7,12 @@ import socket
 import struct
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from castor_client import AgentSession
+from castor_client import AgentSession, AisaTimeoutError
 from tests.dogfood.ring3_agent import AgentConfig, AgentPhase, ProtocolError, Ring3Agent
 
 
@@ -34,9 +35,10 @@ def recv_exact(stream: socket.socket, size: int) -> bytes:
 
 
 class FakeAisaServer:
-    def __init__(self, path: Path, handler) -> None:
+    def __init__(self, path: Path, handler, *, close_after_reply: bool = False) -> None:
         self.path = path
         self.handler = handler
+        self.close_after_reply = close_after_reply
         self.requests: list[dict[str, object]] = []
         self.error: BaseException | None = None
         self.ready = threading.Event()
@@ -65,6 +67,8 @@ class FakeAisaServer:
                                 return
                             raw = canonical(response)
                             stream.sendall(struct.pack(">I", len(raw)) + raw)
+                            if self.close_after_reply:
+                                break
         except BaseException as error:  # captured for the test thread
             self.error = error
             self.ready.set()
@@ -102,6 +106,50 @@ class Ring3AgentTests(unittest.TestCase):
             request_digest=digest(b"prompt"),
         )
         self.assertIsInstance(Ring3Agent(config).client, AgentSession)
+
+    def test_agent_session_opens_a_fresh_connection_for_each_request(self) -> None:
+        def handler(request):
+            return {
+                "request_id": request["request_id"],
+                "status": "Ok",
+                "outcome": {"type": "Admitted"},
+            }
+
+        server = FakeAisaServer(self.socket_path, handler, close_after_reply=True)
+        self.addCleanup(server.close)
+        session = AgentSession(self.socket_path)
+        for _ in range(2):
+            self.assertEqual(
+                session.request("AdmitTurn", {"agent_id": "a"})["outcome"],
+                {"type": "Admitted"},
+            )
+        self.assertEqual(len(server.requests), 2)
+
+    def test_agent_session_times_out_on_stalled_reply(self) -> None:
+        def withhold_reply(_request):
+            time.sleep(0.2)
+            return None
+
+        server = FakeAisaServer(self.socket_path, withhold_reply)
+        self.addCleanup(server.close)
+        session = AgentSession(self.socket_path, timeout_seconds=0.05)
+        guest = Ring3Agent(
+            AgentConfig(
+                socket_path=self.socket_path,
+                agent_id="agent:dogfood",
+                turn_id=1,
+                lease_epoch=0,
+                consume_lease_epoch=1,
+                base_projection_digest=digest(b"base"),
+                capability_id="cap-dogfood",
+                generation=1,
+                interaction_id="model-1",
+                request_digest=digest(b"prompt"),
+            ),
+            client=session,
+        )
+        with self.assertRaises(AisaTimeoutError):
+            guest._expect("AdmitTurn", {"agent_id": "a"}, "Admitted")
 
     def test_two_phase_publication_binds_every_action_before_registration(self) -> None:
         completion = {
