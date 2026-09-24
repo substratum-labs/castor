@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from castor_client import AisaConnectionError
+from castor_client import AisaConnectionError, OperatorSession
 
 from tests.dogfood.ring3_agent import AgentConfig, Ring3Agent
 from tests.test_cognitive_recovery_castord import (
@@ -55,6 +55,8 @@ class RustAuthorityChannelContract(unittest.TestCase):
     def test_control_actuator_and_evidence_channels_remain_usable(self) -> None:
         daemon = Daemon()
         try:
+            summary = OperatorSession(daemon.control).request("GetProjectionSummary", {})
+            self.assertIsInstance(summary, dict)
             daemon.prepare()  # GrantCapability on control.sock and legal Agent work.
             daemon.arm()
             delivery = daemon.acquire()  # Bound payload from actuator.sock.
