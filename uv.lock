@@ -509,6 +509,11 @@ wheels = [
 ]
 
 [[package]]
+name = "castor-client"
+version = "0.6.0a1"
+source = { editable = "packages/castor-client" }
+
+[[package]]
 name = "castor-kernel"
 version = "0.6.0a1"
 source = { editable = "." }
@@ -570,6 +575,7 @@ smolagents = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "castor-client" },
     { name = "hypothesis" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-sqlite" },
@@ -608,6 +614,7 @@ provides-extras = ["paper-a-eval", "observability", "smolagents", "pydantic-ai",
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "castor-client", editable = "packages/castor-client" },
     { name = "hypothesis", specifier = ">=6.0" },
     { name = "langgraph", specifier = "==1.1.2" },
     { name = "langgraph-checkpoint-sqlite" },

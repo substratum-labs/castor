@@ -11,14 +11,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.dogfood.ring3_agent import (
-    MAX_FRAME_BYTES,
-    AgentConfig,
-    AgentPhase,
-    AisaClient,
-    ProtocolError,
-    Ring3Agent,
-)
+from castor_client import AgentSession
+from tests.dogfood.ring3_agent import AgentConfig, AgentPhase, ProtocolError, Ring3Agent
 
 
 def canonical(value: object) -> bytes:
@@ -59,17 +53,18 @@ class FakeAisaServer:
                 while True:
                     stream, _ = listener.accept()
                     with stream:
-                        length_bytes = recv_exact(stream, 4)
-                        length = struct.unpack(">I", length_bytes)[0]
-                        request = json.loads(recv_exact(stream, length))
-                        if request == {}:
-                            return
-                        self.requests.append(request)
-                        response = self.handler(request)
-                        if response is None:
-                            return
-                        raw = canonical(response)
-                        stream.sendall(struct.pack(">I", len(raw)) + raw)
+                        while header := stream.recv(4):
+                            length_bytes = header + recv_exact(stream, 4 - len(header))
+                            length = struct.unpack(">I", length_bytes)[0]
+                            request = json.loads(recv_exact(stream, length))
+                            if request == {}:
+                                return
+                            self.requests.append(request)
+                            response = self.handler(request)
+                            if response is None:
+                                return
+                            raw = canonical(response)
+                            stream.sendall(struct.pack(">I", len(raw)) + raw)
         except BaseException as error:  # captured for the test thread
             self.error = error
             self.ready.set()
@@ -93,59 +88,20 @@ class Ring3AgentTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.socket_path = self.root / "agent.sock"
 
-    def test_client_uses_big_endian_framing_and_correlates_request_id(self) -> None:
-        def handler(request):
-            return {
-                "request_id": request["request_id"],
-                "status": "Ok",
-                "outcome": {"type": "Admitted"},
-            }
-
-        server = FakeAisaServer(self.socket_path, handler)
-        self.addCleanup(server.close)
-        response = AisaClient(self.socket_path).request("AdmitTurn", {"lease_epoch": 0})
-
-        self.assertEqual(response["outcome"]["type"], "Admitted")
-        self.assertEqual(server.requests[0]["op"], "AdmitTurn")
-        self.assertEqual(server.requests[0]["payload"], {"lease_epoch": 0})
-
-    def test_client_rejects_oversized_request_before_connecting(self) -> None:
-        client = AisaClient(self.socket_path)
-        with self.assertRaisesRegex(ProtocolError, "16 MiB"):
-            client.request("EnsureRegion", {"content": "x" * MAX_FRAME_BYTES})
-
-    def test_client_rejects_oversized_response_without_allocating_payload(self) -> None:
-        def serve_oversized() -> None:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
-                listener.bind(str(self.socket_path))
-                listener.listen(1)
-                ready.set()
-                stream, _ = listener.accept()
-                with stream:
-                    size = struct.unpack(">I", recv_exact(stream, 4))[0]
-                    recv_exact(stream, size)
-                    stream.sendall(struct.pack(">I", MAX_FRAME_BYTES + 1))
-
-        ready = threading.Event()
-        thread = threading.Thread(target=serve_oversized, daemon=True)
-        thread.start()
-        ready.wait(timeout=2)
-        with self.assertRaisesRegex(ProtocolError, "invalid AISA frame length"):
-            AisaClient(self.socket_path).request("AdmitTurn", {})
-        thread.join(timeout=2)
-
-    def test_client_rejects_response_for_another_request(self) -> None:
-        server = FakeAisaServer(
-            self.socket_path,
-            lambda _request: {
-                "request_id": "substituted",
-                "status": "Ok",
-                "outcome": {"type": "Admitted"},
-            },
+    def test_default_client_is_thin_agent_session(self) -> None:
+        config = AgentConfig(
+            socket_path=self.socket_path,
+            agent_id="agent:dogfood",
+            turn_id=1,
+            lease_epoch=0,
+            consume_lease_epoch=1,
+            base_projection_digest=digest(b"base"),
+            capability_id="cap-dogfood",
+            generation=1,
+            interaction_id="model-1",
+            request_digest=digest(b"prompt"),
         )
-        self.addCleanup(server.close)
-        with self.assertRaisesRegex(ProtocolError, "request_id"):
-            AisaClient(self.socket_path).request("AdmitTurn", {})
+        self.assertIsInstance(Ring3Agent(config).client, AgentSession)
 
     def test_two_phase_publication_binds_every_action_before_registration(self) -> None:
         completion = {

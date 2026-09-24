@@ -5,16 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import socket
-import struct
 import time
-import uuid
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-MAX_FRAME_BYTES = 16 * 1024 * 1024
+from castor_client import AgentSession
+
 MAX_CONTENT_BYTES = 65_536
 ACTUATOR_ID = "repo-workspace-actuator"
 FILE_PATHS = ("src/castor/ipc_client.py", "tests/test_ipc_client.py")
@@ -129,53 +127,12 @@ def sha256_digest(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
-def _recv_exact(stream: socket.socket, size: int) -> bytes:
-    data = bytearray()
-    while len(data) < size:
-        part = stream.recv(size - len(data))
-        if not part:
-            raise ProtocolError("AISA peer closed a partial frame")
-        data.extend(part)
-    return bytes(data)
-
-
-class AisaClient:
-    """One-request-per-connection synchronous AISA JSON client."""
-
-    def __init__(self, socket_path: Path | str, timeout_seconds: float = 5.0) -> None:
-        self.socket_path = Path(socket_path)
-        self.timeout_seconds = timeout_seconds
-
-    def request(self, op: str, payload: dict[str, object]) -> dict[str, Any]:
-        request_id = str(uuid.uuid4())
-        raw = canonical_json({"request_id": request_id, "op": op, "payload": payload})
-        if not raw or len(raw) > MAX_FRAME_BYTES:
-            raise ProtocolError("AISA frame length must be between 1 and 16 MiB")
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
-            stream.settimeout(self.timeout_seconds)
-            stream.connect(str(self.socket_path))
-            stream.sendall(struct.pack(">I", len(raw)) + raw)
-            length = struct.unpack(">I", _recv_exact(stream, 4))[0]
-            if length == 0 or length > MAX_FRAME_BYTES:
-                raise ProtocolError("invalid AISA frame length")
-            response_raw = _recv_exact(stream, length)
-        try:
-            response = json.loads(response_raw)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise ProtocolError("invalid AISA JSON response") from error
-        if not isinstance(response, dict):
-            raise ProtocolError("AISA response must be an object")
-        if response.get("request_id") != request_id:
-            raise ProtocolError("AISA response request_id mismatch")
-        return response
-
-
 class Ring3Agent:
-    def __init__(self, config: AgentConfig, client: AisaClient | None = None) -> None:
+    def __init__(self, config: AgentConfig, client: AgentSession | None = None) -> None:
         if config.lease_epoch != 0:
             raise ProtocolError("new Turn admission requires lease_epoch=0")
         self.config = config
-        self.client = client or AisaClient(config.socket_path)
+        self.client = client or AgentSession(config.socket_path)
         self.phase = AgentPhase.REQUEST_MODEL
 
     def _expect(

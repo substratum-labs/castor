@@ -5,6 +5,7 @@ RUN groupadd --gid 10001 castor \
         --shell /usr/sbin/nologin castor
 
 COPY --chown=10001:10001 tests/dogfood/ring3_agent.py /opt/castor/ring3_agent.py
+COPY --chown=10001:10001 packages/castor-client/src/castor_client /opt/castor/castor_client
 
 USER 10001:10001
 WORKDIR /opt/castor

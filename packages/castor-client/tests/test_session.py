@@ -50,8 +50,9 @@ class SessionContract(unittest.TestCase):
         transport = self.RecordingTransport()
         session = AgentSession(transport)
         payload = {"agent_id": "a", "turn_id": 3}
-        outcome = session.request("AdmitTurn", payload)
-        self.assertEqual(outcome, {"type": "Admitted"})
+        response = session.request("AdmitTurn", payload)
+        self.assertEqual(response["status"], "Ok")
+        self.assertEqual(response["outcome"], {"type": "Admitted"})
         self.assertEqual(transport.calls, [("AdmitTurn", payload)])
 
     def test_allowed_agent_operation_fails_closed_when_daemon_is_absent(self) -> None:

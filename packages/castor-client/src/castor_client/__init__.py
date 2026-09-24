@@ -13,6 +13,7 @@ from .client import (
     AisaProtocolError,
     AisaTimeoutError,
 )
+from .session import AgentSession, OperatorSession
 
 __version__ = "0.6.0a1"
 
@@ -26,5 +27,7 @@ __all__ = [
     "AisaGatewayError",
     "AisaProtocolError",
     "AisaTimeoutError",
+    "AgentSession",
+    "OperatorSession",
     "__version__",
 ]
