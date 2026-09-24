@@ -32,6 +32,8 @@ jobs:
         run: cargo build --release --manifest-path kernel/Cargo.toml --bin castord
 
       - name: Run tests
+        env:
+          CASTORD_BINARY: ${{ github.workspace }}/kernel/target/release/castord
         run: uv run pytest tests/ -v --tb=short
 
   lint:
