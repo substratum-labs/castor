@@ -1,0 +1,226 @@
+{
+  "schema_version": 1,
+  "runner_version": "1.0",
+  "provenance": {
+    "dogfood_base_commit": "0000000000000000000000000000000000000000000000000000000000000000",
+    "implementation_commit": "1111111111111111111111111111111111111111111111111111111111111111",
+    "target_branch": "dogfood/minimal",
+    "target_clean_at_start": true,
+    "castord_binary_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "agent_image_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "model_image_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "bundle_schema_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "task_prompt_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+    "curated_context_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+    "host_os": "minimal-os",
+    "docker_version": "minimal-docker",
+    "timestamp_iso8601": "2026-09-10T00:00:00Z",
+    "model_sandbox": {
+      "config_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "readable_roots": ["/context"],
+      "provider_only_egress": true,
+      "outside_root_access_count": 0,
+      "non_provider_egress_bytes": 0
+    }
+  },
+  "model_run": {
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "medium",
+    "cli_version": "codex-cli minimal",
+    "command_mode": "ephemeral-read-only",
+    "exit_status": 0,
+    "wall_time_seconds": 1.0,
+    "prompt_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+    "context_manifest_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+    "output_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+    "candidate_payload_sha256": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ],
+    "provider_request_count": 1,
+    "input_tokens": 1,
+    "cached_input_tokens": 0,
+    "output_tokens": 1,
+    "rate_card_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "estimated_cost_usd": "0.01"
+  },
+  "raw_artifacts": [
+    {
+      "name": "minimal.log",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  ],
+  "traces": {
+    "N1": {
+      "trace_id": "N1",
+      "status": "PASS",
+      "failed_predicates": [],
+      "journal_events_count": 1,
+      "target_files_touched": ["src/castor/ipc_client.py", "tests/test_ipc_client.py"],
+      "network_egress_bytes": 0,
+      "loopback_egress_bytes": 0,
+      "causal_chains": [],
+      "fault_proof": {
+        "fault_hook": null,
+        "boundary_reached": true,
+        "journal_before_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "journal_after_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "torn_tail_result": "not_applicable",
+        "process_exit_status": 0,
+        "recovered_core_epoch": null
+      },
+      "attempt_counts": [],
+      "target_audit": {
+        "status_porcelain": " M src/castor/ipc_client.py\n M tests/test_ipc_client.py\n",
+        "review_patch_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "unauthorized_mutations": 0
+      },
+      "raw_artifact_sha256": ["dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"]
+    },
+    "C1": {
+      "trace_id": "C1",
+      "status": "PASS",
+      "failed_predicates": [],
+      "journal_events_count": 1,
+      "target_files_touched": [],
+      "network_egress_bytes": 0,
+      "loopback_egress_bytes": 0,
+      "causal_chains": [],
+      "fault_proof": {
+        "fault_hook": "before_delivery_append",
+        "boundary_reached": true,
+        "journal_before_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "journal_after_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "torn_tail_result": "intact",
+        "process_exit_status": 86,
+        "recovered_core_epoch": 1
+      },
+      "attempt_counts": [],
+      "target_audit": {
+        "status_porcelain": "",
+        "review_patch_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "unauthorized_mutations": 0
+      },
+      "raw_artifact_sha256": ["dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"]
+    },
+    "C2": {
+      "trace_id": "C2",
+      "status": "PASS",
+      "failed_predicates": [],
+      "journal_events_count": 1,
+      "target_files_touched": [],
+      "network_egress_bytes": 0,
+      "loopback_egress_bytes": 0,
+      "causal_chains": [],
+      "fault_proof": {
+        "fault_hook": "after_delivery_fsync_before_response",
+        "boundary_reached": true,
+        "journal_before_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "journal_after_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "torn_tail_result": "intact",
+        "process_exit_status": 87,
+        "recovered_core_epoch": 1
+      },
+      "attempt_counts": [],
+      "target_audit": {
+        "status_porcelain": "",
+        "review_patch_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "unauthorized_mutations": 0
+      },
+      "raw_artifact_sha256": ["dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"]
+    },
+    "C3": {
+      "trace_id": "C3",
+      "status": "PASS",
+      "failed_predicates": [],
+      "journal_events_count": 1,
+      "target_files_touched": ["src/castor/ipc_client.py"],
+      "network_egress_bytes": 0,
+      "loopback_egress_bytes": 0,
+      "causal_chains": [],
+      "fault_proof": {
+        "fault_hook": "after_file_replace",
+        "boundary_reached": true,
+        "journal_before_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "journal_after_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "torn_tail_result": "intact",
+        "process_exit_status": 88,
+        "recovered_core_epoch": 1
+      },
+      "attempt_counts": [],
+      "target_audit": {
+        "status_porcelain": " M src/castor/ipc_client.py\n",
+        "review_patch_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "unauthorized_mutations": 0
+      },
+      "raw_artifact_sha256": ["dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"]
+    },
+    "D1": {
+      "trace_id": "D1",
+      "status": "PASS",
+      "failed_predicates": [],
+      "journal_events_count": 1,
+      "target_files_touched": ["tests/test_ipc_client.py"],
+      "network_egress_bytes": 0,
+      "loopback_egress_bytes": 0,
+      "causal_chains": [],
+      "fault_proof": {
+        "fault_hook": null,
+        "boundary_reached": true,
+        "journal_before_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "journal_after_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "torn_tail_result": "not_applicable",
+        "process_exit_status": 0,
+        "recovered_core_epoch": null
+      },
+      "attempt_counts": [
+        {
+          "attempt_id": "attempt-minimal",
+          "acquisition_count": 2,
+          "semantic_application_count": 1
+        }
+      ],
+      "target_audit": {
+        "status_porcelain": " M tests/test_ipc_client.py\n",
+        "review_patch_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "unauthorized_mutations": 0
+      },
+      "raw_artifact_sha256": ["dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"]
+    },
+    "H1": {
+      "trace_id": "H1",
+      "status": "PASS",
+      "failed_predicates": [],
+      "journal_events_count": 1,
+      "target_files_touched": [],
+      "network_egress_bytes": 0,
+      "loopback_egress_bytes": 0,
+      "causal_chains": [],
+      "fault_proof": {
+        "fault_hook": null,
+        "boundary_reached": true,
+        "journal_before_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "journal_after_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "torn_tail_result": "not_applicable",
+        "process_exit_status": 0,
+        "recovered_core_epoch": null
+      },
+      "attempt_counts": [],
+      "target_audit": {
+        "status_porcelain": "",
+        "review_patch_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "unauthorized_mutations": 0
+      },
+      "raw_artifact_sha256": ["dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"]
+    }
+  },
+  "predicates": {
+    "prerequisites": { "pass": true, "failed_predicates": [] },
+    "functional": { "pass": true, "failed_predicates": [] },
+    "mediation": { "pass": true, "failed_predicates": [] },
+    "recovery": { "pass": true, "failed_predicates": [] },
+    "hostile": { "pass": true, "failed_predicates": [] }
+  },
+  "overall_verdict": "PASS",
+  "bundle_sha256": "6f8df8bf8495197123fb6625873915e45e6c608d3d250c620087e1837476ac08"
+}

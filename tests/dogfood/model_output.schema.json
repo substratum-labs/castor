@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://substratum.dev/schemas/castor/dogfood/model-output-v1.json",
+  "title": "Castor dogfood model completion",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "files", "explanation"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "files": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "prefixItems": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "content_utf8"],
+          "properties": {
+            "path": {
+              "type": "string",
+              "const": "src/castor/ipc_client.py"
+            },
+            "content_utf8": {
+              "type": "string",
+              "maxLength": 65536
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "content_utf8"],
+          "properties": {
+            "path": {
+              "type": "string",
+              "const": "tests/test_ipc_client.py"
+            },
+            "content_utf8": {
+              "type": "string",
+              "maxLength": 65536
+            }
+          }
+        }
+      ],
+      "items": false
+    },
+    "explanation": {
+      "type": "string"
+    }
+  }
+}
