@@ -1,10 +1,24 @@
 """C1 socket identity and canonical registration regression tests."""
+
 import json
 import os
 import stat
+import sys
 import unittest
+from pathlib import Path
 
-from test_cognitive_recovery_castord import ADAPTER, AGENT, CAP, Daemon, encoded, expect
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tests.test_cognitive_recovery_castord import (  # noqa: E402
+    ADAPTER,
+    AGENT,
+    CAP,
+    Daemon,
+    encoded,
+    expect,
+)
 
 
 class EvidenceBoundary(unittest.TestCase):
@@ -37,10 +51,19 @@ class EvidenceBoundary(unittest.TestCase):
         d.trust.write_bytes(encoded(config))
         d.restart()
         before = d.journal()
-        expect(d.call("RegisterAction", {
-            "action_id": "a3", "agent_id": AGENT, "action_family": ADAPTER,
-            "cap_id": CAP, "target_scope": "payment:fixture:alias",
-        }), "RejectedPrecondition")
+        expect(
+            d.call(
+                "RegisterAction",
+                {
+                    "action_id": "a3",
+                    "agent_id": AGENT,
+                    "action_family": ADAPTER,
+                    "cap_id": CAP,
+                    "target_scope": "payment:fixture:alias",
+                },
+            ),
+            "RejectedPrecondition",
+        )
         self.assertEqual(d.journal(), before)
 
 
