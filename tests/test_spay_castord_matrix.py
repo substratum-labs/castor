@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import hmac
 import json
 import os
 import platform
@@ -24,6 +25,7 @@ CASTORD = REPO_ROOT / "kernel" / "target" / "release" / "castord"
 RESULTS_DIR = REPO_ROOT / "results"
 EMPTY_DIGEST = "sha256:" + hashlib.sha256(b"").hexdigest()
 EFFECTS = ("payment", "email")
+SIGNING_KEY = b"spay-evaluation-receipt-key-not-for-production"
 SYSTEMS = {
     "castor_full": {
         "label": "Castor Full",
@@ -311,27 +313,52 @@ def arm_action(socket_path: Path, trial_id: str, effect: str, attempt_id: int) -
 def acknowledge_action(
     socket_path: Path, trial_id: str, effect: str, attempt_id: int
 ) -> None:
-    expect_outcome(
-        socket_path,
-        f"deliver-{effect}",
-        "DeliverArmedAttempt",
+    dispatch_identity = f"sqlite-{effect}"
+    delivery = aisa_call(
+        socket_path.parent / "actuator.sock",
+        f"acquire-{effect}",
+        "AcquireDispatch",
         {
             "attempt_id": attempt_id,
-            "dispatch_identity": f"sqlite-{effect}",
+            "dispatch_identity": dispatch_identity,
+            "actuator_id": "c04:generic",
         },
-        "Delivered",
+    )
+    if delivery.get("delivery_outcome") not in {"Delivered", "DuplicateDelivery"}:
+        raise RuntimeError(f"AcquireDispatch returned {delivery}")
+    receipt = {
+        "attempt_id": attempt_id,
+        "stable_operation_id": dispatch_identity,
+        "request_digest": f"spay/{effect}",
+        "issuer": "spay-evidence-service",
+        "adapter_id": "c04:generic",
+        "settlement_schema_version": 1,
+        "resolution": "Confirmed",
+        "actuator_state": "Committed",
+    }
+    receipt["signature"] = hmac.new(
+        SIGNING_KEY,
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    receipt_bytes = json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+    evidence_region_id = f"region://spay/{trial_id}/receipt/{effect}"
+    evidence_digest = ensure_region(
+        socket_path,
+        f"ensure-receipt-{effect}",
+        evidence_region_id,
+        receipt_bytes,
     )
     expect_outcome(
-        socket_path,
+        socket_path.parent / "evidence.sock",
         f"settle-{effect}",
         "PresentSettlementCertificate",
         {
-            "attempt_id": attempt_id,
-            "dispatch_identity": f"sqlite-{effect}",
-            "evidence_region_id": f"region://spay/{trial_id}/observation",
-            "evidence_digest": EMPTY_DIGEST,
+            **receipt,
+            "dispatch_identity": dispatch_identity,
+            "evidence_region_id": evidence_region_id,
+            "evidence_digest": evidence_digest,
             "proof_class": "ProviderConfirmation",
-            "resolution": "Confirmed",
         },
         "Settled",
     )
@@ -413,6 +440,29 @@ def start_castord(
             f"release castord is absent at {CASTORD}; "
             "run cargo build --release --bin castord"
         )
+    actuator_socket = socket_path.parent / "actuator.sock"
+    trial_id = storage_root.parent.name
+    evidence_trust = storage_root.parent / "evidence-trust.json"
+    evidence_trust.write_text(
+        json.dumps(
+            {
+                "issuer": "spay-evidence-service",
+                "peer_uid": os.getuid(),
+                "adapter_id": "c04:generic",
+                "receipt_algorithm": "HMAC-SHA256",
+                "key_hex": SIGNING_KEY.hex(),
+                "canonical_scopes": {
+                    f"{trial_id}-{effect}": f"spay/{effect}" for effect in EFFECTS
+                },
+            }
+        )
+    )
+    evidence_trust.chmod(0o600)
+    actuator_trust = storage_root.parent / "actuator-trust.json"
+    actuator_trust.write_text(
+        json.dumps({"peer_uid": os.getuid(), "actuator_id": "c04:generic"})
+    )
+    actuator_trust.chmod(0o600)
     daemon = subprocess.Popen(
         [
             str(CASTORD),
@@ -422,10 +472,17 @@ def start_castord(
             str(socket_path),
             "--control-socket",
             str(control_socket),
+            "--actuator-socket",
+            str(actuator_socket),
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
+        env={
+            **os.environ,
+            "CASTORD_EVIDENCE_TRUST_CONFIG": str(evidence_trust),
+            "CASTORD_ACTUATOR_TRUST_CONFIG": str(actuator_trust),
+        },
     )
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
@@ -595,6 +652,8 @@ def run_trial(base_dir: Path, system_id: str, fault: str, trial: int) -> dict:
         stop_process(daemon)
         socket_path.unlink(missing_ok=True)
         control_socket.unlink(missing_ok=True)
+        (socket_root / "evidence.sock").unlink(missing_ok=True)
+        (socket_root / "actuator.sock").unlink(missing_ok=True)
         socket_root.rmdir()
 
     metrics = actuator_metrics(actuator_db)
@@ -690,6 +749,8 @@ def run_happy_path(base_dir: Path) -> dict:
         stop_process(daemon)
         socket_path.unlink(missing_ok=True)
         control_socket.unlink(missing_ok=True)
+        (socket_root / "evidence.sock").unlink(missing_ok=True)
+        (socket_root / "actuator.sock").unlink(missing_ok=True)
         socket_root.rmdir()
     metrics = actuator_metrics(actuator_db)
     metrics.update({"trial_id": trial_id, "completed_at": _utc_now()})

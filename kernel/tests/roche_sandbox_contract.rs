@@ -107,12 +107,18 @@ impl Sandbox {
             .get_or_init(|| Mutex::new(()))
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        // Docker Desktop shares the workspace but not macOS's /var/folders
-        // temporary directory with its Linux VM.
+        // Docker Desktop needs the shared workspace on macOS. On Linux,
+        // the workspace is under /home and is intentionally rejected as a
+        // sensitive socket mount source, so use the system temporary dir.
+        let temp_parent = if cfg!(target_os = "macos") {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        } else {
+            std::env::temp_dir()
+        };
         let root = tempfile::Builder::new()
             .prefix("roche-contract-")
-            .tempdir_in(env!("CARGO_MANIFEST_DIR"))
-            .expect("temporary IPC root in Docker-shared workspace");
+            .tempdir_in(temp_parent)
+            .expect("temporary IPC root in Docker-shared location");
         let socket = root.path().join("ipc.sock");
         // Docker Desktop's shared-files implementation cannot project a macOS
         // Unix-domain socket inode into its Linux VM.  The carrier API still

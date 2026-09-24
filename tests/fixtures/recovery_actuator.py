@@ -43,7 +43,8 @@ class RecoveryActuator:
         with sqlite3.connect(self.path) as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute(
-                "CREATE TABLE IF NOT EXISTS operations (op TEXT PRIMARY KEY, state TEXT NOT NULL)"
+                "CREATE TABLE IF NOT EXISTS operations "
+                "(op TEXT PRIMARY KEY, state TEXT NOT NULL)"
             )
             db.execute("CREATE TABLE IF NOT EXISTS commits (op TEXT PRIMARY KEY)")
 
@@ -74,7 +75,9 @@ class RecoveryActuator:
         code = """import sqlite3,sys
 with sqlite3.connect(sys.argv[1]) as db:
     db.execute("BEGIN IMMEDIATE")
-    row = db.execute("SELECT state FROM operations WHERE op=?", (sys.argv[2],)).fetchone()
+    row = db.execute(
+        "SELECT state FROM operations WHERE op=?", (sys.argv[2],)
+    ).fetchone()
     if row is None:
         db.execute("INSERT INTO operations VALUES (?, 'Committed')", (sys.argv[2],))
         db.execute("INSERT INTO commits VALUES (?)", (sys.argv[2],))

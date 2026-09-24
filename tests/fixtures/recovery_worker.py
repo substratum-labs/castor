@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import socket
 import struct
 import sys
@@ -19,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tests.fixtures.recovery_actuator import RecoveryActuator
+from tests.fixtures.recovery_actuator import RecoveryActuator  # noqa: E402
 
 
 def recv_exact(stream: socket.socket, size: int) -> bytearray:
@@ -52,7 +51,12 @@ def main():
     parser.add_argument("--actuator-db", type=Path, required=True)
     parser.add_argument(
         "--seam",
-        choices=["arm", "t1_dispatch_committed", "t2_dispatch_late_arrival", "torn-settlement"],
+        choices=[
+            "arm",
+            "t1_dispatch_committed",
+            "t2_dispatch_late_arrival",
+            "torn-settlement",
+        ],
         required=True,
     )
     parser.add_argument("--agent-id", default="recovery-agent")

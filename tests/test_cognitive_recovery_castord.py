@@ -620,7 +620,11 @@ class CognitiveRecovery(unittest.TestCase):
         self.assertEqual(d.actuator.arrive(), "TerminatedRejected")
         self.assertEqual(d.actuator.count(), 0)
         d.ok("RevokeCapability", {"capability_id": CAP}, "CapabilityRevoked", "control")
-        d.ok("PresentAdmissionCertificate", d.admission("a2"), "RejectedCapabilityRevoked")
+        d.ok(
+            "PresentAdmissionCertificate",
+            d.admission("a2"),
+            "RejectedCapabilityRevoked",
+        )
 
     def test_r6_next_turn_probe_allowed_mutation_locked(self):
         d = self.fixture()
@@ -649,7 +653,9 @@ class CognitiveRecovery(unittest.TestCase):
             {**d.admission("a3", "payment:fixture:other"), "snapshot": admitted},
         )
         with self.subTest("revoked authority rejection"):
-            self.assertIn(kind(response), {"RejectedPrecondition", "RejectedCapabilityRevoked"})
+            self.assertIn(
+                kind(response), {"RejectedPrecondition", "RejectedCapabilityRevoked"}
+            )
         self.assertEqual(d.journal(), before)
         self.assertEqual(d.summary()["locked_scopes"], 1, "revoke must not unarm")
         expect(d.probe(), "InteractionRequested")  # observational probe survives revoke
