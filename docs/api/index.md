@@ -1,6 +1,8 @@
 # API Reference
 
-Complete reference for the Castor public API.
+> **Legacy Python prototype API.** These `castor-kernel` 0.6 classes run in process and do not use Rust `castord` as the authority. For the Castor A candidate, use the [Rust D1 client path](../castor-a.md). The stability labels below describe only the historical Python package.
+
+Complete reference for the historical Python prototype API.
 
 ## Stability Levels
 

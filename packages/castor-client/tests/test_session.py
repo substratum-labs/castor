@@ -69,6 +69,23 @@ class SessionContract(unittest.TestCase):
         with self.assertRaises(AisaProtocolError):
             session.request("AdmitTurn", {"agent_id": "a"})
 
+    def test_session_rejects_outcome_without_a_type(self) -> None:
+        class MissingTypeTransport:
+            def request(self, op: str, payload: dict[str, object]) -> dict[str, object]:
+                return {"request_id": "x", "status": "Ok", "outcome": {}}
+
+        session = AgentSession(MissingTypeTransport())
+        with self.assertRaises(AisaProtocolError):
+            session.request("AdmitTurn", {"agent_id": "a"})
+
+    def test_operator_accepts_untyped_journal_read_result(self) -> None:
+        class JournalTransport:
+            def request(self, op: str, payload: dict[str, object]) -> dict[str, object]:
+                return {"request_id": "x", "status": "Ok", "outcome": {"entries": []}}
+
+        response = OperatorSession(JournalTransport()).request("InspectJournal", {})
+        self.assertEqual(response["outcome"], {"entries": []})
+
 
 if __name__ == "__main__":
     unittest.main()

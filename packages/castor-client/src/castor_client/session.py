@@ -14,6 +14,7 @@ class RequestTransport(Protocol):
 
 class _Session:
     allowed_operations: ClassVar[frozenset[str]] = frozenset()
+    untyped_read_operations: ClassVar[frozenset[str]] = frozenset()
 
     def __init__(
         self,
@@ -42,6 +43,10 @@ class _Session:
         outcome = response.get("outcome")
         if not isinstance(outcome, dict):
             raise AisaProtocolError(f"{op} returned no outcome object")
+        if op not in self.untyped_read_operations and (
+            not isinstance(outcome.get("type"), str) or not outcome["type"]
+        ):
+            raise AisaProtocolError(f"{op} returned no outcome type")
         return response
 
 
@@ -79,3 +84,4 @@ class OperatorSession(_Session):
             "SubmitDecision",
         }
     )
+    untyped_read_operations = frozenset({"GetProjectionSummary", "InspectJournal"})

@@ -15,7 +15,7 @@ from .client import (
 )
 from .session import AgentSession, OperatorSession
 
-__version__ = "0.6.0a1"
+__version__ = "0.7.0a1"
 
 __all__ = [
     "MAX_FRAME_BYTES",

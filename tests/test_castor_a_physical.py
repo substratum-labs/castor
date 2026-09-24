@@ -55,7 +55,8 @@ class RustAuthorityChannelContract(unittest.TestCase):
     def test_control_actuator_and_evidence_channels_remain_usable(self) -> None:
         daemon = Daemon()
         try:
-            summary = OperatorSession(daemon.control).request("GetProjectionSummary", {})
+            operator = OperatorSession(daemon.control)
+            summary = operator.request("GetProjectionSummary", {})
             self.assertIsInstance(summary, dict)
             daemon.prepare()  # GrantCapability on control.sock and legal Agent work.
             daemon.arm()

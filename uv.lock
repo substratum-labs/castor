@@ -510,7 +510,7 @@ wheels = [
 
 [[package]]
 name = "castor-client"
-version = "0.6.0a1"
+version = "0.7.0a1"
 source = { editable = "packages/castor-client" }
 
 [[package]]

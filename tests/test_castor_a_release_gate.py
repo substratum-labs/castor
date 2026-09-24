@@ -2,42 +2,37 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SHIM_WHEEL = (
-    ROOT / "packages/castor-kernel-shim/dist/castor_kernel-0.7.0a1-py3-none-any.whl"
+CLIENT_WHEEL = (
+    ROOT / "packages/castor-client/dist/castor_client-0.7.0a1-py3-none-any.whl"
 )
 
 
-def test_migration_wheel_refuses_old_castor_api() -> None:
-    assert SHIM_WHEEL.is_file(), "build the Castor A migration wheel first"
-    with zipfile.ZipFile(SHIM_WHEEL) as wheel:
+def test_client_wheel_has_no_python_authority_engine() -> None:
+    assert CLIENT_WHEEL.is_file(), "build the Castor A client wheel first"
+    with zipfile.ZipFile(CLIENT_WHEEL) as wheel:
         names = set(wheel.namelist())
-    assert "castor/__init__.py" in names
+    assert "castor_client/session.py" in names
     assert {
         name for name in names if name.startswith("castor/") and name.endswith(".py")
-    } <= {"castor/__init__.py", "castor/cli.py"}
+    } == set()
 
-    environment = {**os.environ, "PYTHONPATH": str(SHIM_WHEEL)}
-    probes = (
-        "from castor import Castor; Castor()",
-        "from castor.scheduler.runner import AgentRunner",
-        "from castor.gate.validator import SyscallGate",
-        "from castor.kernel.journal import InMemoryJournal",
+    source = (
+        "import importlib.util, sys; "
+        "sys.path.insert(0, sys.argv[1]); "
+        "from castor_client import AgentSession, OperatorSession; "
+        "assert importlib.util.find_spec('castor') is None"
     )
-    for source in probes:
-        probe = subprocess.run(
-            [sys.executable, "-c", source],
-            cwd=ROOT,
-            env=environment,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert probe.returncode != 0, source
-        assert "castor-client" in probe.stderr, source
+    probe = subprocess.run(
+        [sys.executable, "-I", "-S", "-c", source, str(CLIENT_WHEEL)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert probe.returncode == 0, probe.stderr

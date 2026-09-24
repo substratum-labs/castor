@@ -1,6 +1,6 @@
 # Castor Client (`castor-client`)
 
-Typed Python client for the **Castor OS AISA v0.1** Unix-domain socket IPC protocol.
+Typed Python client for the **Castor OS AISA v0.1** Unix-domain socket IPC protocol. The Rust `castord` process owns authorization, journal transitions, recovery, and effect admission. This package only sends requests and validates responses; it has no local kernel fallback.
 
 ## Features
 
@@ -14,9 +14,13 @@ Typed Python client for the **Castor OS AISA v0.1** Unix-domain socket IPC proto
 ## Usage
 
 ```python
-from castor_client import AisaClient
+from castor_client import AgentSession
 
-with AisaClient("/run/castor/ipc.sock") as client:
-    response = client.send_request("AdmitTurn", {"agent_id": "agent-1"})
-    print(response)
+def admit_turn(admission_payload: dict[str, object]) -> dict[str, object]:
+    agent = AgentSession("/run/castor/ipc.sock")
+    return agent.request("AdmitTurn", admission_payload)["outcome"]
 ```
+
+`admission_payload` must contain the current Turn, lease, projection digest, and capability reference supplied by the host. See the physical `tests/dogfood/ring3_agent.py` journey for the bounded D1 request sequence. The Agent session accepts only Agent-channel operations. Host operators use `OperatorSession` with a separate `control.sock`; neither client class can grant authority by itself. Each request opens a bounded-time connection and never retries an uncertain action automatically.
+
+`AisaClient` remains available for protocol-level integrations. It does not make the old in-process Python `Castor()` facade equivalent to Rust `castord`.
