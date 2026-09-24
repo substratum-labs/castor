@@ -94,8 +94,13 @@ class RustAuthorityChannelContract(unittest.TestCase):
                 )
                 self.assertEqual(install.returncode, 0, install.stderr)
                 source = (
-                    "import json, sys; "
+                    "import importlib.util, json, pathlib, sys; "
                     "from castor_client import AgentRequest, AgentSession; "
+                    "assert importlib.util.find_spec('castor') is None; "
+                    "assert not (pathlib.Path(sys.executable).parent / "
+                    "'castor').exists(); "
+                    "assert not (pathlib.Path(sys.executable).parent / "
+                    "'castor-mcp').exists(); "
                     "agent = AgentSession(sys.argv[1]); "
                     "admission = json.loads(sys.argv[2]); "
                     "armed = agent.send(AgentRequest("
