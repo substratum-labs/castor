@@ -19,21 +19,25 @@ def test_migration_wheel_refuses_old_castor_api() -> None:
     with zipfile.ZipFile(SHIM_WHEEL) as wheel:
         names = set(wheel.namelist())
     assert "castor/__init__.py" in names
-    assert not any(
-        name.startswith(
-            ("castor/gate/", "castor/kernel/", "castor/scheduler/", "castor/mcp/")
-        )
-        for name in names
-    )
+    assert {
+        name for name in names if name.startswith("castor/") and name.endswith(".py")
+    } <= {"castor/__init__.py", "castor/cli.py"}
 
     environment = {**os.environ, "PYTHONPATH": str(SHIM_WHEEL)}
-    probe = subprocess.run(
-        [sys.executable, "-c", "from castor import Castor; Castor()"],
-        cwd=ROOT,
-        env=environment,
-        capture_output=True,
-        text=True,
-        check=False,
+    probes = (
+        "from castor import Castor; Castor()",
+        "from castor.scheduler.runner import AgentRunner",
+        "from castor.gate.validator import SyscallGate",
+        "from castor.kernel.journal import InMemoryJournal",
     )
-    assert probe.returncode != 0
-    assert "castor-client" in probe.stderr
+    for source in probes:
+        probe = subprocess.run(
+            [sys.executable, "-c", source],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert probe.returncode != 0, source
+        assert "castor-client" in probe.stderr, source

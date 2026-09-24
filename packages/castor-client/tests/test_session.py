@@ -20,15 +20,39 @@ except ModuleNotFoundError:
 
 
 class SessionContract(unittest.TestCase):
+    class RecordingTransport:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        def request(self, op: str, payload: dict[str, object]) -> dict[str, object]:
+            self.calls.append((op, payload))
+            return {
+                "request_id": "contract",
+                "status": "Ok",
+                "outcome": {"type": "Admitted"},
+            }
+
     def test_agent_rejects_control_operation_before_connecting(self) -> None:
-        session = AgentSession(Path("/nonexistent/agent.sock"))
+        transport = self.RecordingTransport()
+        session = AgentSession(transport)
         with self.assertRaises(ValueError):
             session.request("GrantCapability", {})
+        self.assertEqual(transport.calls, [])
 
     def test_operator_rejects_agent_operation_before_connecting(self) -> None:
-        session = OperatorSession(Path("/nonexistent/control.sock"))
+        transport = self.RecordingTransport()
+        session = OperatorSession(transport)
         with self.assertRaises(ValueError):
             session.request("AdmitTurn", {})
+        self.assertEqual(transport.calls, [])
+
+    def test_agent_sends_one_allowed_request_with_original_payload(self) -> None:
+        transport = self.RecordingTransport()
+        session = AgentSession(transport)
+        payload = {"agent_id": "a", "turn_id": 3}
+        outcome = session.request("AdmitTurn", payload)
+        self.assertEqual(outcome, {"type": "Admitted"})
+        self.assertEqual(transport.calls, [("AdmitTurn", payload)])
 
     def test_allowed_agent_operation_fails_closed_when_daemon_is_absent(self) -> None:
         session = AgentSession(Path("/nonexistent/agent.sock"))
