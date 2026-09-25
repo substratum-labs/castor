@@ -438,9 +438,25 @@ fn pi_carrier_workspace_is_physically_read_only() {
         ])
         .output()
         .expect("probe container workspace write");
+    let scratch = Command::new("docker")
+        .args([
+            "exec",
+            supervisor.container_id(),
+            "node",
+            "-e",
+            "require('fs').writeFileSync('/tmp/castor-pi-probe','ok'); console.log(require('fs').readFileSync('/tmp/castor-pi-probe','utf8'))",
+        ])
+        .output()
+        .expect("probe ephemeral Pi scratch space");
     supervisor.remove().expect("remove physical Pi carrier");
     assert!(probe.status.success());
     assert_eq!(String::from_utf8_lossy(&probe.stdout).trim(), "EROFS");
+    assert!(
+        scratch.status.success(),
+        "Pi requires ephemeral /tmp: {}",
+        String::from_utf8_lossy(&scratch.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&scratch.stdout).trim(), "ok");
 }
 
 #[test]

@@ -141,6 +141,8 @@ impl RocheSandboxRunner {
                 "--network",
                 "none",
                 "--read-only",
+                "--tmpfs",
+                "/tmp:rw,nosuid,nodev,size=64m,mode=1777",
                 "--pids-limit",
                 "256",
                 "--security-opt",
