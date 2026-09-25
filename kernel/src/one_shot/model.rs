@@ -1,4 +1,4 @@
-//! Test-only external model seam. The C-03 authority path is always real.
+//! Host-owned buffered model bridge. The C-03 authority path is always real.
 
 use crate::host::{read_framed, write_framed, GatewayClient, SyscallRequest};
 use serde_json::{json, Value};
@@ -14,14 +14,14 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-pub struct TestModelService {
+pub struct SocketModelService {
     stop: Arc<AtomicBool>,
     failed: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
 
-impl TestModelService {
-    pub fn start(control_socket: PathBuf, model_socket: PathBuf) -> Self {
+impl SocketModelService {
+    pub fn start(control_socket: PathBuf, model_socket: PathBuf, timeout: Duration) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let failed = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
@@ -60,7 +60,9 @@ impl TestModelService {
                     if !seen.insert(id.to_owned()) {
                         continue;
                     }
-                    if report_buffered_result(&control_socket, &model_socket, request).is_err() {
+                    if report_buffered_result(&control_socket, &model_socket, request, timeout)
+                        .is_err()
+                    {
                         worker_failed.store(true, Ordering::SeqCst);
                     }
                 }
@@ -83,7 +85,7 @@ impl TestModelService {
     }
 }
 
-impl Drop for TestModelService {
+impl Drop for SocketModelService {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(worker) = self.worker.take() {
@@ -96,6 +98,7 @@ fn report_buffered_result(
     control_socket: &PathBuf,
     model_socket: &PathBuf,
     request: &Value,
+    timeout: Duration,
 ) -> io::Result<()> {
     let interaction_id = required_str(request, "interaction_id")?;
     let expected_request_digest = required_str(request, "request_digest")?;
@@ -150,8 +153,8 @@ fn report_buffered_result(
     for attempt in 0..3 {
         let outcome = (|| {
             let mut stream = UnixStream::connect(model_socket)?;
-            stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-            stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+            stream.set_read_timeout(Some(timeout))?;
+            stream.set_write_timeout(Some(timeout))?;
             let envelope = json!({
                 "interaction_id": interaction_id,
                 "request_digest": expected_request_digest,

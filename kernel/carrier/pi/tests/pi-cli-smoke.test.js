@@ -66,7 +66,7 @@ test("pinned Pi CLI loads Castor provider in a networkless read-only container",
     await new Promise((resolve) => server.listen(socketPath, resolve));
     const child = spawn("pi", [
       "--extension", "/opt/castor/castor-pi-extension.js",
-      "--no-builtin-tools", "--no-session",
+      "--no-extensions", "--no-builtin-tools", "--no-session",
       "--offline", "--no-context-files", "--no-skills", "--no-prompt-templates", "--no-themes",
       "--mode", "json", "--print", "--model", "castor/castor-task",
       "Repair the failing unit test.",

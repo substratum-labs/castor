@@ -1,7 +1,9 @@
 use castor_kernel::one_shot::image::{valid_digest, StagedSnapshot};
 use castor_kernel::one_shot::manifest::TaskManifest;
 use castor_kernel::one_shot::result::TaskResult;
-use castor_kernel::one_shot::supervisor::{run_test_task, test_state_root, RunOutcome};
+use castor_kernel::one_shot::supervisor::{
+    run_product_task, run_test_task, test_state_root, RunOutcome,
+};
 use std::env;
 use std::io;
 use std::path::PathBuf;
@@ -61,53 +63,71 @@ fn run() -> io::Result<ExitCode> {
                     Err(_) => return image_failure(manifest),
                 }
             };
-            if let Some(child) = test_child {
-                let outcome = run_test_task(
+            let outcome = if let Some(child) = test_child {
+                run_test_task(
                     &manifest,
                     &manifest_path,
                     &staged,
                     image_digest,
                     &test_state_root()?,
                     &child,
-                )?;
-                match outcome {
-                    RunOutcome::Active(value) => {
-                        println!(
-                            "{}",
-                            serde_json::to_string(&value).map_err(io::Error::other)?
-                        );
-                        Ok(ExitCode::SUCCESS)
-                    }
-                    RunOutcome::Replayed(value) => {
-                        let success = value.get("status").and_then(|status| status.as_str())
-                            == Some("SUCCEEDED");
-                        println!(
-                            "{}",
-                            serde_json::to_string(&value).map_err(io::Error::other)?
-                        );
-                        Ok(if success {
-                            ExitCode::SUCCESS
-                        } else {
-                            ExitCode::FAILURE
-                        })
-                    }
-                    RunOutcome::Terminal(result) => {
-                        println!(
-                            "{}",
-                            serde_json::to_string(&result).map_err(io::Error::other)?
-                        );
-                        Ok(if result.status == "SUCCEEDED" {
-                            ExitCode::SUCCESS
-                        } else {
-                            ExitCode::FAILURE
-                        })
-                    }
-                }
+                )?
             } else {
-                Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "production task supervision is not implemented yet",
-                ))
+                let state_root = env::var_os("CASTOR_STATE_ROOT")
+                    .map(PathBuf::from)
+                    .or_else(|| {
+                        env::var_os("HOME").map(|home| PathBuf::from(home).join(".castor/state"))
+                    })
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "missing HOME or CASTOR_STATE_ROOT",
+                        )
+                    })?;
+                let model_socket = env::var_os("CASTOR_MODEL_SOCKET")
+                    .map(PathBuf::from)
+                    .unwrap_or_default();
+                run_product_task(
+                    &manifest,
+                    &manifest_path,
+                    &staged,
+                    image_digest,
+                    &state_root,
+                    &model_socket,
+                )?
+            };
+            match outcome {
+                RunOutcome::Active(value) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&value).map_err(io::Error::other)?
+                    );
+                    Ok(ExitCode::SUCCESS)
+                }
+                RunOutcome::Replayed(value) => {
+                    let success =
+                        value.get("status").and_then(|status| status.as_str()) == Some("SUCCEEDED");
+                    println!(
+                        "{}",
+                        serde_json::to_string(&value).map_err(io::Error::other)?
+                    );
+                    Ok(if success {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    })
+                }
+                RunOutcome::Terminal(result) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&result).map_err(io::Error::other)?
+                    );
+                    Ok(if result.status == "SUCCEEDED" {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    })
+                }
             }
         }
         Err(_) => {

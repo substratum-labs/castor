@@ -10,6 +10,7 @@ use std::path::{Component, Path};
 use std::process::{Command, Stdio};
 
 const EVIDENCE_KEY: &[u8] = b"castor-one-shot-test-evidence-key";
+pub const ACTUATOR_ISSUER: &str = "castor-one-shot-workspace-actuator";
 
 pub struct SettledEdit {
     pub patch: String,
@@ -18,7 +19,11 @@ pub struct SettledEdit {
 }
 
 pub fn evidence_key_hex() -> String {
-    hex(EVIDENCE_KEY)
+    key_hex(EVIDENCE_KEY)
+}
+
+pub fn key_hex(key: &[u8]) -> String {
+    hex(key)
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -64,6 +69,24 @@ pub fn settle_workspace_edit(
     evidence_socket: &Path,
     workspace: &Path,
     settle: bool,
+) -> io::Result<Option<SettledEdit>> {
+    settle_workspace_edit_with_key(
+        control_socket,
+        actuator_socket,
+        evidence_socket,
+        workspace,
+        settle,
+        EVIDENCE_KEY,
+    )
+}
+
+pub fn settle_workspace_edit_with_key(
+    control_socket: &Path,
+    actuator_socket: &Path,
+    evidence_socket: &Path,
+    workspace: &Path,
+    settle: bool,
+    key: &[u8],
 ) -> io::Result<Option<SettledEdit>> {
     let journal = request(control_socket, "inspect-edit", "InspectJournal", json!({}))?;
     let Some(armed) = journal["entries"]
@@ -129,7 +152,7 @@ pub fn settle_workspace_edit(
     apply_patch(workspace, target_path, &patch)?;
     let patch_sha256 = format!("sha256:{:x}", Sha256::digest(patch.as_bytes()));
     if settle {
-        settle_receipt(control_socket, evidence_socket, attempt_id, scope)?;
+        settle_receipt_with_key(control_socket, evidence_socket, attempt_id, scope, key)?;
     }
     Ok(Some(SettledEdit {
         patch,
@@ -238,18 +261,34 @@ pub fn settle_receipt(
     attempt_id: u64,
     scope: &str,
 ) -> io::Result<()> {
+    settle_receipt_with_key(
+        control_socket,
+        evidence_socket,
+        attempt_id,
+        scope,
+        EVIDENCE_KEY,
+    )
+}
+
+fn settle_receipt_with_key(
+    control_socket: &Path,
+    evidence_socket: &Path,
+    attempt_id: u64,
+    scope: &str,
+    key: &[u8],
+) -> io::Result<()> {
     let mut receipt = json!({
         "attempt_id": attempt_id,
         "stable_operation_id": "edit-1",
         "request_digest": scope,
-        "issuer": "castor-one-shot-test-actuator",
+        "issuer": ACTUATOR_ISSUER,
         "adapter_id": "c04:generic",
         "settlement_schema_version": 1,
         "resolution": "Confirmed",
         "actuator_state": "Committed"
     });
     let bytes = serde_json::to_vec(&receipt).map_err(io::Error::other)?;
-    let mut mac = Hmac::<Sha256>::new_from_slice(EVIDENCE_KEY).map_err(io::Error::other)?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).map_err(io::Error::other)?;
     mac.update(&bytes);
     receipt["signature"] = json!(hex(&mac.finalize().into_bytes()));
     let evidence_bytes = serde_json::to_vec(&receipt).map_err(io::Error::other)?;

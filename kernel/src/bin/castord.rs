@@ -818,11 +818,7 @@ fn run(config: Config) -> io::Result<()> {
         trust,
         actuator_trust,
         delivery_fault_point,
-        security_audit_path: if config.allow_test_opcodes {
-            env::var_os("CASTORD_SECURITY_AUDIT_PATH").map(PathBuf::from)
-        } else {
-            None
-        },
+        security_audit_path: env::var_os("CASTORD_SECURITY_AUDIT_PATH").map(PathBuf::from),
     };
     {
         let evidence_context = ServerContext {

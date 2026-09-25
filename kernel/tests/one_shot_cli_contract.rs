@@ -1432,3 +1432,105 @@ fn test_agent_and_image_overrides_are_inert_without_test_flag() {
         "test child must not run without explicit flag"
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn default_cli_runs_real_pi_through_roche_and_host_settlement() {
+    let root = tempfile::tempdir().unwrap();
+    let carrier = Command::new("docker")
+        .args([
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}}",
+            "substratum/castor-pi-carrier:v1",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        carrier.status.success(),
+        "CI must build the pinned Pi carrier"
+    );
+    let carrier_id = String::from_utf8_lossy(&carrier.stdout).trim().to_owned();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let mut body: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    body["carrier_base_image"] = json!(format!("substratum/castor-pi-carrier:v1@{carrier_id}"));
+    body["verification_command"] =
+        json!(["sh", "-c", "test \"$(cat defect.txt)\" = \"fixed fixture\""]);
+    fs::write(&manifest, serde_json::to_vec(&body).unwrap()).unwrap();
+
+    let model_socket = root.path().join("model.sock");
+    let listener = UnixListener::bind(&model_socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let worker_stop = stop.clone();
+    let worker_calls = calls.clone();
+    let model_worker = thread::spawn(move || {
+        while !worker_stop.load(Ordering::SeqCst) {
+            let Ok((mut stream, _)) = listener.accept() else {
+                thread::sleep(Duration::from_millis(10));
+                continue;
+            };
+            let request: Value =
+                serde_json::from_slice(&read_framed(&mut stream).unwrap()).unwrap();
+            assert_eq!(request["request"]["schema_version"], 1);
+            let ordinal = worker_calls.fetch_add(1, Ordering::SeqCst);
+            let response = if ordinal == 0 {
+                json!({
+                    "content": [{
+                        "type": "toolCall",
+                        "id": "edit-1",
+                        "name": "castor_edit_file",
+                        "arguments": {
+                            "path": "defect.txt",
+                            "patch_diff": "--- a/defect.txt\n+++ b/defect.txt\n@@ -1 +1 @@\n-failing fixture\n+fixed fixture\n"
+                        }
+                    }],
+                    "stopReason": "toolUse",
+                    "usage": {"input": 12, "output": 8}
+                })
+            } else {
+                json!({
+                    "content": [{"type": "text", "text": "Done."}],
+                    "stopReason": "stop",
+                    "usage": {"input": 18, "output": 3}
+                })
+            };
+            let content = serde_json::to_vec(&response).unwrap();
+            let response = json!({
+                "interaction_id": request["interaction_id"],
+                "observation_region_id": format!("region://observation/{ordinal}"),
+                "observation_digest": format!("sha256:{:x}", Sha256::digest(&content)),
+                "content": content
+            });
+            write_framed(&mut stream, &serde_json::to_vec(&response).unwrap()).unwrap();
+        }
+    });
+
+    let output = Command::new(castor_cli())
+        .args(["run", "--task"])
+        .arg(&manifest)
+        .env("CASTOR_MODEL_SOCKET", &model_socket)
+        .env("CASTOR_STATE_ROOT", root.path().join("state"))
+        .output()
+        .expect("run actual Pi carrier through default product CLI");
+    stop.store(true, Ordering::SeqCst);
+    model_worker.join().unwrap();
+    let task = result(&output);
+    assert!(
+        output.status.success(),
+        "stderr={}; stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(task["status"], "SUCCEEDED");
+    assert_eq!(task["test_passed"], true);
+    assert_eq!(task["settled_actions_count"], 1);
+    assert!(calls.load(Ordering::SeqCst) >= 2);
+    assert!(task["patch_diff"]
+        .as_str()
+        .unwrap()
+        .contains("+fixed fixture"));
+}
