@@ -83,6 +83,10 @@ impl SocketModelService {
         }
         self.failed.load(Ordering::SeqCst)
     }
+
+    pub fn has_failed(&self) -> bool {
+        self.failed.load(Ordering::SeqCst)
+    }
 }
 
 impl Drop for SocketModelService {

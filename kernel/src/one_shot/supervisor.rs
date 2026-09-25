@@ -647,7 +647,7 @@ pub fn run_product_task(
     let command = "cd /workspace && exec pi --extension /opt/castor/castor-pi-extension.js --no-extensions --no-builtin-tools --no-session --offline --no-context-files --no-skills --no-prompt-templates --no-themes --model castor/castor-task --mode json --print \"$CASTOR_TASK_PROMPT\" </dev/null";
     let child_exit = match RocheSandboxRunner::new(config).start(command) {
         Ok(carrier) => {
-            let exit = wait_for_pi(&carrier);
+            let exit = wait_for_pi(&carrier, &model);
             if let Ok(logs) = Command::new("docker")
                 .args(["logs", "--tail", "200", carrier.container_id()])
                 .output()
@@ -775,9 +775,16 @@ pub fn run_product_task(
     Ok(RunOutcome::Terminal(result))
 }
 
-fn wait_for_pi(carrier: &RocheProcessSupervisor) -> io::Result<Option<i32>> {
+fn wait_for_pi(
+    carrier: &RocheProcessSupervisor,
+    model: &SocketModelService,
+) -> io::Result<Option<i32>> {
     let deadline = Instant::now() + Duration::from_secs(300);
     loop {
+        if model.has_failed() {
+            let _ = carrier.kill_immediate();
+            return Ok(Some(1));
+        }
         let output = Command::new("docker")
             .args([
                 "inspect",

@@ -1561,3 +1561,51 @@ fn default_cli_runs_real_pi_through_roche_and_host_settlement() {
         .unwrap()
         .contains("+fixed fixture"));
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn default_cli_fences_and_stops_pi_when_host_model_transport_fails() {
+    let root = tempfile::tempdir().unwrap();
+    let carrier = Command::new("docker")
+        .args([
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}}",
+            "substratum/castor-pi-carrier:v1",
+        ])
+        .output()
+        .unwrap();
+    assert!(carrier.status.success());
+    let carrier_id = String::from_utf8_lossy(&carrier.stdout).trim().to_owned();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let mut body: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    body["carrier_base_image"] = json!(format!("substratum/castor-pi-carrier:v1@{carrier_id}"));
+    fs::write(&manifest, serde_json::to_vec(&body).unwrap()).unwrap();
+    let model_socket = root.path().join("model.sock");
+    let model = MockModelService::start(&model_socket, None, None);
+    let started = std::time::Instant::now();
+    let output = Command::new(castor_cli())
+        .args(["run", "--task"])
+        .arg(&manifest)
+        .env("CASTOR_MODEL_SOCKET", &model_socket)
+        .env("CASTOR_STATE_ROOT", root.path().join("state"))
+        .output()
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "terminal model failure must stop Pi promptly"
+    );
+    let result = result(&output);
+    assert_eq!(result["status"], "FAILED");
+    assert_eq!(result["failure_reason"], "MODEL_INTERACTION_ERROR");
+    assert_eq!(result["settled_actions_count"], 0);
+    assert!(model.attempts.load(Ordering::SeqCst) > 0);
+    let storage =
+        D1DurableStorage::open(root.path().join("state/tasks/task-snapshot-gate")).unwrap();
+    assert!(storage.journal_requests().iter().any(|request| matches!(
+        request.entry,
+        castor_kernel::c01_storage::CoreEntry::FenceRevoked { .. }
+    )));
+}
