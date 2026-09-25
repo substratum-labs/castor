@@ -15,6 +15,7 @@ pub mod c05_settlement;
 pub mod c06_composition;
 pub mod castord;
 pub mod host;
+pub mod one_shot;
 pub mod runtime;
 pub mod sandbox;
 pub mod spec;

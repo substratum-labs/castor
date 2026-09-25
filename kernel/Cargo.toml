@@ -11,6 +11,10 @@ crate-type = ["cdylib", "rlib"]
 name = "castord"
 path = "src/bin/castord.rs"
 
+[[bin]]
+name = "castor"
+path = "src/bin/castor.rs"
+
 [features]
 default = []
 extension-module = ["pyo3/extension-module"]
