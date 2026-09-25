@@ -158,7 +158,14 @@ with sqlite3.connect(sys.argv[1]) as db:
 
 
 class Daemon:
-    def __init__(self, *, sandbox=False, fault_point=None):
+    def __init__(
+        self,
+        *,
+        sandbox=False,
+        fault_point=None,
+        adapter_id=ADAPTER,
+        target_scope=SCOPE,
+    ):
         # Explicit /tmp avoids macOS's long per-user TMPDIR Unix socket limit.
         self.temp = tempfile.TemporaryDirectory(prefix="cr-", dir="/tmp")
         self.root = Path(self.temp.name)
@@ -171,6 +178,8 @@ class Daemon:
         self.process = None
         self.sandbox = sandbox
         self.fault_point = fault_point
+        self.adapter_id = adapter_id
+        self.target_scope = target_scope
         self.turn = 1
         self.base = digest(b"")
         self.generation = 1
@@ -181,13 +190,13 @@ class Daemon:
                 {
                     "issuer": "fixture-evidence-service",
                     "peer_uid": os.getuid(),
-                    "adapter_id": ADAPTER,
+                    "adapter_id": self.adapter_id,
                     "receipt_algorithm": "HMAC-SHA256",
                     "key_hex": SIGNING_KEY.hex(),
                     "actuator_db": str(self.actuator.path),
                     "probe_budget": 2,
                     "canonical_scopes": {
-                        "a1": SCOPE,
+                        "a1": self.target_scope,
                         "a2": SCOPE,
                         "a3": "payment:fixture:other",
                     },
@@ -197,7 +206,7 @@ class Daemon:
         self.trust.chmod(0o600)
         self.actuator_trust = self.root / "actuator-trust.json"
         self.actuator_trust.write_bytes(
-            encoded({"peer_uid": os.getuid(), "actuator_id": ADAPTER})
+            encoded({"peer_uid": os.getuid(), "actuator_id": self.adapter_id})
         )
         self.actuator_trust.chmod(0o600)
         self.start()
@@ -296,7 +305,7 @@ class Daemon:
             {
                 "attempt_id": 1,
                 "dispatch_identity": OP_ID,
-                "actuator_id": ADAPTER,
+                "actuator_id": self.adapter_id,
             },
             "delivery",
         )

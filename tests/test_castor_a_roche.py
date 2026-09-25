@@ -11,12 +11,26 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest import mock
 
+from tests.dogfood.repo_workspace_actuator import (
+    ACTUATOR_ID,
+    ActuatorConfig,
+    RepoWorkspaceActuator,
+    canonical_json,
+)
 from tests.fixtures.castor_a_trace_support import (
     prepare_trace,
     report_model_after_request,
 )
-from tests.test_cognitive_recovery_castord import ADAPTER, AGENT, CAP, Daemon, expect
+from tests.test_cognitive_recovery_castord import (
+    ADAPTER,
+    AGENT,
+    CAP,
+    SIGNING_KEY,
+    Daemon,
+    expect,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 WHEEL = ROOT / "packages/castor-client/dist/castor_client-0.7.0a1-py3-none-any.whl"
@@ -53,11 +67,13 @@ class CastorARochePhysical(unittest.TestCase):
             "CASTOR_IPC_SOCKET=/run/castor/ipc.sock",
         ]
 
-    def run_full_guest(self, daemon: Daemon) -> list[str]:
+    def run_full_guest(
+        self, daemon: Daemon, *, action_payload: bytes = b"payload-a1"
+    ) -> list[str]:
         name = f"castor-a-roche-{uuid.uuid4().hex[:12]}"
         process: subprocess.Popen[str] | None = None
         try:
-            config, observation = prepare_trace(daemon)
+            config, observation = prepare_trace(daemon, action_payload=action_payload)
             config["socket"] = "/run/castor/ipc.sock"
             process = subprocess.Popen(
                 self.container_args(name, daemon)
@@ -320,4 +336,97 @@ class CastorARochePhysical(unittest.TestCase):
                 text=True,
                 check=False,
             )
+            daemon.close()
+
+    def test_c3_file_replace_crash_reconciles_without_second_effect(self) -> None:
+        relative = "src/castor/ipc_client.py"
+        target_scope = f"repo:castor:file/{relative}"
+        payload = canonical_json(
+            {"kind": "write_file", "path": relative, "content_utf8": "recovered\n"}
+        )
+        daemon = Daemon(sandbox=True, adapter_id=ACTUATOR_ID, target_scope=target_scope)
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="castor-a-target-", dir="/tmp"
+            ) as root:
+                target = Path(root)
+                path = target / relative
+                path.parent.mkdir(parents=True)
+                path.write_text("old\n")
+                self.run_full_guest(daemon, action_payload=payload)
+                envelope = daemon.acquire()
+                self.assertEqual(envelope["delivery_outcome"], "Delivered")
+                self.assertEqual(bytes(envelope["payload"]), payload)
+                config = ActuatorConfig(
+                    target_workspace=target,
+                    run_dir=daemon.root,
+                    state_db=daemon.root / "workspace-actuator.sqlite",
+                    actuator_socket=daemon.delivery,
+                    evidence_socket=daemon.evidence,
+                    actuator_secret=SIGNING_KEY,
+                    issuer="fixture-evidence-service",
+                )
+                script = """import json, os, sys
+from pathlib import Path
+from tests.dogfood.repo_workspace_actuator import ActuatorConfig, RepoWorkspaceActuator
+config = ActuatorConfig(
+    target_workspace=Path(sys.argv[1]), run_dir=Path(sys.argv[2]),
+    state_db=Path(sys.argv[3]), actuator_socket=Path(sys.argv[4]),
+    evidence_socket=Path(sys.argv[5]), actuator_secret=bytes.fromhex(sys.argv[6]),
+    issuer='fixture-evidence-service')
+def crash(phase):
+    if phase == 'after_file_replace':
+        os._exit(93)
+RepoWorkspaceActuator(config, crash_hook=crash).process_envelope(
+    json.loads(sys.argv[7]))
+raise AssertionError('the physical crash hook did not run')
+"""
+                crash = subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        script,
+                        str(config.target_workspace),
+                        str(config.run_dir),
+                        str(config.state_db),
+                        str(config.actuator_socket),
+                        str(config.evidence_socket),
+                        SIGNING_KEY.hex(),
+                        json.dumps(envelope),
+                    ],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=20,
+                )
+                self.assertEqual(crash.returncode, 93, crash.stderr)
+                self.assertEqual(path.read_text(), "recovered\n")
+                inode = path.stat().st_ino
+                with mock.patch(
+                    "tests.dogfood.repo_workspace_actuator.os.replace"
+                ) as replace:
+                    actuator = RepoWorkspaceActuator(config)
+                    result = actuator.process_envelope(envelope)
+                replace.assert_not_called()
+                self.assertEqual(path.stat().st_ino, inode)
+                self.assertEqual(result["physical_observation"], "reconciled_matching")
+
+                def publish(ref: str, content_digest: str, content: bytes) -> None:
+                    daemon.ok(
+                        "EnsureRegion",
+                        {
+                            "region_ref": ref,
+                            "content_digest": content_digest,
+                            "content": list(content),
+                        },
+                        "Success",
+                    )
+
+                actuator.settle(result, publish)
+                daemon.restart()
+                self.assertEqual(path.read_text(), "recovered\n")
+                self.assertEqual(path.stat().st_ino, inode)
+                self.assertEqual(daemon.summary()["locked_scopes"], 0)
+        finally:
             daemon.close()

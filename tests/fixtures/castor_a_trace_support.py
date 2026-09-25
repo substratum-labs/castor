@@ -6,11 +6,9 @@ import time
 from typing import TYPE_CHECKING
 
 from tests.test_cognitive_recovery_castord import (
-    ADAPTER,
     AGENT,
     CAP,
     OP_ID,
-    SCOPE,
     digest,
 )
 
@@ -20,11 +18,13 @@ if TYPE_CHECKING:
     from tests.test_cognitive_recovery_castord import Daemon
 
 
-def prepare_trace(daemon: Daemon) -> tuple[dict[str, object], tuple[str, str]]:
+def prepare_trace(
+    daemon: Daemon, *, action_payload: bytes = b"payload-a1"
+) -> tuple[dict[str, object], tuple[str, str]]:
     grant = {
         "cap_id": CAP,
         "subject": AGENT,
-        "object_ref": ADAPTER,
+        "object_ref": daemon.adapter_id,
         "rights": ["AdmitTurn", "RegisterAction"],
         "constraints": [],
         "parent_cap_id": None,
@@ -53,10 +53,10 @@ def prepare_trace(daemon: Daemon) -> tuple[dict[str, object], tuple[str, str]]:
         "observation_digest": observation[1],
         "successor": region("successor", b"successor-state"),
         "manifest": region("manifest", b"a1\n"),
-        "payload": region("payload-a1", b"payload-a1"),
+        "payload": region("payload-a1", action_payload),
         "action_id": "a1",
-        "actuator_id": ADAPTER,
-        "target_scope": SCOPE,
+        "actuator_id": daemon.adapter_id,
+        "target_scope": daemon.target_scope,
         "stable_operation_id": OP_ID,
         "generation": daemon.generation,
     }
