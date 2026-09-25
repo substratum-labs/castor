@@ -11,6 +11,7 @@ test("Pi provider binds a full request Region before returning a buffered model 
   const root = await mkdtemp(join(tmpdir(), "castor-pi-ext-"));
   const socketPath = join(root, "ipc.sock");
   const calls = [];
+  let consumeAttempts = 0;
   let provider;
   const tools = [];
   const fakePi = {
@@ -35,7 +36,7 @@ test("Pi provider binds a full request Region before returning a buffered model 
       CommitTurn: { type: "TurnCommitted" },
       RegisterAction: { type: "ActionRegistered" },
       PresentAdmissionCertificate: { type: "AttemptArmed", attempt_id: 1 },
-      ConsumeInteraction: {
+      ConsumeInteraction: request.op === "ConsumeInteraction" && ++consumeAttempts === 1 ? { type: "RejectedStaleAuthority" } : {
         type: "InteractionConsumed",
         payload: {
           interaction_id: request.payload.interaction_id,
@@ -74,7 +75,7 @@ test("Pi provider binds a full request Region before returning a buffered model 
     const context = { messages: [{ role: "user", content: "Repair the failing unit test." }] };
     const events = [];
     for await (const event of provider.streamSimple(model, context, { maxTokens: 256 })) events.push(event);
-    assert.deepEqual(calls.map((call) => call.op), ["AdmitTurn", "EnsureRegion", "RequestInteraction", "ConsumeInteraction"]);
+    assert.deepEqual(calls.map((call) => call.op), ["AdmitTurn", "EnsureRegion", "RequestInteraction", "ConsumeInteraction", "ConsumeInteraction"]);
     const bytes = Buffer.from(calls[1].payload.content);
     const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
     assert.equal(calls[1].payload.content_digest, digest);
@@ -88,12 +89,12 @@ test("Pi provider binds a full request Region before returning a buffered model 
     const edit = tools.find((tool) => tool.name === "castor_edit_file");
     await assert.rejects(edit.execute("bad-path", { path: "../outside", patch_diff: "patch" }), /invalid workspace edit path/);
     await edit.execute("edit-1", { path: "defect.txt", patch_diff: "--- a/defect.txt\n+++ b/defect.txt\n@@ -1 +1 @@\n-bad\n+good\n" });
-    assert.deepEqual(calls.slice(4).map((call) => call.op), [
+    assert.deepEqual(calls.slice(5).map((call) => call.op), [
       "EnsureRegion", "EnsureRegion", "CommitTurn", "RegisterAction", "PresentAdmissionCertificate",
     ]);
     const committed = calls.find((call) => call.op === "CommitTurn").payload;
-    assert.equal(committed.action_bindings[0].payload_digest, calls[4].payload.content_digest);
-    assert.equal(committed.action_manifest_digest, calls[5].payload.content_digest);
+    assert.equal(committed.action_bindings[0].payload_digest, calls[5].payload.content_digest);
+    assert.equal(committed.action_manifest_digest, calls[6].payload.content_digest);
   } finally {
     if (originalSocket === undefined) delete process.env.CASTOR_IPC_SOCKET;
     else process.env.CASTOR_IPC_SOCKET = originalSocket;

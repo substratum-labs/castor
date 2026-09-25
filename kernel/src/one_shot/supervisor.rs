@@ -644,7 +644,7 @@ pub fn run_product_task(
         "CASTOR_TASK_PROMPT".to_owned(),
         manifest.task_prompt.clone(),
     );
-    let command = "exec pi --extension /opt/castor/castor-pi-extension.js --no-extensions --no-builtin-tools --no-session --offline --no-context-files --no-skills --no-prompt-templates --no-themes --model castor/castor-task --mode json --print \"$CASTOR_TASK_PROMPT\" </dev/null";
+    let command = "cd /workspace && exec pi --extension /opt/castor/castor-pi-extension.js --no-extensions --no-builtin-tools --no-session --offline --no-context-files --no-skills --no-prompt-templates --no-themes --model castor/castor-task --mode json --print \"$CASTOR_TASK_PROMPT\" </dev/null";
     let child_exit = match RocheSandboxRunner::new(config).start(command) {
         Ok(carrier) => {
             let exit = wait_for_pi(&carrier);

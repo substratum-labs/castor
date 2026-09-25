@@ -131,7 +131,9 @@ export default function castorExtension(pi) {
         };
         return JSON.parse(content.toString("utf8"));
       }
-      if (consumed?.type !== "RejectedCurrentState") throw new Error(`model observation rejected: ${consumed?.type}`);
+      if (!["RejectedCurrentState", "RejectedStaleAuthority"].includes(consumed?.type)) {
+        throw new Error(`model observation rejected: ${consumed?.type}`);
+      }
       await delay(20);
     }
     throw new Error("timed out waiting for durably bound model observation");

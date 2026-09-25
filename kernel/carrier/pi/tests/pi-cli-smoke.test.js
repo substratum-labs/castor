@@ -12,6 +12,7 @@ test("pinned Pi CLI loads Castor provider in a networkless read-only container",
   const socketPath = join(root, "ipc.sock");
   const calls = [];
   let modelCalls = 0;
+  const consumeAttempts = new Map();
   const server = createServer((stream) => {
     let data = Buffer.alloc(0);
     stream.on("data", (chunk) => {
@@ -30,6 +31,12 @@ test("pinned Pi CLI loads Castor provider in a networkless read-only container",
         case "RegisterAction": outcome = { type: "ActionRegistered" }; break;
         case "PresentAdmissionCertificate": outcome = { type: "AttemptArmed", attempt_id: 1 }; break;
         case "ConsumeInteraction": {
+          const seen = consumeAttempts.get(request.payload.interaction_id) || 0;
+          consumeAttempts.set(request.payload.interaction_id, seen + 1);
+          if (seen === 0) {
+            outcome = { type: "RejectedStaleAuthority" };
+            break;
+          }
           const responseBytes = Buffer.from(JSON.stringify(modelCalls === 1 ? {
             content: [{
               type: "toolCall", id: "tool-edit-1", name: "castor_edit_file",
