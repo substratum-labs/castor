@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, Protocol
+from typing import Any, ClassVar, Generic, Literal, Protocol, TypeVar, overload
 
 from .client import AisaClient, AisaProtocolError
+from .operations import AgentOperationRequest, OperatorOperationRequest
+
+OutcomeT = TypeVar("OutcomeT", bound=Mapping[str, object])
 
 AgentOperation = Literal[
     "AdmitTurn",
@@ -45,9 +49,9 @@ class OperatorRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class AisaResponse:
+class AisaResponse(Generic[OutcomeT]):
     request_id: str
-    outcome: dict[str, Any]
+    outcome: OutcomeT
 
     @property
     def outcome_type(self) -> str | None:
@@ -87,6 +91,8 @@ class _Session:
         else:
             assert self._transport is not None
             response = self._transport.request(op, payload)
+        if response.get("status") != "Ok":
+            raise AisaProtocolError(f"{op} returned a non-Ok status")
         outcome = response.get("outcome")
         if not isinstance(outcome, dict):
             raise AisaProtocolError(f"{op} returned no outcome object")
@@ -96,7 +102,7 @@ class _Session:
             raise AisaProtocolError(f"{op} returned no outcome type")
         return response
 
-    def _send(self, op: str, payload: dict[str, Any]) -> AisaResponse:
+    def _send(self, op: str, payload: dict[str, Any]) -> AisaResponse[dict[str, Any]]:
         response = self.request(op, payload)
         request_id = response.get("request_id")
         if not isinstance(request_id, str) or not request_id:
@@ -123,10 +129,22 @@ class AgentSession(_Session):
         }
     )
 
-    def send(self, request: AgentRequest) -> AisaResponse:
-        if not isinstance(request, AgentRequest):
-            raise TypeError("AgentSession.send requires AgentRequest")
-        return self._send(request.op, request.payload)
+    @overload
+    def send(
+        self, request: AgentOperationRequest[OutcomeT]
+    ) -> AisaResponse[OutcomeT]: ...
+
+    @overload
+    def send(self, request: AgentRequest) -> AisaResponse[dict[str, Any]]: ...
+
+    def send(
+        self, request: AgentRequest | AgentOperationRequest[Any]
+    ) -> AisaResponse[Any]:
+        if isinstance(request, AgentOperationRequest):
+            return self._send(request.op, request.to_payload())
+        if isinstance(request, AgentRequest):
+            return self._send(request.op, request.payload)
+        raise TypeError("AgentSession.send requires an Agent request")
 
 
 class OperatorSession(_Session):
@@ -145,7 +163,19 @@ class OperatorSession(_Session):
     )
     untyped_read_operations = frozenset({"GetProjectionSummary", "InspectJournal"})
 
-    def send(self, request: OperatorRequest) -> AisaResponse:
-        if not isinstance(request, OperatorRequest):
-            raise TypeError("OperatorSession.send requires OperatorRequest")
-        return self._send(request.op, request.payload)
+    @overload
+    def send(
+        self, request: OperatorOperationRequest[OutcomeT]
+    ) -> AisaResponse[OutcomeT]: ...
+
+    @overload
+    def send(self, request: OperatorRequest) -> AisaResponse[dict[str, Any]]: ...
+
+    def send(
+        self, request: OperatorRequest | OperatorOperationRequest[Any]
+    ) -> AisaResponse[Any]:
+        if isinstance(request, OperatorOperationRequest):
+            return self._send(request.op, request.to_payload())
+        if isinstance(request, OperatorRequest):
+            return self._send(request.op, request.payload)
+        raise TypeError("OperatorSession.send requires an Operator request")

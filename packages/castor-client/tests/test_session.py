@@ -5,23 +5,29 @@ from pathlib import Path
 
 try:
     from castor_client import (
+        AdmitTurn,
         AgentRequest,
         AgentSession,
         AisaConnectionError,
         AisaProtocolError,
         AisaResponse,
+        GrantCapability,
         OperatorRequest,
         OperatorSession,
+        RequestInteraction,
     )
 except ModuleNotFoundError:
     from src.castor_client import (
+        AdmitTurn,
         AgentRequest,
         AgentSession,
         AisaConnectionError,
         AisaProtocolError,
         AisaResponse,
+        GrantCapability,
         OperatorRequest,
         OperatorSession,
+        RequestInteraction,
     )
 
 
@@ -71,6 +77,55 @@ class SessionContract(unittest.TestCase):
         self.assertEqual(response.outcome, {"type": "Admitted"})
         self.assertEqual(transport.calls, [("AdmitTurn", payload)])
 
+    def test_operation_specific_requests_preserve_role_and_wire_payload(self) -> None:
+        transport = self.RecordingTransport()
+        admit = AdmitTurn(
+            agent_id="agent-a",
+            turn_id=3,
+            lease_epoch=0,
+            base_projection_digest="sha256:base",
+            cap_id="cap-a",
+        )
+        response = AgentSession(transport).send(admit)
+        self.assertEqual(response.outcome_type, "Admitted")
+        self.assertEqual(
+            transport.calls,
+            [
+                (
+                    "AdmitTurn",
+                    {
+                        "agent_id": "agent-a",
+                        "turn_id": 3,
+                        "lease_epoch": 0,
+                        "base_projection_digest": "sha256:base",
+                        "cap_id": "cap-a",
+                    },
+                )
+            ],
+        )
+        with self.assertRaises(TypeError):
+            AgentSession(transport).send(GrantCapability(grant={}))
+        self.assertEqual(len(transport.calls), 1)
+
+    def test_interaction_without_query_descriptor_omits_optional_wire_key(self) -> None:
+        transport = self.RecordingTransport()
+        AgentSession(transport).send(
+            RequestInteraction(
+                interaction_id="i-1", lease_epoch=0, request_digest="sha256:r"
+            )
+        )
+        self.assertEqual(
+            transport.calls[0],
+            (
+                "RequestInteraction",
+                {
+                    "interaction_id": "i-1",
+                    "lease_epoch": 0,
+                    "request_digest": "sha256:r",
+                },
+            ),
+        )
+
     def test_typed_requests_cannot_cross_roles(self) -> None:
         transport = self.RecordingTransport()
         with self.assertRaises(TypeError):
@@ -92,6 +147,18 @@ class SessionContract(unittest.TestCase):
         session = AgentSession(MalformedTransport())
         with self.assertRaises(AisaProtocolError):
             session.request("AdmitTurn", {"agent_id": "a"})
+
+    def test_session_rejects_non_ok_transport_response(self) -> None:
+        class NonOkTransport:
+            def request(self, op: str, payload: dict[str, object]) -> dict[str, object]:
+                return {
+                    "request_id": "x",
+                    "status": "Error",
+                    "outcome": {"type": "Admitted"},
+                }
+
+        with self.assertRaises(AisaProtocolError):
+            AgentSession(NonOkTransport()).request("AdmitTurn", {})
 
     def test_session_rejects_outcome_without_a_type(self) -> None:
         class MissingTypeTransport:
