@@ -1065,6 +1065,51 @@ fn scenario_19_dual_socket_uses_closed_channel_allowlists() {
 }
 
 #[test]
+fn model_request_region_is_readable_only_by_trusted_control() {
+    let harness = ContractHarness::without_test_opcodes();
+    let mut agent = harness.client();
+    let mut control = harness.control_client();
+    let bytes = br#"{"messages":[{"role":"user","content":"repair"}],"tools":[]}"#;
+    let digest = format!("sha256:{:x}", Sha256::digest(bytes));
+    assert_outcome(
+        call(
+            &mut agent,
+            "persist-model-request",
+            "EnsureRegion",
+            json!({
+                "region_ref": "region://model-request/interaction-1",
+                "content_digest": digest,
+                "content": bytes.as_slice(),
+                "profile": "D1"
+            }),
+        ),
+        "Success",
+    );
+    let denied = call(
+        &mut agent,
+        "guest-read-model-request",
+        "ReadModelRequest",
+        json!({"interaction_id": "interaction-1"}),
+    );
+    assert_eq!(denied.status, "Error");
+    assert_eq!(denied.error.unwrap().code, "UnauthorizedOpcode");
+    let read = call(
+        &mut control,
+        "host-read-model-request",
+        "ReadModelRequest",
+        json!({"interaction_id": "interaction-1"}),
+    );
+    assert_eq!(read.status, "Ok");
+    let content = read.outcome.expect("immutable request content");
+    assert_eq!(
+        content["region_ref"],
+        "region://model-request/interaction-1"
+    );
+    assert_eq!(content["content_digest"], digest);
+    assert_eq!(content["content"], json!(bytes.as_slice()));
+}
+
+#[test]
 fn agent_channel_cannot_bind_its_own_model_observation() {
     let harness = ContractHarness::without_test_opcodes();
     let mut agent = harness.client();

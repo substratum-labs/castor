@@ -562,6 +562,11 @@ impl D1GovernedTurnAuthority {
             .collect()
     }
 
+    /// Host control reads immutable request bytes; guest IPC has no read opcode.
+    pub fn read_region(&self, region_ref: &str) -> Option<Vec<u8>> {
+        self.storage().read_region(region_ref)
+    }
+
     /// Creates a D-04 restart cache.  The blob is not authoritative until
     /// the subsequent `SnapshotIndex` frame is durably appended.
     pub fn create_snapshot(&mut self, snapshot_id: &str) -> Result<(), GovernedTurnOutcome> {

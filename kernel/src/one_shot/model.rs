@@ -21,7 +21,7 @@ pub struct TestModelService {
 }
 
 impl TestModelService {
-    pub fn start(control_socket: PathBuf, model_socket: PathBuf, prompt: String) -> Self {
+    pub fn start(control_socket: PathBuf, model_socket: PathBuf) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let failed = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
@@ -60,9 +60,7 @@ impl TestModelService {
                     if !seen.insert(id.to_owned()) {
                         continue;
                     }
-                    if report_buffered_result(&control_socket, &model_socket, &prompt, request)
-                        .is_err()
-                    {
+                    if report_buffered_result(&control_socket, &model_socket, request).is_err() {
                         worker_failed.store(true, Ordering::SeqCst);
                     }
                 }
@@ -97,15 +95,56 @@ impl Drop for TestModelService {
 fn report_buffered_result(
     control_socket: &PathBuf,
     model_socket: &PathBuf,
-    prompt: &str,
     request: &Value,
 ) -> io::Result<()> {
     let interaction_id = required_str(request, "interaction_id")?;
-    let expected_request_digest = format!("sha256:{:x}", Sha256::digest(prompt.as_bytes()));
-    if required_str(request, "request_digest")? != expected_request_digest {
+    let expected_request_digest = required_str(request, "request_digest")?;
+    let mut control = GatewayClient::connect(control_socket)?;
+    let read = control.request(&SyscallRequest {
+        request_id: format!("read-model-request-{interaction_id}"),
+        op: "ReadModelRequest".to_owned(),
+        payload: json!({"interaction_id": interaction_id}),
+    })?;
+    if read.status != "Ok" {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "model request Region is missing or inaccessible",
+        ));
+    }
+    let region = read
+        .outcome
+        .ok_or_else(|| io::Error::other("missing model request Region"))?;
+    if required_str(&region, "region_ref")? != format!("region://model-request/{interaction_id}") {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "model request Region identity mismatch",
+        ));
+    }
+    let content: Vec<u8> =
+        serde_json::from_value(region.get("content").cloned().unwrap_or(Value::Null))
+            .map_err(|error| io::Error::new(ErrorKind::InvalidData, error))?;
+    let actual_digest = format!("sha256:{:x}", Sha256::digest(&content));
+    if required_str(&region, "content_digest")? != actual_digest
+        || expected_request_digest != actual_digest
+    {
         return Err(io::Error::new(
             ErrorKind::InvalidData,
             "model request digest mismatch",
+        ));
+    }
+    let full_request: Value = serde_json::from_slice(&content)
+        .map_err(|error| io::Error::new(ErrorKind::InvalidData, error))?;
+    if full_request["schema_version"] != 1
+        || full_request["interaction_id"] != interaction_id
+        || full_request["messages"]
+            .as_array()
+            .is_none_or(|messages| messages.is_empty())
+        || !full_request["tools"].is_array()
+        || serde_json::to_vec(&full_request).map_err(io::Error::other)? != content
+    {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "invalid canonical model request",
         ));
     }
     for attempt in 0..3 {
@@ -116,7 +155,7 @@ fn report_buffered_result(
             let envelope = json!({
                 "interaction_id": interaction_id,
                 "request_digest": expected_request_digest,
-                "prompt": prompt
+                "request": full_request
             });
             write_framed(
                 &mut stream,

@@ -229,11 +229,7 @@ pub fn run_test_task(
 
     let daemon = TestDaemon::start(state_root)?;
     let model_service = std::env::var_os("CASTOR_TEST_MODEL_SOCKET").map(|socket| {
-        TestModelService::start(
-            daemon.control_socket.clone(),
-            PathBuf::from(socket),
-            manifest.task_prompt.clone(),
-        )
+        TestModelService::start(daemon.control_socket.clone(), PathBuf::from(socket))
     });
     let fault_point = std::env::var("CASTOR_TEST_FAULT_POINT").ok();
     let mut child_command = Command::new(child_path);

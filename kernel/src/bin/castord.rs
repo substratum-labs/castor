@@ -17,6 +17,7 @@ use castor_kernel::sandbox::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sha2::Digest;
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, ErrorKind, Write};
@@ -355,6 +356,7 @@ fn dispatch(
             | "ReportOutcome"
             | "ReportInteractionOutcome"
             | "RecordDispatchAttempt"
+            | "ReadModelRequest"
     );
     if (channel == SocketChannel::Agent && !agent_allowed && !test_opcode_allowed)
         || (channel == SocketChannel::Control && !control_allowed)
@@ -381,6 +383,30 @@ fn dispatch(
         }
         "GetProjectionSummary" => return Ok(authority.projection_summary()),
         "InspectJournal" => return Ok(json!({"entries": authority.inspect_journal()})),
+        "ReadModelRequest" => {
+            let interaction_id = string(p, "interaction_id")?;
+            if interaction_id.is_empty()
+                || interaction_id.len() > 128
+                || !interaction_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            {
+                return Err("invalid model interaction ID".into());
+            }
+            let region_ref = format!("region://model-request/{interaction_id}");
+            let content = authority
+                .read_region(&region_ref)
+                .ok_or_else(|| "model request Region is missing".to_string())?;
+            if content.len() > 1024 * 1024 {
+                return Err("model request Region exceeds 1 MiB".into());
+            }
+            let content_digest = format!("sha256:{:x}", sha2::Sha256::digest(&content));
+            return Ok(json!({
+                "region_ref": region_ref,
+                "content_digest": content_digest,
+                "content": content
+            }));
+        }
         "AdmitTurn" => authority.admit_turn(AdmitTurnRequest {
             agent_id: string(p, "agent_id")?,
             turn_id: number(p, "turn_id")?,

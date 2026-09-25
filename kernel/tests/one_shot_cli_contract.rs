@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use std::thread;
 use std::time::Duration;
@@ -118,6 +118,7 @@ fn task_command(root: &Path, manifest: &Path, child: &Path) -> Command {
 struct MockModelService {
     stop: Arc<AtomicBool>,
     attempts: Arc<AtomicUsize>,
+    requests: Arc<Mutex<Vec<Value>>>,
     worker: Option<thread::JoinHandle<()>>,
 }
 
@@ -127,8 +128,10 @@ impl MockModelService {
         listener.set_nonblocking(true).unwrap();
         let stop = Arc::new(AtomicBool::new(false));
         let attempts = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(Mutex::new(Vec::new()));
         let worker_stop = stop.clone();
         let worker_attempts = attempts.clone();
+        let worker_requests = requests.clone();
         let worker = thread::spawn(move || {
             while !worker_stop.load(Ordering::SeqCst) {
                 match listener.accept() {
@@ -138,7 +141,10 @@ impl MockModelService {
                             stream
                                 .set_read_timeout(Some(Duration::from_secs(1)))
                                 .unwrap();
-                            if read_framed(&mut stream).is_ok() {
+                            if let Ok(frame) = read_framed(&mut stream) {
+                                if let Ok(request) = serde_json::from_slice(&frame) {
+                                    worker_requests.lock().unwrap().push(request);
+                                }
                                 if let Some(ref marker) = release_marker {
                                     let deadline =
                                         std::time::Instant::now() + Duration::from_secs(3);
@@ -165,6 +171,7 @@ impl MockModelService {
         Self {
             stop,
             attempts,
+            requests,
             worker: Some(worker),
         }
     }
@@ -576,6 +583,11 @@ fn mock_agent_requests_model() {
         })
         .expect("admit model turn");
     assert_eq!(admitted.outcome.unwrap()["type"], "Admitted");
+    let request_digest = persist_full_model_request(
+        &mut client,
+        "interaction-model-1",
+        "Repair the failing unit test.",
+    );
     let requested = client
         .request(&SyscallRequest {
             request_id: "request-model".to_owned(),
@@ -583,7 +595,7 @@ fn mock_agent_requests_model() {
             payload: json!({
                 "interaction_id": "interaction-model-1",
                 "lease_epoch": 0,
-                "request_digest": format!("sha256:{:x}", Sha256::digest(b"Repair the failing unit test."))
+                "request_digest": request_digest
             }),
         })
         .expect("request governed model interaction");
@@ -608,6 +620,46 @@ fn mock_agent_call(
     response.outcome.expect("governed outcome")
 }
 
+fn persist_full_model_request(
+    client: &mut GatewayClient,
+    interaction_id: &str,
+    prompt: &str,
+) -> String {
+    let request = json!({
+        "schema_version": 1,
+        "interaction_id": interaction_id,
+        "messages": [
+            {"role": "system", "content": "You are repairing a test fixture."},
+            {"role": "user", "content": prompt}
+        ],
+        "tools": [{
+            "name": "castor_edit_file",
+            "parameters": {"type": "object", "required": ["path", "patch_diff"]}
+        }]
+    });
+    let bytes = serde_json::to_vec(&request).unwrap();
+    let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
+    if std::env::var_os("CASTOR_TEST_OMIT_MODEL_REGION").is_none() {
+        assert_eq!(
+            mock_agent_call(
+                client,
+                &format!("ensure-model-request-{interaction_id}"),
+                "EnsureRegion",
+                json!({
+                    "region_ref": format!("region://model-request/{interaction_id}"),
+                    "content_digest": digest,
+                    "content": bytes,
+                    "profile": "D1"
+                }),
+            )["type"],
+            "Success"
+        );
+        digest
+    } else {
+        format!("sha256:{:x}", Sha256::digest(prompt.as_bytes()))
+    }
+}
+
 #[ignore = "spawned only as an untrusted child by post-arm crash contracts"]
 #[test]
 fn mock_agent_commits_workspace_edit() {
@@ -619,6 +671,7 @@ fn mock_agent_commits_workspace_edit() {
         std::env::var("CASTOR_TEST_ACTION_CAP_ID").unwrap_or_else(|_| "capability-1".to_owned());
     let mut client = GatewayClient::connect(socket).expect("connect to real agent gateway");
     let prompt = std::env::var("CASTOR_TEST_TASK_PROMPT").expect("task prompt for model request");
+    let request_digest = persist_full_model_request(&mut client, "interaction-1", &prompt);
     let patch =
         b"--- a/defect.txt\n+++ b/defect.txt\n@@ -1 +1 @@\n-failing fixture\n+fixed fixture\n";
     let payload = serde_json::to_vec(&json!({
@@ -664,7 +717,7 @@ fn mock_agent_commits_workspace_edit() {
             json!({
                 "interaction_id": "interaction-1",
                 "lease_epoch": 0,
-                "request_digest": format!("sha256:{:x}", Sha256::digest(prompt.as_bytes()))
+                "request_digest": request_digest
             }),
         )["type"],
         "InteractionRequested"
@@ -878,6 +931,34 @@ fn model_transport_failure_fails_task_without_settled_actions() {
 }
 
 #[test]
+fn missing_model_request_region_fails_before_provider_io() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let child = root.path().join("model-agent.sh");
+    fs::write(
+        &child,
+        "#!/bin/sh\nexec \"$CASTOR_TEST_MOCK_CHILD_BINARY\" --ignored --exact mock_agent_requests_model --nocapture\n",
+    )
+    .unwrap();
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+    let model_socket = root.path().join("model.sock");
+    let model = MockModelService::start(&model_socket, None, None);
+    let output = task_command(root.path(), &manifest, &child)
+        .env("CASTOR_TEST_MODEL_SOCKET", &model_socket)
+        .env("CASTOR_TEST_OMIT_MODEL_REGION", "1")
+        .output()
+        .unwrap();
+    assert_eq!(result(&output)["failure_reason"], "MODEL_INTERACTION_ERROR");
+    assert_eq!(model.attempts.load(Ordering::SeqCst), 0);
+    assert!(journal_kinds(root.path())
+        .iter()
+        .any(|entry| entry == "FenceRevoked"));
+}
+
+#[test]
 fn buffered_model_region_is_bound_before_guest_consumes_it() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -907,6 +988,14 @@ fn buffered_model_region_is_bound_before_guest_consumes_it() {
     assert_eq!(result(&output)["status"], "FAILED");
     assert_eq!(fs::read_to_string(&first_rejection).unwrap(), "rejected");
     assert!(model.attempts.load(Ordering::SeqCst) > 0);
+    let calls = model.requests.lock().unwrap();
+    let full_request = &calls.first().expect("host must forward one model request")["request"];
+    assert_eq!(full_request["schema_version"], 1);
+    assert_eq!(
+        full_request["messages"][1]["content"],
+        "Repair the failing unit test."
+    );
+    assert_eq!(full_request["tools"][0]["name"], "castor_edit_file");
     let journal = journal_kinds(root.path());
     let requested = journal
         .iter()
