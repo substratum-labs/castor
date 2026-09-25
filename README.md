@@ -75,9 +75,11 @@ asyncio.run(main())
 
 `search` runs immediately. `delete_file` is gated — kernel inserts an HITL approval point, or flags for post-hoc review in speculative mode. **The agent doesn't know either way** — same code, different operator policy.
 
-## Kernel Primitives
+## Historical prototype kernel primitives
 
-The capabilities Castor provides at the syscall layer. Build on them; don't rebuild them.
+The sections below describe the frozen Python `castor-kernel` prototype. They
+are not guarantees of the Rust D1 authority path; see [Castor A usage and
+limits](docs/castor-a.md) for the supported client.
 
 ### Paper A secondary workloads
 
@@ -113,9 +115,12 @@ Every syscall deducts from a budget (tokens, USD, custom resources). Budget exha
 
 Multi-agent execution. Parent spawns children with a subset of its budget; children run, return results, unused budget refunded. Spawn tree is journaled.
 
-### Checkpoint / replay
+### Prototype checkpoint / replay
 
-Suspend and resume across process restarts. Replay uses the journal — completed syscalls return cached results, no re-execution, no double-billing. Deterministic byte-identical to the original run.
+In the historical Python prototype, checkpoint replay returns cached results
+for completed syscalls. This describes that prototype's replay behavior; Castor
+A instead makes delivery uncertainty explicit and does not promise exactly-once
+third-party I/O or billing.
 
 Run `uv run python examples/security_levels.py` for HITL/Speculative/Time-Travel side-by-side, or `examples/features/09_fork_timeline.py` for the fork primitive in action.
 

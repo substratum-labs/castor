@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
@@ -260,8 +261,16 @@ class CastorARochePhysical(unittest.TestCase):
         try:
             self.run_full_guest(daemon)
             self.assertEqual(daemon.actuator.count(), 0)
-            with self.assertRaises((AssertionError, OSError)):
+            try:
                 daemon.acquire()
+            except AssertionError as error:
+                self.assertEqual(
+                    str(error), "daemon closed an incomplete AISA response"
+                )
+            except OSError as error:
+                self.assertIn(error.errno, {errno.ECONNRESET, errno.EPIPE})
+            else:
+                self.fail("faulted delivery returned a reply")
             self.assertEqual(daemon.process.wait(timeout=5), expected_exit)
 
             daemon.fault_point = None
