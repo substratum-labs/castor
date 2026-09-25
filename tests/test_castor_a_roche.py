@@ -12,7 +12,11 @@ import unittest
 import uuid
 from pathlib import Path
 
-from tests.test_cognitive_recovery_castord import ADAPTER, AGENT, CAP, Daemon
+from tests.fixtures.castor_a_trace_support import (
+    prepare_trace,
+    report_model_after_request,
+)
+from tests.test_cognitive_recovery_castord import ADAPTER, AGENT, CAP, Daemon, expect
 
 ROOT = Path(__file__).resolve().parents[1]
 WHEEL = ROOT / "packages/castor-client/dist/castor_client-0.7.0a1-py3-none-any.whl"
@@ -25,6 +29,29 @@ RUN_PHYSICAL = (
 
 @unittest.skipUnless(RUN_PHYSICAL, "requires the Linux Roche physical CI job")
 class CastorARochePhysical(unittest.TestCase):
+    def container_args(self, name: str, daemon: Daemon) -> list[str]:
+        return [
+            "docker",
+            "run",
+            "--name",
+            name,
+            "--network",
+            "none",
+            "--read-only",
+            "--pids-limit",
+            "256",
+            "--security-opt",
+            "no-new-privileges",
+            "--user",
+            "10001:10001",
+            "--cap-drop",
+            "ALL",
+            "--mount",
+            f"type=bind,src={daemon.agent},dst=/run/castor/ipc.sock,readonly",
+            "--env",
+            "CASTOR_IPC_SOCKET=/run/castor/ipc.sock",
+        ]
+
     @classmethod
     def setUpClass(cls) -> None:
         if not WHEEL.is_file():
@@ -86,26 +113,8 @@ class CastorARochePhysical(unittest.TestCase):
                 "cap_id": CAP,
             }
             run = subprocess.run(
-                [
-                    "docker",
-                    "run",
-                    "--name",
-                    name,
-                    "--network",
-                    "none",
-                    "--read-only",
-                    "--pids-limit",
-                    "256",
-                    "--security-opt",
-                    "no-new-privileges",
-                    "--user",
-                    "10001:10001",
-                    "--cap-drop",
-                    "ALL",
-                    "--mount",
-                    f"type=bind,src={daemon.agent},dst=/run/castor/ipc.sock,readonly",
-                    "--env",
-                    "CASTOR_IPC_SOCKET=/run/castor/ipc.sock",
+                self.container_args(name, daemon)
+                + [
                     self.image,
                     "python",
                     "-B",
@@ -140,6 +149,65 @@ class CastorARochePhysical(unittest.TestCase):
             )
             self.assertFalse(profile["Mounts"][0]["RW"])
         finally:
+            subprocess.run(
+                ["docker", "rm", "--force", name],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            daemon.close()
+
+    def test_nonroot_roche_guest_completes_governed_turn(self) -> None:
+        daemon = Daemon(sandbox=True)
+        name = f"castor-a-roche-{uuid.uuid4().hex[:12]}"
+        process: subprocess.Popen[str] | None = None
+        try:
+            config, observation = prepare_trace(daemon)
+            config["socket"] = "/run/castor/ipc.sock"
+            process = subprocess.Popen(
+                self.container_args(name, daemon)
+                + [
+                    "--env",
+                    f"CASTOR_A_TRACE_CONFIG={json.dumps(config)}",
+                    self.image,
+                    "python",
+                    "-B",
+                    "-I",
+                    "/opt/castor/agent.py",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            stdout, stderr = report_model_after_request(
+                daemon, process, str(config["interaction_id"]), observation
+            )
+            self.assertEqual(process.returncode, 0, stderr)
+            self.assertEqual(
+                json.loads(stdout),
+                [
+                    "Admitted",
+                    "InteractionRequested",
+                    "InteractionConsumed",
+                    "TurnCommitted",
+                    "ActionRegistered",
+                    "AttemptArmed",
+                    "DispatchRecorded",
+                ],
+            )
+            delivery = daemon.acquire()
+            self.assertEqual(delivery["delivery_outcome"], "Delivered")
+            self.assertEqual(daemon.actuator.arrive(), "Committed")
+            expect(daemon.settle(daemon.certificate()), "Settled")
+            self.assertEqual(daemon.actuator.count(), 1)
+            journal = daemon.journal()
+            daemon.restart()
+            self.assertEqual(daemon.journal(), journal)
+            self.assertEqual(daemon.actuator.count(), 1)
+        finally:
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
             subprocess.run(
                 ["docker", "rm", "--force", name],
                 capture_output=True,

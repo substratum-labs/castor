@@ -8,19 +8,20 @@ import stat
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
 from castor_client import AisaConnectionError, AisaGatewayError, OperatorSession
 
 from tests.dogfood.ring3_agent import AgentConfig, Ring3Agent
+from tests.fixtures.castor_a_trace_support import (
+    prepare_trace,
+    report_model_after_request,
+)
 from tests.test_cognitive_recovery_castord import (
-    ADAPTER,
     AGENT,
     CAP,
     OP_ID,
-    SCOPE,
     Daemon,
     digest,
     expect,
@@ -49,50 +50,7 @@ class RustAuthorityChannelContract(unittest.TestCase):
         self.assertTrue(wheel.is_file(), "build the Castor A client wheel first")
         daemon = Daemon()
         try:
-            grant = {
-                "cap_id": CAP,
-                "subject": AGENT,
-                "object_ref": ADAPTER,
-                "rights": ["AdmitTurn", "RegisterAction"],
-                "constraints": [],
-                "parent_cap_id": None,
-                "revocation_domain": None,
-                "delegation_allowed": False,
-                "max_turns": None,
-            }
-            daemon.ok(
-                "GrantCapability", {"grant": grant}, "CapabilityGranted", "control"
-            )
-            observation = daemon.region("observation", b"model-result")
-            successor = b"successor-state"
-            manifest = b"a1\n"
-            payload = b"payload-a1"
-
-            def region(name: str, content: bytes) -> dict[str, object]:
-                return {
-                    "ref": f"region://recovery/{name}",
-                    "digest": digest(content),
-                    "content": list(content),
-                }
-
-            config = {
-                "socket": str(daemon.agent),
-                "agent_id": AGENT,
-                "turn_id": 1,
-                "base_projection_digest": daemon.base,
-                "cap_id": CAP,
-                "interaction_id": "installed-wheel-model",
-                "request_digest": digest(b"installed-wheel-request"),
-                "observation_digest": observation[1],
-                "successor": region("successor", successor),
-                "manifest": region("manifest", manifest),
-                "payload": region("payload-a1", payload),
-                "action_id": "a1",
-                "actuator_id": ADAPTER,
-                "target_scope": SCOPE,
-                "stable_operation_id": OP_ID,
-                "generation": daemon.generation,
-            }
+            config, observation = prepare_trace(daemon)
             with tempfile.TemporaryDirectory() as temporary:
                 environment = Path(temporary) / "installed-client"
                 create = subprocess.run(
@@ -123,17 +81,9 @@ class RustAuthorityChannelContract(unittest.TestCase):
                     text=True,
                 )
                 try:
-                    deadline = time.monotonic() + 10
-                    while not any(
-                        "InteractionRequested" in entry for entry in daemon.journal()
-                    ):
-                        if process.poll() is not None:
-                            _, stderr = process.communicate(timeout=2)
-                            self.fail(f"installed Agent exited early: {stderr}")
-                        self.assertLess(time.monotonic(), deadline)
-                        time.sleep(0.02)
-                    daemon.report(config["interaction_id"], observation)
-                    stdout, stderr = process.communicate(timeout=15)
+                    stdout, stderr = report_model_after_request(
+                        daemon, process, str(config["interaction_id"]), observation
+                    )
                 finally:
                     if process.poll() is None:
                         process.kill()
