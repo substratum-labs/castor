@@ -648,6 +648,13 @@ pub fn run_product_task(
     let child_exit = match RocheSandboxRunner::new(config).start(command) {
         Ok(carrier) => {
             let exit = wait_for_pi(&carrier);
+            if let Ok(logs) = Command::new("docker")
+                .args(["logs", "--tail", "200", carrier.container_id()])
+                .output()
+            {
+                let limit = logs.stdout.len().min(1024 * 1024);
+                let _ = fs::write(task_state.join("pi.jsonl"), &logs.stdout[..limit]);
+            }
             let _ = carrier.remove();
             exit.unwrap_or(Some(1))
         }

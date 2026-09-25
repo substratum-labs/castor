@@ -1519,11 +1519,23 @@ fn default_cli_runs_real_pi_through_roche_and_host_settlement() {
     stop.store(true, Ordering::SeqCst);
     model_worker.join().unwrap();
     let task = result(&output);
+    let pi_log = fs::read_to_string(root.path().join("state/tasks/task-snapshot-gate/pi.jsonl"))
+        .unwrap_or_default();
+    let journal = D1DurableStorage::open(root.path().join("state/tasks/task-snapshot-gate"))
+        .map(|storage| {
+            storage
+                .journal_requests()
+                .into_iter()
+                .map(|request| format!("{:?}", request.entry))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     assert!(
         output.status.success(),
-        "stderr={}; stdout={}",
+        "stderr={}; stdout={}; model_calls={}; journal={journal:?}; pi_log={pi_log}",
         String::from_utf8_lossy(&output.stderr),
-        String::from_utf8_lossy(&output.stdout)
+        String::from_utf8_lossy(&output.stdout),
+        calls.load(Ordering::SeqCst)
     );
     assert_eq!(task["status"], "SUCCEEDED");
     assert_eq!(task["test_passed"], true);
