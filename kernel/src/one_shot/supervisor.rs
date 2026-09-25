@@ -274,7 +274,8 @@ pub fn run_test_task(
         child_command.output()?
     };
     let model_failed = model_service.is_some_and(TestModelService::finish);
-    if model_failed {
+    let security_violation = fs::metadata(&daemon.security_audit)?.len() > 0;
+    if model_failed || security_violation {
         fence_failed_interaction(&daemon.control_socket)?;
     }
     if fault_point.as_deref() == Some("crash_post_attempt_armed")
@@ -344,7 +345,7 @@ pub fn run_test_task(
         );
         result.status = "UNKNOWN_DISPUTED";
         result
-    } else if fs::metadata(&daemon.security_audit)?.len() > 0 {
+    } else if security_violation {
         TaskResult::after_image(
             manifest.task_id.clone(),
             manifest.workspace_snapshot_sha256.clone(),

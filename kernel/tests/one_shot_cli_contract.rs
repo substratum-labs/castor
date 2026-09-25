@@ -1135,6 +1135,12 @@ fn hostile_agent_opcode_is_rejected_and_task_cannot_succeed() {
     assert_eq!(result["status"], "FAILED");
     assert_eq!(result["failure_reason"], "SECURITY_VIOLATION");
     assert_eq!(result["settled_actions_count"], 0);
+    assert!(
+        journal_kinds(root.path())
+            .iter()
+            .any(|entry| entry == "FenceRevoked"),
+        "the host must persist a generation fence after unauthorized guest IPC"
+    );
 }
 
 #[test]
