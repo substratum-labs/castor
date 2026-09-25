@@ -721,6 +721,12 @@ fn run(config: Config) -> io::Result<()> {
     }
     let evidence_listener = bind_socket(&evidence_socket)?;
     let listener = bind_socket(&config.socket)?;
+    if config.sandbox == SandboxMode::Roche {
+        // The Roche guest runs as UID 10001 and receives only this socket
+        // inode. Linux requires write permission on the inode to connect;
+        // the 0700 host parent still hides its path from other host users.
+        fs::set_permissions(&config.socket, fs::Permissions::from_mode(0o666))?;
+    }
     let control_listener = config
         .control_socket
         .as_deref()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -28,6 +29,17 @@ from tests.test_cognitive_recovery_castord import (
 
 
 class RustAuthorityChannelContract(unittest.TestCase):
+    def test_roche_mode_exposes_only_agent_socket_inode_to_guest_uid(self) -> None:
+        daemon = Daemon(sandbox=True)
+        try:
+            self.assertEqual(stat.S_IMODE(daemon.root.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(daemon.agent.stat().st_mode), 0o666)
+            for host_socket in (daemon.control, daemon.evidence, daemon.delivery):
+                with self.subTest(socket=host_socket.name):
+                    self.assertEqual(stat.S_IMODE(host_socket.stat().st_mode), 0o600)
+        finally:
+            daemon.close()
+
     def test_fresh_install_client_completes_governed_turn(self) -> None:
         root = Path(__file__).resolve().parents[1]
         wheel = (
