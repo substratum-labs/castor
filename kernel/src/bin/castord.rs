@@ -511,7 +511,16 @@ fn dispatch(
             target_scope: match trust {
                 Some(trust) => match trust.canonical_scopes.get(&string(p, "action_id")?) {
                     Some(scope) => scope.clone(),
-                    None => return Ok(outcome_value(GovernedTurnOutcome::RejectedPrecondition)),
+                    None => {
+                        let candidate = string(p, "target_scope")?;
+                        if trust.allowed_scope_prefixes.iter().any(|prefix| {
+                            candidate.starts_with(prefix) && candidate.len() > prefix.len()
+                        }) {
+                            candidate
+                        } else {
+                            return Ok(outcome_value(GovernedTurnOutcome::RejectedPrecondition));
+                        }
+                    }
                 },
                 None => p
                     .get("target_scope")

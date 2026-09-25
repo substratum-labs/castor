@@ -19,6 +19,8 @@ pub(super) struct EvidenceTrust {
     key_hex: String,
     #[serde(default)]
     pub canonical_scopes: BTreeMap<String, String>,
+    #[serde(default)]
+    pub allowed_scope_prefixes: Vec<String>,
     #[serde(skip)]
     key: Vec<u8>,
 }
@@ -54,6 +56,10 @@ impl EvidenceTrust {
             || config.issuer.is_empty()
             || config.adapter_id.is_empty()
             || config.receipt_algorithm != "HMAC-SHA256"
+            || config
+                .allowed_scope_prefixes
+                .iter()
+                .any(|prefix| prefix.is_empty() || prefix.chars().any(char::is_control))
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,

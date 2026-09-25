@@ -14,6 +14,7 @@ const EVIDENCE_KEY: &[u8] = b"castor-one-shot-test-evidence-key";
 pub struct SettledEdit {
     pub patch: String,
     pub patch_sha256: String,
+    pub target_path: String,
 }
 
 pub fn evidence_key_hex() -> String {
@@ -76,7 +77,7 @@ pub fn settle_workspace_edit(
         .ok_or_else(|| io::Error::other("missing attempt ID"))?;
     let action_id = required_str(armed, "action_id")?;
     let scope = required_str(armed, "request_digest")?;
-    if action_id != "action-1" || scope != "workspace:defect.txt" {
+    if action_id != "action-1" || !scope.starts_with("workspace:") {
         return Err(io::Error::new(
             ErrorKind::PermissionDenied,
             "action exceeds bounded test actuator scope",
@@ -117,14 +118,15 @@ pub fn settle_workspace_edit(
     }
     let edit: Value = serde_json::from_slice(&payload)
         .map_err(|error| io::Error::new(ErrorKind::InvalidData, error))?;
-    if edit["action_type"] != "WorkspaceEdit" || edit["target_path"] != "defect.txt" {
+    let target_path = required_str(&edit, "target_path")?;
+    if edit["action_type"] != "WorkspaceEdit" || scope != format!("workspace:{target_path}") {
         return Err(io::Error::new(
             ErrorKind::PermissionDenied,
             "unsupported test workspace action",
         ));
     }
     let patch = required_str(&edit, "patch")?.to_owned();
-    apply_patch(workspace, &patch)?;
+    apply_patch(workspace, target_path, &patch)?;
     let patch_sha256 = format!("sha256:{:x}", Sha256::digest(patch.as_bytes()));
     if settle {
         settle_receipt(control_socket, evidence_socket, attempt_id, scope)?;
@@ -132,11 +134,12 @@ pub fn settle_workspace_edit(
     Ok(Some(SettledEdit {
         patch,
         patch_sha256,
+        target_path: target_path.to_owned(),
     }))
 }
 
-pub fn apply_patch(workspace: &Path, patch: &str) -> io::Result<()> {
-    validate_patch(workspace, "defect.txt", patch)?;
+pub fn apply_patch(workspace: &Path, target_path: &str, patch: &str) -> io::Result<()> {
+    validate_patch(workspace, target_path, patch)?;
     let mut child = Command::new("git")
         .args(["apply", "--whitespace=nowarn", "-"])
         .current_dir(workspace)
@@ -283,7 +286,7 @@ pub fn settle_receipt(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_patch;
+    use super::{apply_patch, validate_patch};
     use std::fs;
 
     #[test]
@@ -299,6 +302,25 @@ rename to renamed.txt\n";
         assert!(
             validate_patch(root.path(), "defect.txt", patch).is_err(),
             "a second metadata-only file operation must be rejected"
+        );
+    }
+
+    #[test]
+    fn nested_workspace_edit_changes_only_its_bound_target() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("src")).unwrap();
+        fs::write(root.path().join("src/lib.rs"), "fn broken() {}\n").unwrap();
+        fs::write(root.path().join("secret.txt"), "secret\n").unwrap();
+        let patch =
+            "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-fn broken() {}\n+fn fixed() {}\n";
+        apply_patch(root.path(), "src/lib.rs", patch).unwrap();
+        assert_eq!(
+            fs::read_to_string(root.path().join("src/lib.rs")).unwrap(),
+            "fn fixed() {}\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.path().join("secret.txt")).unwrap(),
+            "secret\n"
         );
     }
 }

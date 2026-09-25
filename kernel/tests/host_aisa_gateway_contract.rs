@@ -58,6 +58,18 @@ impl ContractHarness {
     }
 
     fn start_with_fault(allow_test_opcodes: bool, fault_point: Option<&str>) -> Self {
+        Self::start_with_policy(allow_test_opcodes, fault_point, false)
+    }
+
+    fn with_workspace_scope() -> Self {
+        Self::start_with_policy(false, None, true)
+    }
+
+    fn start_with_policy(
+        allow_test_opcodes: bool,
+        fault_point: Option<&str>,
+        allow_workspace_scope: bool,
+    ) -> Self {
         // Each fixture starts a real process and exercises OS-level writer
         // locks. Serializing fixtures avoids test-runner process churn from
         // obscuring those boundaries; clients within a fixture stay concurrent.
@@ -81,10 +93,11 @@ impl ContractHarness {
                 "adapter_id": "c04:generic",
                 "receipt_algorithm": "HMAC-SHA256",
                 "key_hex": hex_encode(EVIDENCE_KEY),
-                "canonical_scopes": {
+                "canonical_scopes": if allow_workspace_scope { json!({}) } else { json!({
                     "action-1": "scope-1",
                     "action-2": "scope-1"
-                }
+                }) },
+                "allowed_scope_prefixes": if allow_workspace_scope { vec!["workspace:"] } else { vec![] }
             }))
             .expect("serialize evidence trust config"),
         )
@@ -208,6 +221,59 @@ impl ContractHarness {
             thread::sleep(Duration::from_millis(10));
         }
     }
+}
+
+#[test]
+fn trusted_workspace_scope_policy_allows_only_workspace_actions() {
+    let harness = ContractHarness::with_workspace_scope();
+    let mut agent = harness.client();
+    commit_ready_turn(
+        &mut agent,
+        &["action-1", "action-2"],
+        Some(&mut harness.control_client()),
+    );
+    assert_outcome(
+        call(
+            &mut agent,
+            "workspace-register",
+            "RegisterAction",
+            json!({
+                "action_id": "action-1",
+                "stable_operation_id": "dispatch-1",
+                "action_family": "c04:generic",
+                "target_scope": "workspace:src/lib.rs"
+            }),
+        ),
+        "ActionRegistered",
+    );
+    assert_attempt_armed(
+        call(
+            &mut agent,
+            "workspace-arm",
+            "PresentAdmissionCertificate",
+            json!({
+                "action_id": "action-1",
+                "target_scope": "workspace:src/lib.rs",
+                "capability_id": "capability-1",
+                "generation": 1
+            }),
+        ),
+        1,
+    );
+    assert_outcome(
+        call(
+            &mut agent,
+            "outside-register",
+            "RegisterAction",
+            json!({
+                "action_id": "action-2",
+                "stable_operation_id": "dispatch-2",
+                "action_family": "c04:generic",
+                "target_scope": "host:/etc/passwd"
+            }),
+        ),
+        "RejectedPrecondition",
+    );
 }
 
 impl Drop for ContractHarness {
@@ -528,17 +594,21 @@ assert response["outcome"]["type"] == "Admitted""#,
         .spawn()
         .expect("launch castord with reference runtime child");
     let deadline = Instant::now() + Duration::from_secs(3);
-    while !status_file.exists() {
+    let status = loop {
+        match fs::read_to_string(&status_file) {
+            Ok(status) if !status.trim().is_empty() => break status,
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("read reference runtime status: {error}"),
+        }
         assert!(
             Instant::now() < deadline,
             "reference runtime child must complete within startup timeout"
         );
         thread::sleep(Duration::from_millis(10));
-    }
+    };
     assert_eq!(
-        fs::read_to_string(&status_file)
-            .expect("read reference runtime exit status")
-            .trim(),
+        status.trim(),
         "0",
         "reference runtime child must exit cleanly after admission"
     );

@@ -320,6 +320,7 @@ pub fn run_test_task(
             let record = json!({
                 "patch": edit.patch,
                 "patch_sha256": edit.patch_sha256,
+                "target_path": edit.target_path,
                 "postimage_sha256": format!("sha256:{:x}", Sha256::digest(postimage))
             });
             let mut file = File::create(state_root.join("applied-edit.json"))?;
@@ -442,18 +443,23 @@ fn recover_applied_edit(
     let patch = record["patch"]
         .as_str()
         .ok_or_else(|| io::Error::other("missing applied patch"))?;
+    let target_path = record["target_path"]
+        .as_str()
+        .ok_or_else(|| io::Error::other("missing applied edit target"))?;
     let patch_digest = format!("sha256:{:x}", Sha256::digest(patch.as_bytes()));
     if record["patch_sha256"] != patch_digest {
         return Err(io::Error::other("applied patch digest mismatch"));
     }
-    apply_patch(&staged.workspace(), patch)?;
+    apply_patch(&staged.workspace(), target_path, patch)?;
     let expected_postimage = format!(
         "sha256:{:x}",
-        Sha256::digest(fs::read(staged.workspace().join("defect.txt"))?)
+        Sha256::digest(fs::read(staged.workspace().join(target_path))?)
     );
     let observed_postimage = format!(
         "sha256:{:x}",
-        Sha256::digest(fs::read(state_root.join("applied-workspace/defect.txt"))?)
+        Sha256::digest(fs::read(
+            state_root.join("applied-workspace").join(target_path)
+        )?)
     );
     if record["postimage_sha256"] != observed_postimage || expected_postimage != observed_postimage
     {
