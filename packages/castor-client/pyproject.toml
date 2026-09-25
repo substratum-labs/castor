@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "castor-client"
-version = "0.6.0a1"
+version = "0.7.0a1"
 description = "Typed client for Castor OS AISA v0.1 Unix-domain socket IPC"
 readme = "README.md"
 license = "Apache-2.0"

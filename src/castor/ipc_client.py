@@ -250,8 +250,11 @@ class AisaClient:
 
         status = response.get("status")
         if status == "Error":
-            code = response.get("code")
-            message = response.get("message")
+            error = response.get("error")
+            if not isinstance(error, dict):
+                raise AisaProtocolError("gateway error must be an object")
+            code = error.get("code")
+            message = error.get("message")
             if not isinstance(code, str):
                 raise AisaProtocolError("gateway error code must be a string")
             if not isinstance(message, str):

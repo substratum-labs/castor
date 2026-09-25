@@ -31,6 +31,9 @@ jobs:
       - name: Build castord for physical matrix tests
         run: cargo build --release --manifest-path kernel/Cargo.toml --bin castord
 
+      - name: Build Castor A client wheel for release gate
+        run: uv build --no-sources packages/castor-client
+
       - name: Run tests
         env:
           CASTORD_BINARY: ${{ github.workspace }}/kernel/target/release/castord
@@ -52,10 +55,10 @@ jobs:
         run: uv sync
 
       - name: Check formatting
-        run: uv run ruff format --check src/ tests/
+        run: uv run ruff format --check src/ tests/ packages/castor-client/src/ packages/castor-client/tests/ scripts/check_client_release.py
 
       - name: Check linting
-        run: uv run ruff check src/ tests/
+        run: uv run ruff check src/ tests/ packages/castor-client/src/ packages/castor-client/tests/ scripts/check_client_release.py
 
   kernel:
     runs-on: ubuntu-latest
@@ -88,6 +91,25 @@ jobs:
           runtime.grant("cap_a"); runtime.propose("effect_a");
           runtime.commit("effect_a"); assert runtime.agent_state == "running";
           assert runtime.cursor == 2'
+
+  roche-a:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv python install 3.11
+      - run: uv sync
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build castord and the installed-wheel Agent image input
+        run: >-
+          cargo build --release --manifest-path kernel/Cargo.toml --bin castord &&
+          uv build --no-sources packages/castor-client
+      - name: Run physical Roche Agent socket trace
+        env:
+          CASTORD_BINARY: ${{ github.workspace }}/kernel/target/release/castord
+          CASTOR_A_ROCHE_PHYSICAL: "1"
+        run: uv run pytest -v --tb=short tests/test_castor_a_roche.py
 
   paper-a-smoke:
     runs-on: ubuntu-latest

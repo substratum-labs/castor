@@ -187,8 +187,10 @@ class AisaClientTestCase(unittest.TestCase):
             response = {
                 "request_id": request["request_id"],
                 "status": "Error",
-                "code": "PermissionDenied",
-                "message": "operation is not allowed",
+                "error": {
+                    "code": "PermissionDenied",
+                    "message": "operation is not allowed",
+                },
             }
             current_socket.sendall(_json_frame(response))
 

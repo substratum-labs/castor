@@ -1,6 +1,8 @@
 # CLI Reference
 
-The `castor` CLI provides commands for running agents, inspecting checkpoints, and managing HITL decisions.
+> **Legacy Python prototype CLI.** These commands use the in-process `Castor()` facade and do not run through Rust `castord`. See [Castor A usage and limits](../castor-a.md) for the current bounded D1 path. Automatic `castor run agent.py` packaging remains future work.
+
+The historical `castor` CLI provides commands for running agents, inspecting checkpoints, and managing HITL decisions.
 
 ## Usage
 

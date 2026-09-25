@@ -1,5 +1,20 @@
 # Castor
 
+> **Runtime boundary (Castor A candidate):** The supported single-node D1 authority path is the Rust `castord` daemon plus the `castor-client` AISA client. The Python `Castor()` facade described below is the historical in-process prototype. Its budget, MMU, fork, and speculative APIs are not Rust D1 guarantees. The `castor-kernel` 0.6 package remains frozen for existing integrations; the Castor A client is a separate release candidate.
+
+For the current runtime boundary, see [Castor A usage and limits](docs/castor-a.md). The Rust Core owns capability checks, journal transitions, effect admission, and recovery. A Python Agent runs as an untrusted Roche guest and calls `agent.sock` through `castor-client`; host operators use a separate `control.sock`. The client performs no local authority fallback if `castord` is unavailable.
+
+## Castor A client from this checkout
+
+```bash
+uv build --no-sources packages/castor-client
+python -m pip install packages/castor-client/dist/castor_client-0.7.0a1-py3-none-any.whl
+```
+
+`castor run agent.py` automatic source packaging and a Python-free default Agent belong to the later product milestone. Castor A uses an already prepared Roche guest image; the sample governed Python guest is in `tests/dogfood/ring3_agent.py`.
+
+## Historical Python prototype
+
 [![CI](https://github.com/substratum-labs/castor/actions/workflows/ci.yml/badge.svg)](https://github.com/substratum-labs/castor/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/castor-kernel)](https://pypi.org/project/castor-kernel/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -15,7 +30,7 @@ Castor is the kernel layer in the [Substratum Labs](https://substratumlabs.ai) e
 
 ---
 
-## 🚀 Quick Start
+## Prototype quick start
 
 ```bash
 pip install castor-kernel
@@ -60,9 +75,11 @@ asyncio.run(main())
 
 `search` runs immediately. `delete_file` is gated — kernel inserts an HITL approval point, or flags for post-hoc review in speculative mode. **The agent doesn't know either way** — same code, different operator policy.
 
-## Kernel Primitives
+## Historical prototype kernel primitives
 
-The capabilities Castor provides at the syscall layer. Build on them; don't rebuild them.
+The sections below describe the frozen Python `castor-kernel` prototype. They
+are not guarantees of the Rust D1 authority path; see [Castor A usage and
+limits](docs/castor-a.md) for the supported client.
 
 ### Paper A secondary workloads
 
@@ -98,9 +115,12 @@ Every syscall deducts from a budget (tokens, USD, custom resources). Budget exha
 
 Multi-agent execution. Parent spawns children with a subset of its budget; children run, return results, unused budget refunded. Spawn tree is journaled.
 
-### Checkpoint / replay
+### Prototype checkpoint / replay
 
-Suspend and resume across process restarts. Replay uses the journal — completed syscalls return cached results, no re-execution, no double-billing. Deterministic byte-identical to the original run.
+In the historical Python prototype, checkpoint replay returns cached results
+for completed syscalls. This describes that prototype's replay behavior; Castor
+A instead makes delivery uncertainty explicit and does not promise exactly-once
+third-party I/O or billing.
 
 Run `uv run python examples/security_levels.py` for HITL/Speculative/Time-Travel side-by-side, or `examples/features/09_fork_timeline.py` for the fork primitive in action.
 

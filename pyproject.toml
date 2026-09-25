@@ -89,6 +89,7 @@ Issues = "https://github.com/substratum-labs/castor/issues"
 
 [dependency-groups]
 dev = [
+    "castor-client",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "ruff>=0.8",
@@ -99,6 +100,7 @@ dev = [
 ]
 
 [tool.uv.sources]
+castor-client = { path = "packages/castor-client", editable = true }
 mnemos-engine = { git = "https://github.com/substratum-labs/mnemos", rev = "ed81ebe06208a1a7d0a8e13e0241f2a9cc6b2e03" }
 
 # Mnemos requires protobuf>=6.30, but autogen-core caps protobuf<5.30
