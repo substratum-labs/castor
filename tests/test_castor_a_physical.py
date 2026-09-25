@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from castor_client import AisaConnectionError, OperatorSession
+from castor_client import AisaConnectionError, AisaGatewayError, OperatorSession
 
 from tests.dogfood.ring3_agent import AgentConfig, Ring3Agent
 from tests.test_cognitive_recovery_castord import (
@@ -168,6 +168,20 @@ class RustAuthorityChannelContract(unittest.TestCase):
                     self.assertEqual(kind(daemon.call(op, {})), "UnauthorizedOpcode")
                     self.assertEqual(daemon.journal(), before)
                     self.assertEqual(daemon.summary(), projection)
+        finally:
+            daemon.close()
+
+    def test_client_exposes_physical_agent_channel_denial_code(self) -> None:
+        daemon = Daemon()
+        try:
+            before = daemon.journal()
+            projection = daemon.summary()
+            operator_on_guest_socket = OperatorSession(daemon.agent)
+            with self.assertRaises(AisaGatewayError) as raised:
+                operator_on_guest_socket.request("GrantCapability", {})
+            self.assertEqual(raised.exception.code, "UnauthorizedOpcode")
+            self.assertEqual(daemon.journal(), before)
+            self.assertEqual(daemon.summary(), projection)
         finally:
             daemon.close()
 
