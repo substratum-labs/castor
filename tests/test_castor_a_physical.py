@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -13,9 +15,11 @@ from castor_client import AisaConnectionError, AisaGatewayError, OperatorSession
 
 from tests.dogfood.ring3_agent import AgentConfig, Ring3Agent
 from tests.test_cognitive_recovery_castord import (
+    ADAPTER,
     AGENT,
     CAP,
     OP_ID,
+    SCOPE,
     Daemon,
     digest,
     expect,
@@ -24,6 +28,131 @@ from tests.test_cognitive_recovery_castord import (
 
 
 class RustAuthorityChannelContract(unittest.TestCase):
+    def test_fresh_install_client_completes_governed_turn(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        wheel = (
+            root / "packages/castor-client/dist/castor_client-0.7.0a1-py3-none-any.whl"
+        )
+        fixture = root / "tests/fixtures/castor_a_installed_agent.py"
+        self.assertTrue(wheel.is_file(), "build the Castor A client wheel first")
+        daemon = Daemon()
+        try:
+            grant = {
+                "cap_id": CAP,
+                "subject": AGENT,
+                "object_ref": ADAPTER,
+                "rights": ["AdmitTurn", "RegisterAction"],
+                "constraints": [],
+                "parent_cap_id": None,
+                "revocation_domain": None,
+                "delegation_allowed": False,
+                "max_turns": None,
+            }
+            daemon.ok(
+                "GrantCapability", {"grant": grant}, "CapabilityGranted", "control"
+            )
+            observation = daemon.region("observation", b"model-result")
+            successor = b"successor-state"
+            manifest = b"a1\n"
+            payload = b"payload-a1"
+
+            def region(name: str, content: bytes) -> dict[str, object]:
+                return {
+                    "ref": f"region://recovery/{name}",
+                    "digest": digest(content),
+                    "content": list(content),
+                }
+
+            config = {
+                "socket": str(daemon.agent),
+                "agent_id": AGENT,
+                "turn_id": 1,
+                "base_projection_digest": daemon.base,
+                "cap_id": CAP,
+                "interaction_id": "installed-wheel-model",
+                "request_digest": digest(b"installed-wheel-request"),
+                "observation_digest": observation[1],
+                "successor": region("successor", successor),
+                "manifest": region("manifest", manifest),
+                "payload": region("payload-a1", payload),
+                "action_id": "a1",
+                "actuator_id": ADAPTER,
+                "target_scope": SCOPE,
+                "stable_operation_id": OP_ID,
+                "generation": daemon.generation,
+            }
+            with tempfile.TemporaryDirectory() as temporary:
+                environment = Path(temporary) / "installed-client"
+                create = subprocess.run(
+                    [sys.executable, "-m", "venv", str(environment)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(create.returncode, 0, create.stderr)
+                python = environment / "bin/python"
+                install = subprocess.run(
+                    [str(python), "-m", "pip", "install", "--no-index", str(wheel)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(install.returncode, 0, install.stderr)
+                process = subprocess.Popen(
+                    [str(python), "-I", str(fixture)],
+                    env={
+                        key: value
+                        for key, value in os.environ.items()
+                        if key != "PYTHONPATH"
+                    }
+                    | {"CASTOR_A_TRACE_CONFIG": json.dumps(config)},
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                try:
+                    deadline = time.monotonic() + 10
+                    while not any(
+                        "InteractionRequested" in entry for entry in daemon.journal()
+                    ):
+                        if process.poll() is not None:
+                            _, stderr = process.communicate(timeout=2)
+                            self.fail(f"installed Agent exited early: {stderr}")
+                        self.assertLess(time.monotonic(), deadline)
+                        time.sleep(0.02)
+                    daemon.report(config["interaction_id"], observation)
+                    stdout, stderr = process.communicate(timeout=15)
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.communicate(timeout=5)
+                self.assertEqual(process.returncode, 0, stderr)
+                outcomes = json.loads(stdout)
+                self.assertEqual(
+                    outcomes,
+                    [
+                        "Admitted",
+                        "InteractionRequested",
+                        "InteractionConsumed",
+                        "TurnCommitted",
+                        "ActionRegistered",
+                        "AttemptArmed",
+                        "DispatchRecorded",
+                    ],
+                )
+
+            delivery = daemon.acquire()
+            self.assertEqual(delivery["delivery_outcome"], "Delivered")
+            self.assertEqual(daemon.actuator.arrive(), "Committed")
+            expect(daemon.settle(daemon.certificate()), "Settled")
+            self.assertEqual(daemon.actuator.count(), 1)
+            before_restart = daemon.journal()
+            daemon.restart()
+            self.assertEqual(daemon.journal(), before_restart)
+            self.assertEqual(daemon.actuator.count(), 1)
+        finally:
+            daemon.close()
+
     def test_built_client_wheel_reads_physical_projection(self) -> None:
         wheel = (
             Path(__file__).resolve().parents[1]
