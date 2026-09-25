@@ -1,6 +1,7 @@
-use castor_kernel::one_shot::image::StagedSnapshot;
+use castor_kernel::one_shot::image::{valid_digest, StagedSnapshot};
 use castor_kernel::one_shot::manifest::TaskManifest;
 use castor_kernel::one_shot::result::TaskResult;
+use castor_kernel::one_shot::supervisor::{run_test_task, test_state_root, RunOutcome};
 use std::env;
 use std::io;
 use std::path::PathBuf;
@@ -34,28 +35,79 @@ fn run() -> io::Result<ExitCode> {
     let manifest = TaskManifest::read(&manifest_path)?;
     match manifest.validate_snapshot(&manifest_path) {
         Ok(snapshot) => {
-            let image = StagedSnapshot::stage(snapshot, &manifest.workspace_snapshot_path)
-                .and_then(|stage| stage.build(&manifest.carrier_base_image));
-            match image {
-                Ok(_digest) => Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    if allow_test_opcodes {
-                        "test task supervision is not implemented yet"
-                    } else {
-                        "task supervision is not implemented yet"
-                    },
-                )),
-                Err(_) => {
-                    let result = TaskResult::image_build_failure(
-                        manifest.task_id,
-                        manifest.workspace_snapshot_sha256,
-                    );
-                    println!(
-                        "{}",
-                        serde_json::to_string(&result).map_err(io::Error::other)?
-                    );
-                    Ok(ExitCode::FAILURE)
+            let staged = match StagedSnapshot::stage(snapshot, &manifest.workspace_snapshot_path) {
+                Ok(staged) => staged,
+                Err(_) => return image_failure(manifest),
+            };
+            let test_child = if allow_test_opcodes {
+                env::var_os("CASTOR_TEST_AGENT_CHILD").map(PathBuf::from)
+            } else {
+                None
+            };
+            let image_digest = if test_child.is_some() {
+                let digest = env::var("CASTOR_TEST_DERIVED_IMAGE_DIGEST").map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "missing test image digest")
+                })?;
+                if !valid_digest(&digest) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "invalid test image digest",
+                    ));
                 }
+                digest
+            } else {
+                match staged.build(&manifest.carrier_base_image) {
+                    Ok(digest) => digest,
+                    Err(_) => return image_failure(manifest),
+                }
+            };
+            if let Some(child) = test_child {
+                let outcome = run_test_task(
+                    &manifest,
+                    &manifest_path,
+                    &staged,
+                    image_digest,
+                    &test_state_root()?,
+                    &child,
+                )?;
+                match outcome {
+                    RunOutcome::Active(value) => {
+                        println!(
+                            "{}",
+                            serde_json::to_string(&value).map_err(io::Error::other)?
+                        );
+                        Ok(ExitCode::SUCCESS)
+                    }
+                    RunOutcome::Replayed(value) => {
+                        let success = value.get("status").and_then(|status| status.as_str())
+                            == Some("SUCCEEDED");
+                        println!(
+                            "{}",
+                            serde_json::to_string(&value).map_err(io::Error::other)?
+                        );
+                        Ok(if success {
+                            ExitCode::SUCCESS
+                        } else {
+                            ExitCode::FAILURE
+                        })
+                    }
+                    RunOutcome::Terminal(result) => {
+                        println!(
+                            "{}",
+                            serde_json::to_string(&result).map_err(io::Error::other)?
+                        );
+                        Ok(if result.status == "SUCCEEDED" {
+                            ExitCode::SUCCESS
+                        } else {
+                            ExitCode::FAILURE
+                        })
+                    }
+                }
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "production task supervision is not implemented yet",
+                ))
             }
         }
         Err(_) => {
@@ -68,6 +120,16 @@ fn run() -> io::Result<ExitCode> {
             Ok(ExitCode::FAILURE)
         }
     }
+}
+
+fn image_failure(manifest: TaskManifest) -> io::Result<ExitCode> {
+    let result =
+        TaskResult::image_build_failure(manifest.task_id, manifest.workspace_snapshot_sha256);
+    println!(
+        "{}",
+        serde_json::to_string(&result).map_err(io::Error::other)?
+    );
+    Ok(ExitCode::FAILURE)
 }
 
 fn invalid_args() -> io::Error {

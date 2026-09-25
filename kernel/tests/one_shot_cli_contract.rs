@@ -1114,3 +1114,110 @@ fn duplicate_active_submission_reuses_task_without_starting_another_agent() {
     assert_eq!(result(&second)["task_id"], result(&first)["task_id"]);
     assert_eq!(fs::read_to_string(&starts).unwrap().lines().count(), 1);
 }
+
+#[test]
+fn distinct_idempotency_keys_create_distinct_tasks_in_same_board() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let first_manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let second_manifest = root.path().join("second-manifest.json");
+    let mut body: Value = serde_json::from_slice(&fs::read(&first_manifest).unwrap()).unwrap();
+    body["task_id"] = json!("task-second");
+    body["idempotency_key"] = json!("second-task-key-001");
+    fs::write(&second_manifest, serde_json::to_vec(&body).unwrap()).unwrap();
+    let starts = root.path().join("agent-starts.txt");
+    let child = root.path().join("agent.sh");
+    fs::write(
+        &child,
+        "#!/bin/sh\nprintf 'started\\n' >> \"$CASTOR_TEST_AGENT_STARTS\"\nexit 7\n",
+    )
+    .unwrap();
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+    let first = task_command(root.path(), &first_manifest, &child)
+        .env("CASTOR_TEST_AGENT_STARTS", &starts)
+        .output()
+        .unwrap();
+    let second = task_command(root.path(), &second_manifest, &child)
+        .env("CASTOR_TEST_AGENT_STARTS", &starts)
+        .output()
+        .unwrap();
+    assert_eq!(result(&first)["task_id"], "task-snapshot-gate");
+    assert_eq!(result(&second)["task_id"], "task-second");
+    assert_eq!(fs::read_to_string(&starts).unwrap().lines().count(), 2);
+}
+
+#[test]
+fn reused_idempotency_key_cannot_change_task_manifest() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let starts = root.path().join("agent-starts.txt");
+    let child = root.path().join("agent.sh");
+    fs::write(
+        &child,
+        "#!/bin/sh\nprintf 'started\\n' >> \"$CASTOR_TEST_AGENT_STARTS\"\nexit 7\n",
+    )
+    .unwrap();
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+    let first = task_command(root.path(), &manifest, &child)
+        .env("CASTOR_TEST_AGENT_STARTS", &starts)
+        .output()
+        .unwrap();
+    assert_eq!(result(&first)["task_id"], "task-snapshot-gate");
+    let mut body: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    body["task_prompt"] = json!("A different, conflicting request");
+    fs::write(&manifest, serde_json::to_vec(&body).unwrap()).unwrap();
+    let conflicting = task_command(root.path(), &manifest, &child)
+        .env("CASTOR_TEST_AGENT_STARTS", &starts)
+        .output()
+        .unwrap();
+    assert!(!conflicting.status.success());
+    assert!(
+        String::from_utf8_lossy(&conflicting.stderr).contains("another manifest"),
+        "conflicting idempotency key must be rejected, not replayed"
+    );
+    assert_eq!(fs::read_to_string(&starts).unwrap().lines().count(), 1);
+}
+
+#[test]
+fn test_agent_and_image_overrides_are_inert_without_test_flag() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let child_marker = root.path().join("unsafe-child-started");
+    let child = root.path().join("unsafe-child.sh");
+    fs::write(
+        &child,
+        "#!/bin/sh\nprintf started > \"$CASTOR_TEST_UNSAFE_CHILD_MARKER\"\nexit 0\n",
+    )
+    .unwrap();
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+    let fake_bin = root.path().join("bin");
+    fs::create_dir(&fake_bin).unwrap();
+    let docker = fake_bin.join("docker");
+    fs::write(&docker, "#!/bin/sh\nexit 67\n").unwrap();
+    fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap());
+    let output = Command::new(castor_cli())
+        .args(["run", "--task"])
+        .arg(&manifest)
+        .env("PATH", path)
+        .env("CASTOR_TEST_AGENT_CHILD", &child)
+        .env("CASTOR_TEST_DERIVED_IMAGE_DIGEST", BASE_DIGEST)
+        .env("CASTOR_TEST_UNSAFE_CHILD_MARKER", &child_marker)
+        .output()
+        .unwrap();
+    let result = result(&output);
+    assert_eq!(result["status"], "FAILED");
+    assert_eq!(result["failure_reason"], "PROVISIONING_IMAGE_BUILD_FAILED");
+    assert!(
+        !child_marker.exists(),
+        "test child must not run without explicit flag"
+    );
+}

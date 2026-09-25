@@ -3,3 +3,4 @@
 pub mod image;
 pub mod manifest;
 pub mod result;
+pub mod supervisor;

@@ -39,7 +39,11 @@ impl StagedSnapshot {
         Ok(Self { root })
     }
 
-    pub fn build(self, carrier_base_image: &str) -> io::Result<String> {
+    pub fn workspace(&self) -> PathBuf {
+        self.root.path().join("workspace_snapshot")
+    }
+
+    pub fn build(&self, carrier_base_image: &str) -> io::Result<String> {
         validate_base_image(carrier_base_image)?;
         let dockerfile = self.root.path().join("Dockerfile");
         fs::write(
@@ -133,7 +137,7 @@ fn validate_base_image(image: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn valid_digest(value: &str) -> bool {
+pub fn valid_digest(value: &str) -> bool {
     value.strip_prefix("sha256:").is_some_and(|hex| {
         hex.len() == 64
             && hex
