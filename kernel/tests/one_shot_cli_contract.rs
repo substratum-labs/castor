@@ -1540,7 +1540,22 @@ fn default_cli_runs_real_pi_through_roche_and_host_settlement() {
     assert_eq!(task["status"], "SUCCEEDED");
     assert_eq!(task["test_passed"], true);
     assert_eq!(task["settled_actions_count"], 1);
-    assert!(calls.load(Ordering::SeqCst) >= 2);
+    let assistant_ends: Vec<_> = pi_log
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|event| event["type"] == "message_end" && event["message"]["role"] == "assistant")
+        .map(|event| {
+            json!({
+                "stop_reason": event["message"]["stopReason"],
+                "error": event["message"]["errorMessage"]
+            })
+        })
+        .collect();
+    assert!(
+        calls.load(Ordering::SeqCst) >= 2,
+        "model_calls={}; assistant_ends={assistant_ends:?}; journal={journal:?}",
+        calls.load(Ordering::SeqCst)
+    );
     assert!(task["patch_diff"]
         .as_str()
         .unwrap()
