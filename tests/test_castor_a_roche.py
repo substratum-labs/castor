@@ -209,6 +209,14 @@ class CastorARochePhysical(unittest.TestCase):
             self.assertTrue(profile["HostConfig"]["ReadonlyRootfs"])
             self.assertEqual(profile["HostConfig"]["PidsLimit"], 256)
             self.assertIn("ALL", profile["HostConfig"]["CapDrop"])
+            self.assertFalse(profile["HostConfig"]["CapAdd"])
+            self.assertFalse(profile["HostConfig"]["Privileged"])
+            self.assertTrue(
+                any(
+                    option.startswith("no-new-privileges")
+                    for option in profile["HostConfig"]["SecurityOpt"]
+                )
+            )
             self.assertEqual(profile["Config"]["User"], "10001:10001")
             self.assertEqual(len(profile["Mounts"]), 1)
             self.assertEqual(profile["Mounts"][0]["Source"], str(daemon.agent))
@@ -260,12 +268,16 @@ class CastorARochePhysical(unittest.TestCase):
             daemon.start()
             journal = daemon.journal()
             self.assertEqual(
-                any("AdapterSubmissionRecorded" in entry for entry in journal),
-                submission_persisted,
+                sum("AdapterSubmissionRecorded" in entry for entry in journal),
+                int(submission_persisted),
             )
             delivery = daemon.acquire()
             self.assertEqual(delivery["delivery_outcome"], expected_delivery)
             self.assertEqual(bytes(delivery["payload"]), b"payload-a1")
+            self.assertEqual(
+                sum("AdapterSubmissionRecorded" in entry for entry in daemon.journal()),
+                1,
+            )
             self.assertEqual(daemon.actuator.arrive(), "Committed")
             expect(daemon.settle(daemon.certificate()), "Settled")
             self.assertEqual(daemon.actuator.count(), 1)
@@ -273,7 +285,7 @@ class CastorARochePhysical(unittest.TestCase):
         finally:
             daemon.close()
 
-    def test_c1_pre_delivery_append_crash_preserves_unknown(self) -> None:
+    def test_c1_pre_delivery_append_crash_retries_without_submission(self) -> None:
         self.delivery_fault_trace("before_delivery_append", 86, False, "Delivered")
 
     def test_c2_post_fsync_lost_reply_is_duplicate_delivery(self) -> None:
@@ -290,6 +302,7 @@ class CastorARochePhysical(unittest.TestCase):
             journal = daemon.journal()
             duplicate = daemon.acquire()
             self.assertEqual(duplicate["delivery_outcome"], "DuplicateDelivery")
+            self.assertEqual(duplicate["payload"], first["payload"])
             self.assertEqual(daemon.journal(), journal)
             self.assertEqual(daemon.actuator.arrive(), "Committed")
             self.assertEqual(daemon.actuator.arrive(), "Committed")
@@ -304,6 +317,7 @@ class CastorARochePhysical(unittest.TestCase):
                 daemon.admission(),
                 "RejectedCurrentState",
             )
+            self.assertEqual(daemon.journal(), settled_journal)
             daemon.restart()
             self.assertEqual(daemon.actuator.count(), 1)
             self.assertEqual(daemon.summary()["locked_scopes"], 0)
@@ -410,6 +424,7 @@ raise AssertionError('the physical crash hook did not run')
                     result = actuator.process_envelope(envelope)
                 replace.assert_not_called()
                 self.assertEqual(path.stat().st_ino, inode)
+                self.assertEqual(path.read_text(), "recovered\n")
                 self.assertEqual(result["physical_observation"], "reconciled_matching")
 
                 def publish(ref: str, content_digest: str, content: bytes) -> None:
