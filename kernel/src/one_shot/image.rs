@@ -45,20 +45,66 @@ impl StagedSnapshot {
 
     pub fn build(&self, carrier_base_image: &str) -> io::Result<String> {
         validate_base_image(carrier_base_image)?;
+        // The manifest pins the locally built carrier's immutable image ID.
+        // Docker BuildKit interprets tag@config-ID and bare sha256:config-ID
+        // as remote references. Resolve the local tag first, compare its ID to
+        // the manifest pin, and give this build a unique temporary local tag.
+        let expected_id = carrier_base_image
+            .strip_prefix("substratum/castor-pi-carrier:v1@")
+            .expect("validated carrier prefix");
+        let inspect = Command::new("docker")
+            .args([
+                "image",
+                "inspect",
+                "--format",
+                "{{.Id}}",
+                "substratum/castor-pi-carrier:v1",
+            ])
+            .output()?;
+        if !inspect.status.success() {
+            return Err(io::Error::other(
+                "pinned Pi carrier is not installed locally",
+            ));
+        }
+        let local_id = String::from_utf8_lossy(&inspect.stdout).trim().to_owned();
+        if local_id != expected_id {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "local Pi carrier digest differs from task manifest pin",
+            ));
+        }
+        let local_tag = format!(
+            "substratum/castor-pi-carrier:{}",
+            self.root
+                .path()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| io::Error::other("invalid private image build directory"))?
+        );
+        let tagged = Command::new("docker")
+            .args(["tag", &local_id, &local_tag])
+            .output()?;
+        if !tagged.status.success() {
+            return Err(io::Error::other("failed to pin a local carrier build tag"));
+        }
         let dockerfile = self.root.path().join("Dockerfile");
         fs::write(
             &dockerfile,
             "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nCOPY --chown=10001:10001 --chmod=0555 workspace_snapshot/ /workspace/\n",
         )?;
-        let output = Command::new("docker")
+        let build_result = Command::new("docker")
             .arg("build")
             .arg("--quiet")
             .arg("--build-arg")
-            .arg(format!("BASE_IMAGE={carrier_base_image}"))
+            .arg(format!("BASE_IMAGE={local_tag}"))
             .arg("--file")
             .arg(&dockerfile)
             .arg(self.root.path())
-            .output()?;
+            .output();
+        let _ = Command::new("docker")
+            .args(["image", "rm", &local_tag])
+            .output();
+        let output = build_result?;
         if !output.status.success() {
             return Err(io::Error::other(format!(
                 "derived image build failed: {}",

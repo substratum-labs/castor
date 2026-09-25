@@ -161,12 +161,35 @@ pub fn apply_patch(workspace: &Path, patch: &str) -> io::Result<()> {
 
 pub fn validate_patch(workspace: &Path, target: &str, patch: &str) -> io::Result<()> {
     let target_path = Path::new(target);
+    let forbidden_metadata = [
+        "rename from ",
+        "rename to ",
+        "copy from ",
+        "copy to ",
+        "new file mode ",
+        "deleted file mode ",
+        "GIT binary patch",
+        "Binary files ",
+    ];
+    let diff_headers: Vec<_> = patch
+        .lines()
+        .filter(|line| line.starts_with("diff --git "))
+        .collect();
     if !target_path
         .components()
         .all(|part| matches!(part, Component::Normal(_)))
-        || fs::symlink_metadata(workspace.join(target_path))?
+        || !fs::symlink_metadata(workspace.join(target_path))?
             .file_type()
-            .is_symlink()
+            .is_file()
+        || (diff_headers.len() > 1
+            || diff_headers
+                .first()
+                .is_some_and(|header| *header != format!("diff --git a/{target} b/{target}")))
+        || patch.lines().any(|line| {
+            forbidden_metadata
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+        })
         || !patch.lines().any(|line| line == format!("--- a/{target}"))
         || !patch.lines().any(|line| line == format!("+++ b/{target}"))
         || patch
@@ -256,4 +279,26 @@ pub fn settle_receipt(
         "Settled",
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_patch;
+    use std::fs;
+
+    #[test]
+    fn second_rename_section_cannot_escape_single_file_scope() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("defect.txt"), "bad\n").unwrap();
+        fs::write(root.path().join("other.txt"), "secret\n").unwrap();
+        let patch = "--- a/defect.txt\n+++ b/defect.txt\n@@ -1 +1 @@\n-bad\n+good\n\
+diff --git a/other.txt b/renamed.txt\n\
+similarity index 100%\n\
+rename from other.txt\n\
+rename to renamed.txt\n";
+        assert!(
+            validate_patch(root.path(), "defect.txt", patch).is_err(),
+            "a second metadata-only file operation must be rejected"
+        );
+    }
 }

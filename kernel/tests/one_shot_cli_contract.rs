@@ -207,7 +207,7 @@ fn image_build_failure_returns_truthful_failed_result() {
     let docker = fake_bin.join("docker");
     fs::write(
         &docker,
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CASTOR_TEST_DOCKER_CALLS\"\nexit 67\n",
+        format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CASTOR_TEST_DOCKER_CALLS\"\nif [ \"$1\" = image ] && [ \"$2\" = inspect ]; then printf '%s\\n' '{BASE_DIGEST}'; exit 0; fi\nif [ \"$1\" = tag ]; then exit 0; fi\nexit 67\n"),
     )
     .unwrap();
     fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
@@ -238,6 +238,42 @@ fn image_build_failure_returns_truthful_failed_result() {
             .contains("build"),
         "the injected image builder must be attempted before reporting build failure"
     );
+}
+
+#[test]
+fn mutable_carrier_tag_cannot_override_manifest_image_pin() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let fake_bin = root.path().join("bin");
+    fs::create_dir(&fake_bin).unwrap();
+    let docker = fake_bin.join("docker");
+    fs::write(
+        &docker,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CASTOR_TEST_DOCKER_CALLS\"\nif [ \"$1\" = image ] && [ \"$2\" = inspect ]; then printf 'sha256:%064d\\n' 0; exit 0; fi\nexit 67\n",
+    )
+    .unwrap();
+    fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+    let calls = root.path().join("docker-calls.txt");
+    let path = format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap());
+    let output = Command::new(castor_cli())
+        .args(["run", "--task"])
+        .arg(&manifest)
+        .env("PATH", path)
+        .env("CASTOR_TEST_DOCKER_CALLS", &calls)
+        .output()
+        .unwrap();
+    assert_eq!(
+        result(&output)["failure_reason"],
+        "PROVISIONING_IMAGE_BUILD_FAILED"
+    );
+    let calls = fs::read_to_string(calls).unwrap();
+    assert!(calls.contains("image inspect"));
+    assert!(!calls
+        .lines()
+        .any(|line| line.starts_with("tag ") || line.starts_with("build ")));
 }
 
 #[test]
