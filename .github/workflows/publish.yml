@@ -1,20 +1,18 @@
-name: Publish to PyPI
+name: Publish Castor Client to PyPI
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["client-v*"]
 
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
 
-  publish:
+  build-client:
     needs: ci
     runs-on: ubuntu-latest
-    environment: pypi
     permissions:
-      id-token: write   # trusted publishing
-      contents: read    # actions/checkout needs this
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -25,17 +23,37 @@ jobs:
       - name: Set up Python
         run: uv python install 3.11
 
-      - name: Verify version matches tag
-        run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-          PKG_VERSION="$(uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "Tag v$TAG_VERSION does not match pyproject.toml version $PKG_VERSION"
-            exit 1
-          fi
+      - name: Build only the Castor A client
+        run: uv build --no-sources packages/castor-client
 
-      - name: Build package
-        run: uv build
+      - name: Verify tag and distribution contents
+        run: uv run python scripts/check_client_release.py
 
-      - name: Publish to PyPI
+      - name: Preserve verified client distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: castor-client-dist
+          path: |
+            packages/castor-client/dist/*.whl
+            packages/castor-client/dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    if: ${{ vars.CASTOR_CLIENT_PUBLISH_ENABLED == 'true' }}
+    needs: build-client
+    runs-on: ubuntu-latest
+    environment: pypi-client
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Retrieve verified client distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: castor-client-dist
+          path: dist
+
+      - name: Publish client to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
