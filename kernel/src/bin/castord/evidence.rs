@@ -29,7 +29,9 @@ fn decode_hex(value: &str) -> Result<Vec<u8>, ()> {
     }
     value
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let hi = (pair[0] as char).to_digit(16).ok_or(())?;
             let lo = (pair[1] as char).to_digit(16).ok_or(())?;

@@ -722,13 +722,9 @@ fn serve_listener(
     context: ServerContext,
 ) -> io::Result<()> {
     for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                let context = context.clone();
-                thread::spawn(move || serve_connection(stream, channel, context));
-            }
-            Err(error) => return Err(error),
-        }
+        let stream = stream?;
+        let context = context.clone();
+        thread::spawn(move || serve_connection(stream, channel, context));
     }
     Ok(())
 }
