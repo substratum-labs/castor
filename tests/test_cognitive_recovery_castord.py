@@ -158,7 +158,7 @@ with sqlite3.connect(sys.argv[1]) as db:
 
 
 class Daemon:
-    def __init__(self, *, sandbox=False):
+    def __init__(self, *, sandbox=False, fault_point=None):
         # Explicit /tmp avoids macOS's long per-user TMPDIR Unix socket limit.
         self.temp = tempfile.TemporaryDirectory(prefix="cr-", dir="/tmp")
         self.root = Path(self.temp.name)
@@ -170,6 +170,7 @@ class Daemon:
         self.log = self.root / "daemon.log"
         self.process = None
         self.sandbox = sandbox
+        self.fault_point = fault_point
         self.turn = 1
         self.base = digest(b"")
         self.generation = 1
@@ -216,6 +217,8 @@ class Daemon:
         ]
         if self.sandbox:
             command.extend(("--sandbox", "roche"))
+        if self.fault_point:
+            command.append("--allow-test-opcodes")
         with self.log.open("ab") as output:
             # Existing daemon launch syntax: no unsupported CLI flag makes
             # startup itself RED. Evidence socket is expected beside agent.sock.
@@ -227,6 +230,11 @@ class Daemon:
                     **os.environ,
                     "CASTORD_EVIDENCE_TRUST_CONFIG": str(self.trust),
                     "CASTORD_ACTUATOR_TRUST_CONFIG": str(self.actuator_trust),
+                    **(
+                        {"CASTORD_TEST_FAULT_POINT": self.fault_point}
+                        if self.fault_point
+                        else {}
+                    ),
                 },
             )
         deadline = time.monotonic() + 8

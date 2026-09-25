@@ -52,6 +52,56 @@ class CastorARochePhysical(unittest.TestCase):
             "CASTOR_IPC_SOCKET=/run/castor/ipc.sock",
         ]
 
+    def run_full_guest(self, daemon: Daemon) -> list[str]:
+        name = f"castor-a-roche-{uuid.uuid4().hex[:12]}"
+        process: subprocess.Popen[str] | None = None
+        try:
+            config, observation = prepare_trace(daemon)
+            config["socket"] = "/run/castor/ipc.sock"
+            process = subprocess.Popen(
+                self.container_args(name, daemon)
+                + [
+                    "--env",
+                    f"CASTOR_A_TRACE_CONFIG={json.dumps(config)}",
+                    self.image,
+                    "python",
+                    "-B",
+                    "-I",
+                    "/opt/castor/agent.py",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            stdout, stderr = report_model_after_request(
+                daemon, process, str(config["interaction_id"]), observation
+            )
+            self.assertEqual(process.returncode, 0, stderr)
+            outcomes = json.loads(stdout)
+            self.assertEqual(
+                outcomes,
+                [
+                    "Admitted",
+                    "InteractionRequested",
+                    "InteractionConsumed",
+                    "TurnCommitted",
+                    "ActionRegistered",
+                    "AttemptArmed",
+                    "DispatchRecorded",
+                ],
+            )
+            return outcomes
+        finally:
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
+            subprocess.run(
+                ["docker", "rm", "--force", name],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
     @classmethod
     def setUpClass(cls) -> None:
         if not WHEEL.is_file():
@@ -159,42 +209,8 @@ class CastorARochePhysical(unittest.TestCase):
 
     def test_nonroot_roche_guest_completes_governed_turn(self) -> None:
         daemon = Daemon(sandbox=True)
-        name = f"castor-a-roche-{uuid.uuid4().hex[:12]}"
-        process: subprocess.Popen[str] | None = None
         try:
-            config, observation = prepare_trace(daemon)
-            config["socket"] = "/run/castor/ipc.sock"
-            process = subprocess.Popen(
-                self.container_args(name, daemon)
-                + [
-                    "--env",
-                    f"CASTOR_A_TRACE_CONFIG={json.dumps(config)}",
-                    self.image,
-                    "python",
-                    "-B",
-                    "-I",
-                    "/opt/castor/agent.py",
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            stdout, stderr = report_model_after_request(
-                daemon, process, str(config["interaction_id"]), observation
-            )
-            self.assertEqual(process.returncode, 0, stderr)
-            self.assertEqual(
-                json.loads(stdout),
-                [
-                    "Admitted",
-                    "InteractionRequested",
-                    "InteractionConsumed",
-                    "TurnCommitted",
-                    "ActionRegistered",
-                    "AttemptArmed",
-                    "DispatchRecorded",
-                ],
-            )
+            self.run_full_guest(daemon)
             delivery = daemon.acquire()
             self.assertEqual(delivery["delivery_outcome"], "Delivered")
             self.assertEqual(daemon.actuator.arrive(), "Committed")
@@ -205,13 +221,44 @@ class CastorARochePhysical(unittest.TestCase):
             self.assertEqual(daemon.journal(), journal)
             self.assertEqual(daemon.actuator.count(), 1)
         finally:
-            if process is not None and process.poll() is None:
-                process.kill()
-                process.communicate(timeout=5)
-            subprocess.run(
-                ["docker", "rm", "--force", name],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
             daemon.close()
+
+    def delivery_fault_trace(
+        self,
+        fault_point: str,
+        expected_exit: int,
+        submission_persisted: bool,
+        expected_delivery: str,
+    ) -> None:
+        daemon = Daemon(sandbox=True, fault_point=fault_point)
+        try:
+            self.run_full_guest(daemon)
+            self.assertEqual(daemon.actuator.count(), 0)
+            with self.assertRaises((AssertionError, OSError)):
+                daemon.acquire()
+            self.assertEqual(daemon.process.wait(timeout=5), expected_exit)
+
+            daemon.fault_point = None
+            daemon.start()
+            journal = daemon.journal()
+            self.assertEqual(
+                any("AdapterSubmissionRecorded" in entry for entry in journal),
+                submission_persisted,
+            )
+            delivery = daemon.acquire()
+            self.assertEqual(delivery["delivery_outcome"], expected_delivery)
+            self.assertEqual(bytes(delivery["payload"]), b"payload-a1")
+            self.assertEqual(daemon.actuator.arrive(), "Committed")
+            expect(daemon.settle(daemon.certificate()), "Settled")
+            self.assertEqual(daemon.actuator.count(), 1)
+            self.assertEqual(daemon.summary()["locked_scopes"], 0)
+        finally:
+            daemon.close()
+
+    def test_c1_pre_delivery_append_crash_preserves_unknown(self) -> None:
+        self.delivery_fault_trace("before_delivery_append", 86, False, "Delivered")
+
+    def test_c2_post_fsync_lost_reply_is_duplicate_delivery(self) -> None:
+        self.delivery_fault_trace(
+            "after_delivery_fsync_before_response", 87, True, "DuplicateDelivery"
+        )
