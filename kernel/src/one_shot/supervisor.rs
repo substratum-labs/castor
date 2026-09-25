@@ -1,5 +1,7 @@
+use crate::host::{GatewayClient, SyscallRequest};
 use crate::one_shot::image::StagedSnapshot;
 use crate::one_shot::manifest::TaskManifest;
+use crate::one_shot::model::TestModelService;
 use crate::one_shot::result::TaskResult;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -154,11 +156,31 @@ pub fn run_test_task(
     }
 
     let daemon = TestDaemon::start(state_root)?;
+    let model_service = std::env::var_os("CASTOR_TEST_MODEL_SOCKET").map(|socket| {
+        TestModelService::start(
+            daemon.control_socket.clone(),
+            PathBuf::from(socket),
+            manifest.task_prompt.clone(),
+        )
+    });
     let child = Command::new(child_path)
         .env("CASTOR_IPC_SOCKET", &daemon.agent_socket)
         .env("CASTOR_CONTROL_SOCKET", &daemon.control_socket)
+        .env("CASTOR_TEST_TASK_PROMPT", &manifest.task_prompt)
         .output()?;
-    let result = if !child.status.success() {
+    let model_failed = model_service.is_some_and(TestModelService::finish);
+    if model_failed {
+        fence_failed_interaction(&daemon.control_socket)?;
+    }
+    let result = if model_failed {
+        TaskResult::after_image(
+            manifest.task_id.clone(),
+            manifest.workspace_snapshot_sha256.clone(),
+            image_digest,
+            "MODEL_INTERACTION_ERROR",
+            None,
+        )
+    } else if !child.status.success() {
         TaskResult::after_image(
             manifest.task_id.clone(),
             manifest.workspace_snapshot_sha256.clone(),
@@ -208,6 +230,35 @@ pub fn run_test_task(
         write_board(state_root, &board)?;
     }
     Ok(RunOutcome::Terminal(result))
+}
+
+fn fence_failed_interaction(control_socket: &Path) -> io::Result<()> {
+    let mut control = GatewayClient::connect(control_socket)?;
+    let summary = control.request(&SyscallRequest {
+        request_id: "model-failure-summary".to_owned(),
+        op: "GetProjectionSummary".to_owned(),
+        payload: json!({}),
+    })?;
+    let generation = summary
+        .outcome
+        .as_ref()
+        .and_then(|value| value.get("generation"))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing core generation"))?;
+    let next = generation
+        .checked_add(1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "core generation overflow"))?;
+    let fenced = control.request(&SyscallRequest {
+        request_id: "model-failure-fence".to_owned(),
+        op: "PersistFence".to_owned(),
+        payload: json!({ "generation": next }),
+    })?;
+    if fenced.outcome.as_ref().and_then(|value| value.get("type"))
+        != Some(&json!("GenerationFenced"))
+    {
+        return Err(io::Error::other("failed to persist provider-failure fence"));
+    }
+    Ok(())
 }
 
 fn read_board(root: &Path) -> io::Result<HashMap<String, PersistedTask>> {

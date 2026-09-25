@@ -4,6 +4,7 @@
 //! model and actuator effects use local test doubles; authority and the C-01
 //! journal remain real. No live model provider is invoked.
 
+use castor_kernel::c01_storage::D1DurableStorage;
 use castor_kernel::host::{read_framed, write_framed, GatewayClient, SyscallRequest};
 use castor_kernel::sandbox::{build_castor_untrusted_agent_config, RocheSandboxRunner};
 use serde_json::{json, Value};
@@ -309,6 +310,23 @@ fn result(output: &Output) -> Value {
     })
 }
 
+fn journal_kinds(root: &Path) -> Vec<String> {
+    let storage = D1DurableStorage::open(root.join("task-state"))
+        .expect("reopen the real C-01 durable journal");
+    storage
+        .journal_requests()
+        .into_iter()
+        .map(|request| {
+            let serialized = serde_json::to_value(request.entry).unwrap();
+            serialized
+                .as_object()
+                .and_then(|entry| entry.keys().next())
+                .expect("externally tagged C-01 entry")
+                .to_owned()
+        })
+        .collect()
+}
+
 fn assert_preflight_failure(output: &Output, expected_hash: &str) {
     assert!(!output.status.success(), "invalid snapshot must fail");
     let result = result(output);
@@ -600,6 +618,7 @@ fn mock_agent_commits_workspace_edit() {
     let capability =
         std::env::var("CASTOR_TEST_ACTION_CAP_ID").unwrap_or_else(|_| "capability-1".to_owned());
     let mut client = GatewayClient::connect(socket).expect("connect to real agent gateway");
+    let prompt = std::env::var("CASTOR_TEST_TASK_PROMPT").expect("task prompt for model request");
     let patch =
         b"--- a/defect.txt\n+++ b/defect.txt\n@@ -1 +1 @@\n-failing fixture\n+fixed fixture\n";
     let payload = serde_json::to_vec(&json!({
@@ -645,7 +664,7 @@ fn mock_agent_commits_workspace_edit() {
             json!({
                 "interaction_id": "interaction-1",
                 "lease_epoch": 0,
-                "request_digest": EMPTY_REGION_DIGEST
+                "request_digest": format!("sha256:{:x}", Sha256::digest(prompt.as_bytes()))
             }),
         )["type"],
         "InteractionRequested"
@@ -823,10 +842,9 @@ fn delayed_agent_commit_after_fence_is_rejected_without_dispatch() {
     assert_eq!(result["status"], "FENCED_CANCELLED");
     assert_eq!(result["settled_actions_count"], 0);
     assert_eq!(fs::read_to_string(&rejected).unwrap(), "rejected");
-    let journal = fs::read_to_string(root.path().join("task-state/core-journal.log"))
-        .expect("read real C-01 journal");
-    assert!(!journal.contains("TurnCommitted"));
-    assert!(!journal.contains("AttemptArmed"));
+    let journal = journal_kinds(root.path());
+    assert!(!journal.iter().any(|entry| entry == "TurnCommitted"));
+    assert!(!journal.iter().any(|entry| entry == "AttemptArmed"));
 }
 
 #[test]
@@ -851,6 +869,54 @@ fn model_transport_failure_fails_task_without_settled_actions() {
     assert_eq!(result["failure_reason"], "MODEL_INTERACTION_ERROR");
     assert_eq!(result["settled_actions_count"], 0);
     assert!(model.attempts.load(Ordering::SeqCst) > 0);
+    let journal = journal_kinds(root.path());
+    assert!(journal.iter().any(|entry| entry == "InteractionRequested"));
+    assert!(
+        journal.iter().any(|entry| entry == "FenceRevoked"),
+        "terminal provider failure must durably fence its pending Turn"
+    );
+}
+
+#[test]
+fn buffered_model_region_is_bound_before_guest_consumes_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _ = castor_cli();
+    let root = tempfile::tempdir().unwrap();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let child = root.path().join("model-agent.sh");
+    fs::write(
+        &child,
+        "#!/bin/sh\nexec \"$CASTOR_TEST_MOCK_CHILD_BINARY\" --ignored --exact mock_agent_commits_workspace_edit --nocapture\n",
+    )
+    .unwrap();
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+    let model_socket = root.path().join("model.sock");
+    let first_rejection = root.path().join("first-unbound-rejection");
+    let model = MockModelService::start(
+        &model_socket,
+        Some(buffered_model_response()),
+        Some(first_rejection.clone()),
+    );
+    let output = task_command(root.path(), &manifest, &child)
+        .env("CASTOR_TEST_MODEL_SOCKET", &model_socket)
+        .env("CASTOR_TEST_FIRST_CONSUME_REJECTED", &first_rejection)
+        .output()
+        .expect("run guest through C-03 model binding");
+    assert_eq!(result(&output)["status"], "FAILED");
+    assert_eq!(fs::read_to_string(&first_rejection).unwrap(), "rejected");
+    assert!(model.attempts.load(Ordering::SeqCst) > 0);
+    let journal = journal_kinds(root.path());
+    let requested = journal
+        .iter()
+        .position(|entry| entry == "InteractionRequested")
+        .expect("request persisted");
+    let bound = journal
+        .iter()
+        .position(|entry| entry == "InteractionBound")
+        .expect("host result bound");
+    assert!(requested < bound);
 }
 
 #[test]
@@ -894,8 +960,9 @@ fn normal_task_requires_bound_model_settled_edit_and_independent_test() {
         .expect("run governed normal task");
     assert!(
         output.status.success(),
-        "task stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "task stderr: {}; stdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
     );
     let result = result(&output);
     assert_eq!(result["status"], "SUCCEEDED");
@@ -915,8 +982,7 @@ fn normal_task_requires_bound_model_settled_edit_and_independent_test() {
     );
     assert_eq!(fs::read_to_string(&first_rejection).unwrap(), "rejected");
     assert!(model.attempts.load(Ordering::SeqCst) > 0);
-    let journal = fs::read_to_string(root.path().join("task-state/core-journal.log"))
-        .expect("read real C-01 journal");
+    let journal = journal_kinds(root.path());
     let positions: Vec<_> = [
         "InteractionRequested",
         "InteractionBound",
@@ -927,7 +993,8 @@ fn normal_task_requires_bound_model_settled_edit_and_independent_test() {
     .iter()
     .map(|entry| {
         journal
-            .find(entry)
+            .iter()
+            .position(|kind| kind == entry)
             .unwrap_or_else(|| panic!("missing {entry} in journal"))
     })
     .collect();
@@ -977,11 +1044,9 @@ fn post_arm_daemon_crash_recovers_as_unknown_without_retry() {
     assert_eq!(result["status"], "UNKNOWN_DISPUTED");
     assert!(model.attempts.load(Ordering::SeqCst) > 0);
     assert_eq!(fs::read_to_string(&starts).unwrap().lines().count(), 1);
-    let journal = fs::read_to_string(root.path().join("task-state/core-journal.log"))
-        .expect("read real C-01 journal");
-    assert!(journal.contains("AttemptArmed"));
-    assert!(!journal.contains("AttemptSettled"));
-    assert!(!journal.contains("EffectSettled"));
+    let journal = journal_kinds(root.path());
+    assert!(journal.iter().any(|entry| entry == "AttemptArmed"));
+    assert!(!journal.iter().any(|entry| entry == "AttemptSettled"));
 }
 
 #[test]
@@ -1049,10 +1114,9 @@ fn actuator_crash_after_write_must_probe_settle_and_run_host_test() {
         "verified"
     );
     assert_eq!(fs::read_to_string(&starts).unwrap().lines().count(), 1);
-    let journal = fs::read_to_string(root.path().join("task-state/core-journal.log"))
-        .expect("read real C-01 journal");
-    assert!(journal.contains("AttemptArmed"));
-    assert!(journal.contains("AttemptSettled"));
+    let journal = journal_kinds(root.path());
+    assert!(journal.iter().any(|entry| entry == "AttemptArmed"));
+    assert!(journal.iter().any(|entry| entry == "AttemptSettled"));
 }
 
 #[test]

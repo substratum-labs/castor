@@ -1071,20 +1071,6 @@ fn agent_channel_cannot_bind_its_own_model_observation() {
     assert_outcome(
         call(
             &mut agent,
-            "ensure-hostile-observation",
-            "EnsureRegion",
-            json!({
-                "region_ref": "region://forged-observation",
-                "content_digest": DIGEST,
-                "content": [],
-                "profile": "D1"
-            }),
-        ),
-        "Success",
-    );
-    assert_outcome(
-        call(
-            &mut agent,
             "admit-hostile-model-turn",
             "AdmitTurn",
             json!({
@@ -1136,6 +1122,20 @@ fn agent_channel_cannot_bind_its_own_model_observation() {
     )
     .outcome;
     assert_eq!(after, before, "untrusted report must not append a binding");
+    assert_outcome(
+        call(
+            &mut harness.control_client(),
+            "trusted-model-region",
+            "EnsureRegion",
+            json!({
+                "region_ref": "region://forged-observation",
+                "content_digest": DIGEST,
+                "content": [],
+                "profile": "D1"
+            }),
+        ),
+        "Success",
+    );
     assert_outcome(
         call(
             &mut harness.control_client(),

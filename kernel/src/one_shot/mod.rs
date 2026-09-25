@@ -2,5 +2,6 @@
 
 pub mod image;
 pub mod manifest;
+pub mod model;
 pub mod result;
 pub mod supervisor;

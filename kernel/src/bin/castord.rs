@@ -350,6 +350,7 @@ fn dispatch(
             | "GetProjectionSummary"
             | "InspectJournal"
             | "SubmitDecision"
+            | "EnsureRegion"
             | "ReportOutcome"
             | "ReportInteractionOutcome"
     );
