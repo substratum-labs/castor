@@ -1552,6 +1552,12 @@ fn default_cli_runs_real_pi_through_roche_and_host_settlement() {
         })
         .collect();
     assert!(
+        assistant_ends
+            .last()
+            .is_some_and(|event| event["stop_reason"] == "stop" && event["error"].is_null()),
+        "Pi must finish without an assistant error: {assistant_ends:?}"
+    );
+    assert!(
         calls.load(Ordering::SeqCst) >= 2,
         "model_calls={}; assistant_ends={assistant_ends:?}; journal={journal:?}",
         calls.load(Ordering::SeqCst)

@@ -645,6 +645,7 @@ pub fn run_product_task(
         manifest.task_prompt.clone(),
     );
     let command = "cd /workspace && exec pi --extension /opt/castor/castor-pi-extension.js --no-extensions --no-builtin-tools --no-session --offline --no-context-files --no-skills --no-prompt-templates --no-themes --model castor/castor-task --mode json --print \"$CASTOR_TASK_PROMPT\" </dev/null";
+    let mut pi_completed = false;
     let child_exit = match RocheSandboxRunner::new(config).start(command) {
         Ok(carrier) => {
             let exit = wait_for_pi(&carrier, &model);
@@ -652,8 +653,12 @@ pub fn run_product_task(
                 .args(["logs", "--tail", "200", carrier.container_id()])
                 .output()
             {
+                pi_completed = logs.status.success() && pi_finished_without_error(&logs.stdout);
                 let limit = logs.stdout.len().min(1024 * 1024);
-                let _ = fs::write(task_state.join("pi.jsonl"), &logs.stdout[..limit]);
+                let _ = fs::write(
+                    task_state.join("pi.jsonl"),
+                    &logs.stdout[logs.stdout.len() - limit..],
+                );
             }
             let _ = carrier.remove();
             exit.unwrap_or(Some(1))
@@ -692,7 +697,7 @@ pub fn run_product_task(
             "TIMEOUT_EXCEEDED",
             None,
         )
-    } else if child_exit != Some(0) {
+    } else if child_exit != Some(0) || !pi_completed {
         TaskResult::after_image(
             manifest.task_id.clone(),
             manifest.workspace_snapshot_sha256.clone(),
@@ -773,6 +778,22 @@ pub fn run_product_task(
     }
     persist_product_result(state_root, manifest, &manifest_digest, &result)?;
     Ok(RunOutcome::Terminal(result))
+}
+
+fn pi_finished_without_error(log: &[u8]) -> bool {
+    log.split(|byte| *byte == b'\n')
+        .rev()
+        .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
+        .find(|event| {
+            event.get("type") == Some(&json!("message_end"))
+                && event.pointer("/message/role") == Some(&json!("assistant"))
+        })
+        .is_some_and(|event| {
+            event.pointer("/message/stopReason") == Some(&json!("stop"))
+                && event
+                    .pointer("/message/errorMessage")
+                    .is_none_or(Value::is_null)
+        })
 }
 
 fn wait_for_pi(
@@ -997,4 +1018,27 @@ pub fn test_state_root() -> io::Result<PathBuf> {
     std::env::var_os("CASTOR_TEST_TASK_STATE_ROOT")
         .map(PathBuf::from)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing test task state root"))
+}
+
+#[cfg(test)]
+mod pi_output_tests {
+    use super::pi_finished_without_error;
+
+    #[test]
+    fn assistant_error_after_tool_use_is_not_a_successful_task() {
+        let log = br#"{"type":"message_end","message":{"role":"assistant","stopReason":"toolUse"}}
+{"type":"message_end","message":{"role":"assistant","stopReason":"error","errorMessage":"RejectedStaleAuthority"}}
+"#;
+        assert!(!pi_finished_without_error(log));
+    }
+
+    #[test]
+    fn final_assistant_stop_is_required() {
+        let complete =
+            br#"{"type":"message_end","message":{"role":"assistant","stopReason":"toolUse"}}
+{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}
+"#;
+        assert!(pi_finished_without_error(complete));
+        assert!(!pi_finished_without_error(b""));
+    }
 }
