@@ -24,7 +24,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --python ${{ matrix.python-version }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -37,7 +37,14 @@ jobs:
       - name: Run tests
         env:
           CASTORD_BINARY: ${{ github.workspace }}/kernel/target/release/castord
-        run: uv run pytest tests/ -v --tb=short
+        run: uv run --python ${{ matrix.python-version }} pytest tests/ -v --tb=short
+
+      - name: Run Castor A client unit tests
+        env:
+          PYTHONPATH: packages/castor-client/src
+        run: >-
+          uv run --python ${{ matrix.python-version }} python -m unittest discover
+          packages/castor-client/tests -v
 
   lint:
     runs-on: ubuntu-latest

@@ -120,7 +120,7 @@ class RequestInteraction(AgentOperationRequest[RequestInteractionOutcome]):
     descriptor: QueryOperationDescriptor | None = None
 
     def to_payload(self) -> dict[str, object]:
-        payload = super().to_payload()
+        payload = WireOperation.to_payload(self)
         if self.descriptor is None:
             payload.pop("descriptor")
         return payload
