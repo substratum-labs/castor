@@ -21,6 +21,7 @@ from tests.test_cognitive_recovery_castord import ADAPTER, AGENT, CAP, Daemon, e
 ROOT = Path(__file__).resolve().parents[1]
 WHEEL = ROOT / "packages/castor-client/dist/castor_client-0.7.0a1-py3-none-any.whl"
 FIXTURE = ROOT / "tests/fixtures/castor_a_installed_agent.py"
+HOSTILE_FIXTURE = ROOT / "tests/fixtures/castor_a_hostile_agent.py"
 DOCKERFILE = ROOT / "tests/fixtures/Dockerfile.castor_a_client"
 RUN_PHYSICAL = (
     sys.platform == "linux" and os.environ.get("CASTOR_A_ROCHE_PHYSICAL") == "1"
@@ -111,6 +112,7 @@ class CastorARochePhysical(unittest.TestCase):
             context = Path(directory)
             shutil.copy2(WHEEL, context / WHEEL.name)
             shutil.copy2(FIXTURE, context / FIXTURE.name)
+            shutil.copy2(HOSTILE_FIXTURE, context / HOSTILE_FIXTURE.name)
             shutil.copy2(DOCKERFILE, context / "Dockerfile")
             build = subprocess.run(
                 ["docker", "build", "--tag", cls.image, str(context)],
@@ -262,3 +264,60 @@ class CastorARochePhysical(unittest.TestCase):
         self.delivery_fault_trace(
             "after_delivery_fsync_before_response", 87, True, "DuplicateDelivery"
         )
+
+    def test_d1_duplicate_delivery_and_ack_do_not_reapply(self) -> None:
+        daemon = Daemon(sandbox=True)
+        try:
+            self.run_full_guest(daemon)
+            first = daemon.acquire()
+            self.assertEqual(first["delivery_outcome"], "Delivered")
+            journal = daemon.journal()
+            duplicate = daemon.acquire()
+            self.assertEqual(duplicate["delivery_outcome"], "DuplicateDelivery")
+            self.assertEqual(daemon.journal(), journal)
+            self.assertEqual(daemon.actuator.arrive(), "Committed")
+            self.assertEqual(daemon.actuator.arrive(), "Committed")
+            self.assertEqual(daemon.actuator.count(), 1)
+            certificate = daemon.certificate()
+            expect(daemon.settle(certificate), "Settled")
+            settled_journal = daemon.journal()
+            expect(daemon.settle(certificate), "Settled")
+            self.assertEqual(daemon.journal(), settled_journal)
+            daemon.ok(
+                "PresentAdmissionCertificate",
+                daemon.admission(),
+                "RejectedCurrentState",
+            )
+            daemon.restart()
+            self.assertEqual(daemon.actuator.count(), 1)
+            self.assertEqual(daemon.summary()["locked_scopes"], 0)
+        finally:
+            daemon.close()
+
+    def test_h1_hostile_guest_cannot_escape_agent_channel(self) -> None:
+        daemon = Daemon(sandbox=True)
+        name = f"castor-a-hostile-{uuid.uuid4().hex[:12]}"
+        try:
+            before = daemon.journal()
+            projection = daemon.summary()
+            run = subprocess.run(
+                self.container_args(name, daemon)
+                + [self.image, "python", "-B", "-I", "/opt/castor/hostile.py"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=20,
+            )
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertEqual(json.loads(run.stdout), ["UnauthorizedOpcode"] * 3)
+            self.assertEqual(daemon.journal(), before)
+            self.assertEqual(daemon.summary(), projection)
+            self.assertEqual(daemon.actuator.count(), 0)
+        finally:
+            subprocess.run(
+                ["docker", "rm", "--force", name],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            daemon.close()

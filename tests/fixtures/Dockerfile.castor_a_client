@@ -9,6 +9,7 @@ RUN python -m pip install --no-index --no-deps /tmp/castor_client-0.7.0a1-py3-no
     && rm /tmp/castor_client-0.7.0a1-py3-none-any.whl
 
 COPY castor_a_installed_agent.py /opt/castor/agent.py
+COPY castor_a_hostile_agent.py /opt/castor/hostile.py
 
 USER 10001:10001
 WORKDIR /opt/castor
