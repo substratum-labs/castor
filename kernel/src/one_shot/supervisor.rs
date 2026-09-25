@@ -1,4 +1,8 @@
+use crate::c01_storage::{CoreEntry, D1DurableStorage};
 use crate::host::{GatewayClient, SyscallRequest};
+use crate::one_shot::actuator::{
+    apply_patch, evidence_key_hex, settle_receipt, settle_workspace_edit,
+};
 use crate::one_shot::image::StagedSnapshot;
 use crate::one_shot::manifest::TaskManifest;
 use crate::one_shot::model::TestModelService;
@@ -10,6 +14,7 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::fd::AsRawFd;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -39,6 +44,9 @@ struct TestDaemon {
     child: Child,
     agent_socket: PathBuf,
     control_socket: PathBuf,
+    evidence_socket: PathBuf,
+    actuator_socket: PathBuf,
+    security_audit: PathBuf,
 }
 
 impl TestDaemon {
@@ -46,6 +54,31 @@ impl TestDaemon {
         let daemon_binary = std::env::current_exe()?.with_file_name("castord");
         let agent_socket = root.join("ipc.sock");
         let control_socket = root.join("control.sock");
+        let evidence_socket = root.join("evidence.sock");
+        let actuator_socket = root.join("actuator.sock");
+        let security_audit = root.join("security.audit");
+        File::create(&security_audit)?;
+        let peer_uid = fs::metadata(root)?.uid();
+        let evidence_config = root.join("evidence-trust.json");
+        let actuator_config = root.join("actuator-trust.json");
+        fs::write(
+            &evidence_config,
+            serde_json::to_vec(&json!({
+                "issuer": "castor-one-shot-test-actuator",
+                "peer_uid": peer_uid,
+                "adapter_id": "c04:generic",
+                "receipt_algorithm": "HMAC-SHA256",
+                "key_hex": evidence_key_hex(),
+                "canonical_scopes": {"action-1": "workspace:defect.txt"}
+            }))?,
+        )?;
+        fs::write(
+            &actuator_config,
+            serde_json::to_vec(&json!({
+                "peer_uid": peer_uid,
+                "actuator_id": "c04:generic"
+            }))?,
+        )?;
         let mut child = Command::new(daemon_binary)
             .arg("--storage-root")
             .arg(root)
@@ -53,13 +86,22 @@ impl TestDaemon {
             .arg(&agent_socket)
             .arg("--control-socket")
             .arg(&control_socket)
+            .arg("--evidence-socket")
+            .arg(&evidence_socket)
+            .arg("--actuator-socket")
+            .arg(&actuator_socket)
             .arg("--allow-test-opcodes")
+            .env("CASTORD_EVIDENCE_TRUST_CONFIG", &evidence_config)
+            .env("CASTORD_ACTUATOR_TRUST_CONFIG", &actuator_config)
+            .env("CASTORD_SECURITY_AUDIT_PATH", &security_audit)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()?;
         let deadline = Instant::now() + Duration::from_secs(3);
         while UnixStream::connect(&agent_socket).is_err()
             || UnixStream::connect(&control_socket).is_err()
+            || UnixStream::connect(&evidence_socket).is_err()
+            || UnixStream::connect(&actuator_socket).is_err()
         {
             if child.try_wait()?.is_some() || Instant::now() >= deadline {
                 let _ = child.kill();
@@ -72,6 +114,9 @@ impl TestDaemon {
             child,
             agent_socket,
             control_socket,
+            evidence_socket,
+            actuator_socket,
+            security_audit,
         })
     }
 }
@@ -128,8 +173,35 @@ pub fn run_test_task(
                     "task state is already bound to another manifest",
                 ));
             }
+            if existing.status == "UNKNOWN_DISPUTED"
+                && std::env::var("CASTOR_TEST_ACTUATOR_MODE").ok().as_deref()
+                    == Some("probe_existing")
+            {
+                drop(_lock);
+                return recover_applied_edit(manifest, staged, image_digest, state_root);
+            }
             if let Some(result) = &existing.result {
                 return Ok(RunOutcome::Replayed(result.clone()));
+            }
+            // A dead owner after an armed attempt has no authority to retry
+            // the effect. The durable C-01 journal, not the board's ACTIVE
+            // marker, decides whether recovery must stop as disputed.
+            if let Ok(storage) = D1DurableStorage::open(state_root) {
+                let armed = storage
+                    .journal_requests()
+                    .iter()
+                    .any(|request| matches!(request.entry, CoreEntry::AttemptArmed { .. }));
+                if armed {
+                    let mut result = TaskResult::after_image(
+                        manifest.task_id.clone(),
+                        manifest.workspace_snapshot_sha256.clone(),
+                        image_digest.clone(),
+                        "UNSETTLED_ACTIONS",
+                        None,
+                    );
+                    result.status = "UNKNOWN_DISPUTED";
+                    return Ok(RunOutcome::Terminal(result));
+                }
             }
             return Ok(RunOutcome::Active(json!({
                 "task_id": existing.task_id,
@@ -163,16 +235,134 @@ pub fn run_test_task(
             manifest.task_prompt.clone(),
         )
     });
-    let child = Command::new(child_path)
+    let fault_point = std::env::var("CASTOR_TEST_FAULT_POINT").ok();
+    let mut child_command = Command::new(child_path);
+    child_command
         .env("CASTOR_IPC_SOCKET", &daemon.agent_socket)
         .env("CASTOR_CONTROL_SOCKET", &daemon.control_socket)
-        .env("CASTOR_TEST_TASK_PROMPT", &manifest.task_prompt)
-        .output()?;
+        .env("CASTOR_TEST_TASK_PROMPT", &manifest.task_prompt);
+    let child = if fault_point.as_deref() == Some("fence_after_admit_before_commit") {
+        let process = child_command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let marker = std::env::var_os("CASTOR_TEST_FENCE_READY").map(PathBuf::from);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut fenced = false;
+        while Instant::now() < deadline {
+            let journal = inspect_journal(&daemon.control_socket)?;
+            if journal
+                .iter()
+                .any(|entry| entry.get("LeaseGranted").is_some())
+            {
+                fence_failed_interaction(&daemon.control_socket)?;
+                if let Some(marker) = marker {
+                    fs::write(marker, b"fenced")?;
+                }
+                fenced = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        if !fenced {
+            return Err(io::Error::other(
+                "test child did not admit a turn before fence",
+            ));
+        }
+        process.wait_with_output()?
+    } else {
+        child_command.output()?
+    };
     let model_failed = model_service.is_some_and(TestModelService::finish);
     if model_failed {
         fence_failed_interaction(&daemon.control_socket)?;
     }
-    let result = if model_failed {
+    if fault_point.as_deref() == Some("crash_post_attempt_armed")
+        && inspect_journal(&daemon.control_socket)?
+            .iter()
+            .any(|entry| entry.get("AttemptArmed").is_some())
+    {
+        drop(daemon);
+        std::process::exit(86);
+    }
+    let settled_edit = if !model_failed
+        && child.status.success()
+        && std::env::var("CASTOR_TEST_ACTUATOR_MODE").ok().as_deref() == Some("apply_and_settle")
+    {
+        settle_workspace_edit(
+            &daemon.control_socket,
+            &daemon.actuator_socket,
+            &daemon.evidence_socket,
+            &staged.workspace(),
+            true,
+        )?
+    } else {
+        None
+    };
+    let uncertain_edit = if !model_failed
+        && child.status.success()
+        && std::env::var("CASTOR_TEST_ACTUATOR_MODE").ok().as_deref()
+            == Some("apply_then_crash_before_settlement")
+    {
+        let durable_workspace = state_root.join("applied-workspace");
+        fs::create_dir_all(&durable_workspace)?;
+        fs::copy(
+            staged.workspace().join("defect.txt"),
+            durable_workspace.join("defect.txt"),
+        )?;
+        let edit = settle_workspace_edit(
+            &daemon.control_socket,
+            &daemon.actuator_socket,
+            &daemon.evidence_socket,
+            &durable_workspace,
+            false,
+        )?;
+        if let Some(edit) = &edit {
+            let postimage = fs::read(durable_workspace.join("defect.txt"))?;
+            File::open(durable_workspace.join("defect.txt"))?.sync_all()?;
+            let record = json!({
+                "patch": edit.patch,
+                "patch_sha256": edit.patch_sha256,
+                "postimage_sha256": format!("sha256:{:x}", Sha256::digest(postimage))
+            });
+            let mut file = File::create(state_root.join("applied-edit.json"))?;
+            file.write_all(&serde_json::to_vec(&record).map_err(io::Error::other)?)?;
+            file.sync_all()?;
+            File::open(state_root)?.sync_all()?;
+        }
+        edit
+    } else {
+        None
+    };
+    let result = if uncertain_edit.is_some() {
+        let mut result = TaskResult::after_image(
+            manifest.task_id.clone(),
+            manifest.workspace_snapshot_sha256.clone(),
+            image_digest,
+            "UNSETTLED_ACTIONS",
+            None,
+        );
+        result.status = "UNKNOWN_DISPUTED";
+        result
+    } else if fs::metadata(&daemon.security_audit)?.len() > 0 {
+        TaskResult::after_image(
+            manifest.task_id.clone(),
+            manifest.workspace_snapshot_sha256.clone(),
+            image_digest,
+            "SECURITY_VIOLATION",
+            None,
+        )
+    } else if fault_point.as_deref() == Some("fence_after_admit_before_commit") {
+        let mut result = TaskResult::after_image(
+            manifest.task_id.clone(),
+            manifest.workspace_snapshot_sha256.clone(),
+            image_digest,
+            "STALE_AUTHORITY",
+            None,
+        );
+        result.status = "FENCED_CANCELLED";
+        result
+    } else if model_failed {
         TaskResult::after_image(
             manifest.task_id.clone(),
             manifest.workspace_snapshot_sha256.clone(),
@@ -198,17 +388,29 @@ pub fn run_test_task(
             Ok(output) => output.status.code().unwrap_or(1),
             Err(_) => 1,
         };
-        TaskResult::after_image(
+        let mut result = TaskResult::after_image(
             manifest.task_id.clone(),
             manifest.workspace_snapshot_sha256.clone(),
             image_digest,
-            if code == 0 {
+            if code == 0 && settled_edit.is_some() {
+                "NONE"
+            } else if code == 0 {
                 "UNSETTLED_ACTIONS"
             } else {
                 "TEST_VERIFICATION_FAILED"
             },
             Some(code),
-        )
+        );
+        if code == 0 {
+            if let Some(edit) = settled_edit {
+                result.status = "SUCCEEDED";
+                result.committed_turns = vec![1];
+                result.settled_actions_count = 1;
+                result.final_patch_sha256 = Some(edit.patch_sha256);
+                result.patch_diff = Some(edit.patch);
+            }
+        }
+        result
     };
     {
         let _lock = BoardLock::acquire(state_root)?;
@@ -230,6 +432,108 @@ pub fn run_test_task(
         write_board(state_root, &board)?;
     }
     Ok(RunOutcome::Terminal(result))
+}
+
+fn recover_applied_edit(
+    manifest: &TaskManifest,
+    staged: &StagedSnapshot,
+    image_digest: String,
+    state_root: &Path,
+) -> io::Result<RunOutcome> {
+    let record: Value = serde_json::from_slice(&fs::read(state_root.join("applied-edit.json"))?)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let patch = record["patch"]
+        .as_str()
+        .ok_or_else(|| io::Error::other("missing applied patch"))?;
+    let patch_digest = format!("sha256:{:x}", Sha256::digest(patch.as_bytes()));
+    if record["patch_sha256"] != patch_digest {
+        return Err(io::Error::other("applied patch digest mismatch"));
+    }
+    apply_patch(&staged.workspace(), patch)?;
+    let expected_postimage = format!(
+        "sha256:{:x}",
+        Sha256::digest(fs::read(staged.workspace().join("defect.txt"))?)
+    );
+    let observed_postimage = format!(
+        "sha256:{:x}",
+        Sha256::digest(fs::read(state_root.join("applied-workspace/defect.txt"))?)
+    );
+    if record["postimage_sha256"] != observed_postimage || expected_postimage != observed_postimage
+    {
+        return Err(io::Error::other(
+            "physical actuator probe disagrees with committed edit",
+        ));
+    }
+    let daemon = TestDaemon::start(state_root)?;
+    let journal = inspect_journal(&daemon.control_socket)?;
+    if !journal
+        .iter()
+        .any(|entry| entry.get("AttemptArmed").is_some())
+        || !journal
+            .iter()
+            .any(|entry| entry.get("DispatchAttempt").is_some())
+        || !journal
+            .iter()
+            .any(|entry| entry.get("AdapterSubmissionRecorded").is_some())
+        || journal
+            .iter()
+            .any(|entry| entry.get("AttemptSettled").is_some())
+    {
+        return Err(io::Error::other(
+            "committed attempt is not eligible for probe settlement",
+        ));
+    }
+    settle_receipt(
+        &daemon.control_socket,
+        &daemon.evidence_socket,
+        1,
+        "workspace:defect.txt",
+    )?;
+    let test = Command::new(&manifest.verification_command[0])
+        .args(&manifest.verification_command[1..])
+        .current_dir(staged.workspace())
+        .output()?;
+    let code = test.status.code().unwrap_or(1);
+    let mut result = TaskResult::after_image(
+        manifest.task_id.clone(),
+        manifest.workspace_snapshot_sha256.clone(),
+        image_digest,
+        if code == 0 {
+            "NONE"
+        } else {
+            "TEST_VERIFICATION_FAILED"
+        },
+        Some(code),
+    );
+    result.committed_turns = vec![1];
+    result.settled_actions_count = 1;
+    if code == 0 {
+        result.status = "SUCCEEDED";
+        result.patch_diff = Some(patch.to_owned());
+        result.final_patch_sha256 = Some(patch_digest);
+    }
+    let _lock = BoardLock::acquire(state_root)?;
+    let mut board = read_board(state_root)?;
+    let task = board
+        .get_mut(&manifest.idempotency_key)
+        .ok_or_else(|| io::Error::other("recovery task missing from board"))?;
+    task.status = result.status.to_owned();
+    task.result = Some(serde_json::to_value(&result).map_err(io::Error::other)?);
+    write_board(state_root, &board)?;
+    Ok(RunOutcome::Terminal(result))
+}
+
+fn inspect_journal(control_socket: &Path) -> io::Result<Vec<Value>> {
+    let mut control = GatewayClient::connect(control_socket)?;
+    let response = control.request(&SyscallRequest {
+        request_id: "supervisor-inspect-journal".to_owned(),
+        op: "InspectJournal".to_owned(),
+        payload: json!({}),
+    })?;
+    response
+        .outcome
+        .and_then(|value| value.get("entries").and_then(Value::as_array).cloned())
+        .ok_or_else(|| io::Error::other("missing trusted journal inspection"))
 }
 
 fn fence_failed_interaction(control_socket: &Path) -> io::Result<()> {

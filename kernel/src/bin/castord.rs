@@ -18,8 +18,8 @@ use castor_kernel::sandbox::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::env;
-use std::fs;
-use std::io::{self, ErrorKind};
+use std::fs::{self, OpenOptions};
+use std::io::{self, ErrorKind, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -117,6 +117,7 @@ struct ServerContext {
     trust: Arc<Option<evidence::EvidenceTrust>>,
     actuator_trust: Arc<Option<actuator::ActuatorTrust>>,
     delivery_fault_point: Option<DeliveryFaultPoint>,
+    security_audit_path: Option<PathBuf>,
 }
 
 impl SupervisedChild {
@@ -353,6 +354,7 @@ fn dispatch(
             | "EnsureRegion"
             | "ReportOutcome"
             | "ReportInteractionOutcome"
+            | "RecordDispatchAttempt"
     );
     if (channel == SocketChannel::Agent && !agent_allowed && !test_opcode_allowed)
         || (channel == SocketChannel::Control && !control_allowed)
@@ -647,6 +649,19 @@ fn serve_connection(mut stream: UnixStream, channel: SocketChannel, context: Ser
                 context.delivery_fault_point,
             )
         };
+        if channel == SocketChannel::Agent
+            && outcome
+                .as_ref()
+                .err()
+                .is_some_and(|error| error == "UnauthorizedOpcode")
+        {
+            if let Some(path) = &context.security_audit_path {
+                if let Ok(mut file) = OpenOptions::new().append(true).open(path) {
+                    let _ = file.write_all(b"unauthorized-opcode\n");
+                    let _ = file.sync_all();
+                }
+            }
+        }
         let fenced = matches!(outcome.as_ref().ok(), Some(value) if value.get("type") == Some(&json!("GenerationFenced")));
         let response = match outcome {
             Ok(outcome) => SyscallResponse {
@@ -772,6 +787,11 @@ fn run(config: Config) -> io::Result<()> {
         trust,
         actuator_trust,
         delivery_fault_point,
+        security_audit_path: if config.allow_test_opcodes {
+            env::var_os("CASTORD_SECURITY_AUDIT_PATH").map(PathBuf::from)
+        } else {
+            None
+        },
     };
     {
         let evidence_context = ServerContext {
