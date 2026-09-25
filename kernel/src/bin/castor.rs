@@ -1,3 +1,4 @@
+use castor_kernel::one_shot::image::StagedSnapshot;
 use castor_kernel::one_shot::manifest::TaskManifest;
 use castor_kernel::one_shot::result::TaskResult;
 use std::env;
@@ -32,14 +33,31 @@ fn run() -> io::Result<ExitCode> {
     let manifest_path = manifest_path.ok_or_else(invalid_args)?;
     let manifest = TaskManifest::read(&manifest_path)?;
     match manifest.validate_snapshot(&manifest_path) {
-        Ok(_snapshot) => Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            if allow_test_opcodes {
-                "test task supervision is not implemented yet"
-            } else {
-                "task image build and supervision are not implemented yet"
-            },
-        )),
+        Ok(snapshot) => {
+            let image = StagedSnapshot::stage(snapshot, &manifest.workspace_snapshot_path)
+                .and_then(|stage| stage.build(&manifest.carrier_base_image));
+            match image {
+                Ok(_digest) => Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    if allow_test_opcodes {
+                        "test task supervision is not implemented yet"
+                    } else {
+                        "task supervision is not implemented yet"
+                    },
+                )),
+                Err(_) => {
+                    let result = TaskResult::image_build_failure(
+                        manifest.task_id,
+                        manifest.workspace_snapshot_sha256,
+                    );
+                    println!(
+                        "{}",
+                        serde_json::to_string(&result).map_err(io::Error::other)?
+                    );
+                    Ok(ExitCode::FAILURE)
+                }
+            }
+        }
         Err(_) => {
             let result =
                 TaskResult::snapshot_failure(manifest.task_id, manifest.workspace_snapshot_sha256);

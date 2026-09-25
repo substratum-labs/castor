@@ -21,4 +21,15 @@ impl TaskResult {
             settled_actions_count: 0,
         }
     }
+
+    pub fn image_build_failure(task_id: String, snapshot_hash: String) -> Self {
+        Self {
+            task_id,
+            status: "FAILED",
+            failure_reason: "PROVISIONING_IMAGE_BUILD_FAILED",
+            workspace_snapshot_sha256: snapshot_hash,
+            committed_turns: vec![],
+            settled_actions_count: 0,
+        }
+    }
 }

@@ -29,8 +29,9 @@ libc = "0.2"
 vstd = "=0.0.0-2026-07-12-0122"
 roche-core = { git = "https://github.com/substratum-labs/roche.git", rev = "039d9125c5acec38751c3a6434446f4a21e68afc" }
 crc32fast = "1.4"
-
-[dev-dependencies]
+tar = "0.4"
+flate2 = "1"
+zstd = "0.13"
 tempfile = "3.23"
 
 [package.metadata.verus]

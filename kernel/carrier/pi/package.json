@@ -1,0 +1,8 @@
+{
+  "name": "castor-pi-carrier",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.87.1"
+  }
+}

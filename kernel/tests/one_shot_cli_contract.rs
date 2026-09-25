@@ -232,6 +232,65 @@ fn image_build_failure_returns_truthful_failed_result() {
     );
 }
 
+#[test]
+fn symlink_inside_verified_archive_is_rejected_before_image_build() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("defect.txt"), b"failing fixture\n").unwrap();
+    symlink("../outside.txt", source.join("escape")).unwrap();
+    let archive = root.path().join("snapshot.tar");
+    let tar_output = Command::new("tar")
+        .arg("-cf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(&source)
+        .arg(".")
+        .output()
+        .unwrap();
+    assert!(tar_output.status.success());
+    let bytes = fs::read(&archive).unwrap();
+    let mut archive_check = tar::Archive::new(bytes.as_slice());
+    assert!(
+        archive_check.entries().unwrap().any(|entry| entry
+            .unwrap()
+            .header()
+            .entry_type()
+            .is_symlink()),
+        "fixture must actually contain a symlink entry"
+    );
+    let hash = format!("{:x}", Sha256::digest(&bytes));
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let fake_bin = root.path().join("bin");
+    fs::create_dir(&fake_bin).unwrap();
+    let docker = fake_bin.join("docker");
+    fs::write(
+        &docker,
+        "#!/bin/sh\nprintf 'called\\n' >> \"$CASTOR_TEST_DOCKER_CALLS\"\nexit 67\n",
+    )
+    .unwrap();
+    fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+    let calls = root.path().join("docker-calls.txt");
+    let path = format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap());
+    let output = Command::new(castor_cli())
+        .args(["run", "--task"])
+        .arg(&manifest)
+        .env("PATH", path)
+        .env("CASTOR_TEST_DOCKER_CALLS", &calls)
+        .output()
+        .unwrap();
+    let result = result(&output);
+    assert_eq!(result["status"], "FAILED");
+    assert_eq!(result["failure_reason"], "PROVISIONING_IMAGE_BUILD_FAILED");
+    assert!(result.get("derived_task_image_digest").is_none());
+    assert!(
+        !calls.exists(),
+        "unsafe archive must not reach Docker build"
+    );
+}
+
 fn run_task(manifest: &Path) -> Output {
     Command::new(castor_cli())
         .args(["run", "--task"])
