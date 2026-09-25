@@ -65,7 +65,7 @@ impl ContractHarness {
         let serial = FIXTURE_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
-            .expect("fixture lock poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let root = tempfile::tempdir().expect("temporary host root");
         let socket = root.path().join("castord.sock");
         let control_socket = root.path().join("control.sock");
@@ -1048,6 +1048,93 @@ fn scenario_19_dual_socket_uses_closed_channel_allowlists() {
     );
     assert_eq!(summary.status, "Ok");
     assert_eq!(summary.outcome.unwrap()["generation"], json!(1));
+}
+
+#[test]
+fn agent_channel_cannot_bind_its_own_model_observation() {
+    let harness = ContractHarness::without_test_opcodes();
+    let mut agent = harness.client();
+    assert_outcome(
+        call(
+            &mut agent,
+            "ensure-hostile-observation",
+            "EnsureRegion",
+            json!({
+                "region_ref": "region://forged-observation",
+                "content_digest": DIGEST,
+                "content": [],
+                "profile": "D1"
+            }),
+        ),
+        "Success",
+    );
+    assert_outcome(
+        call(
+            &mut agent,
+            "admit-hostile-model-turn",
+            "AdmitTurn",
+            json!({
+                "agent_id": "agent-1",
+                "turn_id": 1,
+                "lease_epoch": 0,
+                "base_projection_digest": DIGEST
+            }),
+        ),
+        "Admitted",
+    );
+    assert_outcome(
+        call(
+            &mut agent,
+            "request-hostile-model",
+            "RequestInteraction",
+            json!({
+                "interaction_id": "interaction-hostile",
+                "lease_epoch": 0,
+                "request_digest": DIGEST
+            }),
+        ),
+        "InteractionRequested",
+    );
+    let before = call(
+        &mut harness.control_client(),
+        "journal-before-hostile-report",
+        "InspectJournal",
+        json!({}),
+    )
+    .outcome;
+    let response = call(
+        &mut agent,
+        "agent-forged-report",
+        "ReportOutcome",
+        json!({
+            "interaction_id": "interaction-hostile",
+            "observation_region_id": "region://forged-observation",
+            "observation_digest": DIGEST
+        }),
+    );
+    assert_eq!(response.status, "Error");
+    assert_eq!(response.error.unwrap().code, "UnauthorizedOpcode");
+    let after = call(
+        &mut harness.control_client(),
+        "journal-after-hostile-report",
+        "InspectJournal",
+        json!({}),
+    )
+    .outcome;
+    assert_eq!(after, before, "untrusted report must not append a binding");
+    assert_outcome(
+        call(
+            &mut harness.control_client(),
+            "trusted-model-report",
+            "ReportOutcome",
+            json!({
+                "interaction_id": "interaction-hostile",
+                "observation_region_id": "region://forged-observation",
+                "observation_digest": DIGEST
+            }),
+        ),
+        "InteractionBound",
+    );
 }
 
 #[test]
