@@ -330,13 +330,16 @@ fn dispatch(
             | "RevokeCapability"
             | "EnsureRegion"
             | "RequestInteraction"
-            | "ReportOutcome"
             | "ConsumeInteraction"
     );
     let test_opcode_allowed = allow_test_opcodes
         && matches!(
             request.op.as_str(),
-            "Replay" | "__ProviderSubmissionCount" | "__LoseAdapterDedupState"
+            "Replay"
+                | "__ProviderSubmissionCount"
+                | "__LoseAdapterDedupState"
+                | "ReportOutcome"
+                | "ReportInteractionOutcome"
         );
     let control_allowed = matches!(
         request.op.as_str(),
@@ -347,6 +350,8 @@ fn dispatch(
             | "GetProjectionSummary"
             | "InspectJournal"
             | "SubmitDecision"
+            | "ReportOutcome"
+            | "ReportInteractionOutcome"
     );
     if (channel == SocketChannel::Agent && !agent_allowed && !test_opcode_allowed)
         || (channel == SocketChannel::Control && !control_allowed)

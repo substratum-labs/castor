@@ -275,7 +275,11 @@ fn assert_delivery_envelope(response: SyscallResponse, expected: &str) {
     );
 }
 
-fn commit_ready_turn(client: &mut GatewayClient, action_manifest: &[&str]) {
+fn commit_ready_turn(
+    client: &mut GatewayClient,
+    action_manifest: &[&str],
+    reporter: Option<&mut GatewayClient>,
+) {
     let manifest_content = format!("{}\n", action_manifest.join("\n")).into_bytes();
     let manifest_digest = format!("sha256:{:x}", Sha256::digest(&manifest_content));
     let mut action_bindings = Vec::new();
@@ -331,15 +335,18 @@ fn commit_ready_turn(client: &mut GatewayClient, action_manifest: &[&str]) {
         ),
         "InteractionRequested",
     );
-    assert_outcome(
-        call(
-            client,
-            "report",
-            "ReportOutcome",
-            json!({ "interaction_id": "interaction-1", "observation_region_id": "region://observation", "observation_digest": DIGEST }),
-        ),
-        "InteractionBound",
-    );
+    {
+        let report_client = reporter.unwrap_or(&mut *client);
+        assert_outcome(
+            call(
+                report_client,
+                "report",
+                "ReportOutcome",
+                json!({ "interaction_id": "interaction-1", "observation_region_id": "region://observation", "observation_digest": DIGEST }),
+            ),
+            "InteractionBound",
+        );
+    }
     let consumed = call(
         client,
         "consume",
@@ -410,7 +417,7 @@ fn arm_action(client: &mut GatewayClient, action_id: &str, scope: &str) {
 fn scenario_01_end_to_end_governed_turn_over_socket() {
     let harness = ContractHarness::new();
     let mut client = harness.client();
-    commit_ready_turn(&mut client, &["action-1"]);
+    commit_ready_turn(&mut client, &["action-1"], None);
     arm_action(&mut client, "action-1", "scope-1");
     assert_outcome(
         call(
@@ -574,7 +581,7 @@ fn scenario_04_pre_commit_admission_certificate_is_rejected() {
 fn scenario_05_uncommitted_action_id_admission_is_rejected() {
     let harness = ContractHarness::new();
     let mut client = harness.client();
-    commit_ready_turn(&mut client, &["action-1"]);
+    commit_ready_turn(&mut client, &["action-1"], None);
     assert_outcome(
         call(
             &mut client,
@@ -590,7 +597,7 @@ fn scenario_05_uncommitted_action_id_admission_is_rejected() {
 fn scenario_06_deliver_without_record_is_rejected_without_provider_submission() {
     let harness = ContractHarness::new();
     let mut client = harness.client();
-    commit_ready_turn(&mut client, &["action-1"]);
+    commit_ready_turn(&mut client, &["action-1"], None);
     arm_action(&mut client, "action-1", "scope-1");
     assert_outcome(
         acquire_action(&harness, "deliver", 1, "dispatch-1"),
@@ -603,7 +610,7 @@ fn scenario_06_deliver_without_record_is_rejected_without_provider_submission() 
 fn scenario_07_duplicate_deliver_is_deduplicated_over_socket() {
     let harness = ContractHarness::new();
     let mut client = harness.client();
-    commit_ready_turn(&mut client, &["action-1"]);
+    commit_ready_turn(&mut client, &["action-1"], None);
     arm_action(&mut client, "action-1", "scope-1");
     assert_outcome(
         call(
@@ -629,7 +636,7 @@ fn scenario_07_duplicate_deliver_is_deduplicated_over_socket() {
 fn scenario_08_missing_adapter_dedup_after_dispatch_is_ambiguous() {
     let harness = ContractHarness::new();
     let mut client = harness.client();
-    commit_ready_turn(&mut client, &["action-1"]);
+    commit_ready_turn(&mut client, &["action-1"], None);
     arm_action(&mut client, "action-1", "scope-1");
     assert_outcome(
         call(
@@ -725,7 +732,7 @@ fn scenario_10_commit_while_awaiting_interaction_is_rejected() {
 fn scenario_11_stale_generation_admission_is_rejected_after_fence() {
     let harness = ContractHarness::new();
     let mut client = harness.client();
-    commit_ready_turn(&mut client, &["action-1"]);
+    commit_ready_turn(&mut client, &["action-1"], None);
     assert_outcome(
         call(
             &mut client,
@@ -752,7 +759,7 @@ fn scenario_12_scope_mutex_rejects_overlapping_admission() {
     let harness = ContractHarness::new();
     let mut client_one = harness.client();
     let mut client_two = harness.client();
-    commit_ready_turn(&mut client_one, &["action-1", "action-2"]);
+    commit_ready_turn(&mut client_one, &["action-1", "action-2"], None);
     arm_action(&mut client_one, "action-1", "scope-1");
     assert_outcome(
         call(
@@ -932,7 +939,7 @@ fn consume_interaction_rejects_arbitrary_region_selector_at_gateway_boundary() {
 fn scenario_17_lost_ack_after_commit_does_not_mint_a_second_turn() {
     let harness = ContractHarness::new();
     let mut first_client = harness.client();
-    commit_ready_turn(&mut first_client, &["action-1"]);
+    commit_ready_turn(&mut first_client, &["action-1"], None);
     drop(first_client);
     let mut retry_client = harness.client();
     assert_outcome(
@@ -951,6 +958,7 @@ fn scenario_18_supervisor_persists_fence_before_child_termination_and_reap() {
     let harness = ContractHarness::new();
     let other_root = tempfile::tempdir().expect("temporary supervisor root");
     let other_socket = other_root.path().join("supervisor.sock");
+    let other_control_socket = other_root.path().join("supervisor-control.sock");
     let pid_file = other_root.path().join("supervised-child.pid");
     let child = format!("echo $$ > {}; exec sleep 60", pid_file.display());
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_castord"))
@@ -959,13 +967,18 @@ fn scenario_18_supervisor_persists_fence_before_child_termination_and_reap() {
             other_root.path().to_str().unwrap(),
             "--socket",
             other_socket.to_str().unwrap(),
+            "--control-socket",
+            other_control_socket.to_str().unwrap(),
             "--child",
             &child,
         ])
         .spawn()
         .expect("launch supervised castord");
     let deadline = Instant::now() + Duration::from_secs(3);
-    while UnixStream::connect(&other_socket).is_err() || !pid_file.exists() {
+    while UnixStream::connect(&other_socket).is_err()
+        || UnixStream::connect(&other_control_socket).is_err()
+        || !pid_file.exists()
+    {
         assert!(Instant::now() < deadline, "supervised daemon must start");
         thread::sleep(Duration::from_millis(10));
     }
@@ -975,7 +988,8 @@ fn scenario_18_supervisor_persists_fence_before_child_termination_and_reap() {
         .parse::<u32>()
         .expect("child pid must be numeric");
     let mut client = GatewayClient::connect(&other_socket).expect("connect supervised daemon");
-    commit_ready_turn(&mut client, &["action-1"]);
+    let mut control = GatewayClient::connect(&other_control_socket).expect("connect host control");
+    commit_ready_turn(&mut client, &["action-1"], Some(&mut control));
     assert_outcome(
         call(
             &mut client,
@@ -1176,7 +1190,7 @@ fn opcode_isolation_without_test_flag() {
 fn scenario_20_actuator_socket_is_closed_and_returns_only_bound_payload() {
     let harness = ContractHarness::new();
     let mut agent = harness.client();
-    commit_ready_turn(&mut agent, &["action-1"]);
+    commit_ready_turn(&mut agent, &["action-1"], None);
     arm_action(&mut agent, "action-1", "scope-1");
     assert_outcome(
         call(
@@ -1282,7 +1296,8 @@ fn scenario_20_actuator_socket_is_closed_and_returns_only_bound_payload() {
 
 fn prepare_dispatched_attempt(harness: &ContractHarness) {
     let mut agent = harness.client();
-    commit_ready_turn(&mut agent, &["action-1"]);
+    let mut control = harness.control_client();
+    commit_ready_turn(&mut agent, &["action-1"], Some(&mut control));
     arm_action(&mut agent, "action-1", "scope-1");
     assert_outcome(
         call(
