@@ -554,12 +554,28 @@ impl D1GovernedTurnAuthority {
         })
     }
 
+    /// Read-only observation for an agent to obtain a fresh AdmitTurn base.
+    /// The optional digest preserves the distinction between an unprojected
+    /// genesis state and a projected state whose digest happens to be present.
+    pub fn observe_projection(&self) -> serde_json::Value {
+        json!({
+            "type": "ProjectionObserved",
+            "projection_digest": self.projection_digest,
+            "generation": self.generation,
+        })
+    }
+
     pub fn inspect_journal(&self) -> Vec<CoreEntry> {
         self.storage()
             .journal_requests()
             .into_iter()
             .map(|request| request.entry)
             .collect()
+    }
+
+    /// Host control reads immutable request bytes; guest IPC has no read opcode.
+    pub fn read_region(&self, region_ref: &str) -> Option<Vec<u8>> {
+        self.storage().read_region(region_ref)
     }
 
     /// Creates a D-04 restart cache.  The blob is not authoritative until

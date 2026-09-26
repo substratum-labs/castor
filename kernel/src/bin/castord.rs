@@ -17,9 +17,10 @@ use castor_kernel::sandbox::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sha2::Digest;
 use std::env;
-use std::fs;
-use std::io::{self, ErrorKind};
+use std::fs::{self, OpenOptions};
+use std::io::{self, ErrorKind, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -117,6 +118,7 @@ struct ServerContext {
     trust: Arc<Option<evidence::EvidenceTrust>>,
     actuator_trust: Arc<Option<actuator::ActuatorTrust>>,
     delivery_fault_point: Option<DeliveryFaultPoint>,
+    security_audit_path: Option<PathBuf>,
 }
 
 impl SupervisedChild {
@@ -321,7 +323,8 @@ fn dispatch(
 ) -> Result<Value, String> {
     let agent_allowed = matches!(
         request.op.as_str(),
-        "AdmitTurn"
+        "ObserveProjection"
+            | "AdmitTurn"
             | "CommitTurn"
             | "RegisterAction"
             | "PresentAdmissionCertificate"
@@ -330,13 +333,16 @@ fn dispatch(
             | "RevokeCapability"
             | "EnsureRegion"
             | "RequestInteraction"
-            | "ReportOutcome"
             | "ConsumeInteraction"
     );
     let test_opcode_allowed = allow_test_opcodes
         && matches!(
             request.op.as_str(),
-            "Replay" | "__ProviderSubmissionCount" | "__LoseAdapterDedupState"
+            "Replay"
+                | "__ProviderSubmissionCount"
+                | "__LoseAdapterDedupState"
+                | "ReportOutcome"
+                | "ReportInteractionOutcome"
         );
     let control_allowed = matches!(
         request.op.as_str(),
@@ -345,8 +351,14 @@ fn dispatch(
             | "ResolveQuarantinedDispute"
             | "PersistFence"
             | "GetProjectionSummary"
+            | "ObserveProjection"
             | "InspectJournal"
             | "SubmitDecision"
+            | "EnsureRegion"
+            | "ReportOutcome"
+            | "ReportInteractionOutcome"
+            | "RecordDispatchAttempt"
+            | "ReadModelRequest"
     );
     if (channel == SocketChannel::Agent && !agent_allowed && !test_opcode_allowed)
         || (channel == SocketChannel::Control && !control_allowed)
@@ -356,6 +368,9 @@ fn dispatch(
         return Err("UnauthorizedOpcode".into());
     }
     let p = &request.payload;
+    if request.op == "ObserveProjection" {
+        return Ok(authority.observe_projection());
+    }
     let governed = match request.op.as_str() {
         "GrantCapability" => {
             let request: GrantCapabilityRequest =
@@ -373,13 +388,51 @@ fn dispatch(
         }
         "GetProjectionSummary" => return Ok(authority.projection_summary()),
         "InspectJournal" => return Ok(json!({"entries": authority.inspect_journal()})),
-        "AdmitTurn" => authority.admit_turn(AdmitTurnRequest {
-            agent_id: string(p, "agent_id")?,
-            turn_id: number(p, "turn_id")?,
-            lease_epoch: number(p, "lease_epoch")?,
-            base_projection_digest: string(p, "base_projection_digest")?,
-            cap_id: p.get("cap_id").and_then(Value::as_str).map(str::to_owned),
-        }),
+        "ReadModelRequest" => {
+            let interaction_id = string(p, "interaction_id")?;
+            if interaction_id.is_empty()
+                || interaction_id.len() > 128
+                || !interaction_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            {
+                return Err("invalid model interaction ID".into());
+            }
+            let region_ref = format!("region://model-request/{interaction_id}");
+            let content = authority
+                .read_region(&region_ref)
+                .ok_or_else(|| "model request Region is missing".to_string())?;
+            if content.len() > 1024 * 1024 {
+                return Err("model request Region exceeds 1 MiB".into());
+            }
+            let content_digest = format!("sha256:{:x}", sha2::Sha256::digest(&content));
+            return Ok(json!({
+                "region_ref": region_ref,
+                "content_digest": content_digest,
+                "content": content
+            }));
+        }
+        "AdmitTurn" => {
+            if let Some(expected_generation) = p.get("expected_generation") {
+                let expected_generation = expected_generation
+                    .as_u64()
+                    .ok_or_else(|| "expected_generation must be an unsigned integer".to_owned())?;
+                if expected_generation != authority.generation() {
+                    return Ok(outcome_value(
+                        GovernedTurnOutcome::RejectedStaleGeneration {
+                            current_generation: authority.generation(),
+                        },
+                    ));
+                }
+            }
+            authority.admit_turn(AdmitTurnRequest {
+                agent_id: string(p, "agent_id")?,
+                turn_id: number(p, "turn_id")?,
+                lease_epoch: number(p, "lease_epoch")?,
+                base_projection_digest: string(p, "base_projection_digest")?,
+                cap_id: p.get("cap_id").and_then(Value::as_str).map(str::to_owned),
+            })
+        }
         "RequestInteraction" => {
             let query_operation = match p.get("descriptor") {
                 None => None,
@@ -477,7 +530,16 @@ fn dispatch(
             target_scope: match trust {
                 Some(trust) => match trust.canonical_scopes.get(&string(p, "action_id")?) {
                     Some(scope) => scope.clone(),
-                    None => return Ok(outcome_value(GovernedTurnOutcome::RejectedPrecondition)),
+                    None => {
+                        let candidate = string(p, "target_scope")?;
+                        if trust.allowed_scope_prefixes.iter().any(|prefix| {
+                            candidate.starts_with(prefix) && candidate.len() > prefix.len()
+                        }) {
+                            candidate
+                        } else {
+                            return Ok(outcome_value(GovernedTurnOutcome::RejectedPrecondition));
+                        }
+                    }
                 },
                 None => p
                     .get("target_scope")
@@ -641,6 +703,19 @@ fn serve_connection(mut stream: UnixStream, channel: SocketChannel, context: Ser
                 context.delivery_fault_point,
             )
         };
+        if channel == SocketChannel::Agent
+            && outcome
+                .as_ref()
+                .err()
+                .is_some_and(|error| error == "UnauthorizedOpcode")
+        {
+            if let Some(path) = &context.security_audit_path {
+                if let Ok(mut file) = OpenOptions::new().append(true).open(path) {
+                    let _ = file.write_all(b"unauthorized-opcode\n");
+                    let _ = file.sync_all();
+                }
+            }
+        }
         let fenced = matches!(outcome.as_ref().ok(), Some(value) if value.get("type") == Some(&json!("GenerationFenced")));
         let response = match outcome {
             Ok(outcome) => SyscallResponse {
@@ -675,13 +750,9 @@ fn serve_listener(
     context: ServerContext,
 ) -> io::Result<()> {
     for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                let context = context.clone();
-                thread::spawn(move || serve_connection(stream, channel, context));
-            }
-            Err(error) => return Err(error),
-        }
+        let stream = stream?;
+        let context = context.clone();
+        thread::spawn(move || serve_connection(stream, channel, context));
     }
     Ok(())
 }
@@ -766,6 +837,7 @@ fn run(config: Config) -> io::Result<()> {
         trust,
         actuator_trust,
         delivery_fault_point,
+        security_audit_path: env::var_os("CASTORD_SECURITY_AUDIT_PATH").map(PathBuf::from),
     };
     {
         let evidence_context = ServerContext {

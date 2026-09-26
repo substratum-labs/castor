@@ -3,8 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+  pull_request:  # stacked feature PRs also need the Linux physical gates
   workflow_call:  # allow publish.yml to reuse this workflow
 
 jobs:
@@ -77,18 +76,33 @@ jobs:
 
       - uses: astral-sh/setup-uv@v4
 
+      - name: Build pinned Python-free Pi carrier
+        run: docker build --tag substratum/castor-pi-carrier:v1 kernel/carrier/pi
+
+      - name: Exercise pinned Pi extension and two-turn CLI
+        run: >-
+          docker run --rm --network none --read-only
+          --tmpfs /tmp:rw,nosuid,nodev,size=64m,mode=1777
+          --user 10001:10001
+          --mount type=bind,src=${{ github.workspace }}/kernel/carrier/pi,dst=/opt/castor/src,readonly
+          --entrypoint node substratum/castor-pi-carrier:v1
+          --test /opt/castor/src/tests/protocol.test.js
+          /opt/castor/src/tests/extension.test.js
+          /opt/castor/src/tests/pi-cli-smoke.test.js
+
       - name: Set up Python
         run: uv python install 3.11
 
       - name: Check Rust formatting and tests
         run: >-
           cargo fmt --manifest-path kernel/Cargo.toml --check &&
+          cargo clippy --manifest-path kernel/Cargo.toml --all-targets -- -D warnings &&
           cargo test --manifest-path kernel/Cargo.toml
 
       - name: Build the PyO3 extension wheel
         run: >-
           uvx --from maturin maturin build
-          --manifest-path kernel/Cargo.toml --release
+          --manifest-path kernel/Cargo.toml --features extension-module --release
           -o /tmp/castor-kernel-wheel
 
       - name: Import and exercise the installed wheel

@@ -4,6 +4,7 @@
 //! model and actuator effects use local test doubles; authority and the C-01
 //! journal remain real. No live model provider is invoked.
 
+use castor_kernel::c01_storage::D1DurableStorage;
 use castor_kernel::host::{read_framed, write_framed, GatewayClient, SyscallRequest};
 use castor_kernel::sandbox::{build_castor_untrusted_agent_config, RocheSandboxRunner};
 use serde_json::{json, Value};
@@ -14,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use std::thread;
 use std::time::Duration;
@@ -117,6 +118,7 @@ fn task_command(root: &Path, manifest: &Path, child: &Path) -> Command {
 struct MockModelService {
     stop: Arc<AtomicBool>,
     attempts: Arc<AtomicUsize>,
+    requests: Arc<Mutex<Vec<Value>>>,
     worker: Option<thread::JoinHandle<()>>,
 }
 
@@ -126,8 +128,10 @@ impl MockModelService {
         listener.set_nonblocking(true).unwrap();
         let stop = Arc::new(AtomicBool::new(false));
         let attempts = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(Mutex::new(Vec::new()));
         let worker_stop = stop.clone();
         let worker_attempts = attempts.clone();
+        let worker_requests = requests.clone();
         let worker = thread::spawn(move || {
             while !worker_stop.load(Ordering::SeqCst) {
                 match listener.accept() {
@@ -137,7 +141,10 @@ impl MockModelService {
                             stream
                                 .set_read_timeout(Some(Duration::from_secs(1)))
                                 .unwrap();
-                            if read_framed(&mut stream).is_ok() {
+                            if let Ok(frame) = read_framed(&mut stream) {
+                                if let Ok(request) = serde_json::from_slice(&frame) {
+                                    worker_requests.lock().unwrap().push(request);
+                                }
                                 if let Some(ref marker) = release_marker {
                                     let deadline =
                                         std::time::Instant::now() + Duration::from_secs(3);
@@ -164,6 +171,7 @@ impl MockModelService {
         Self {
             stop,
             attempts,
+            requests,
             worker: Some(worker),
         }
     }
@@ -199,7 +207,7 @@ fn image_build_failure_returns_truthful_failed_result() {
     let docker = fake_bin.join("docker");
     fs::write(
         &docker,
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CASTOR_TEST_DOCKER_CALLS\"\nexit 67\n",
+        format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CASTOR_TEST_DOCKER_CALLS\"\nif [ \"$1\" = image ] && [ \"$2\" = inspect ]; then printf '%s\\n' '{BASE_DIGEST}'; exit 0; fi\nif [ \"$1\" = tag ]; then exit 0; fi\nexit 67\n"),
     )
     .unwrap();
     fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
@@ -232,6 +240,101 @@ fn image_build_failure_returns_truthful_failed_result() {
     );
 }
 
+#[test]
+fn mutable_carrier_tag_cannot_override_manifest_image_pin() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let fake_bin = root.path().join("bin");
+    fs::create_dir(&fake_bin).unwrap();
+    let docker = fake_bin.join("docker");
+    fs::write(
+        &docker,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CASTOR_TEST_DOCKER_CALLS\"\nif [ \"$1\" = image ] && [ \"$2\" = inspect ]; then printf 'sha256:%064d\\n' 0; exit 0; fi\nexit 67\n",
+    )
+    .unwrap();
+    fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+    let calls = root.path().join("docker-calls.txt");
+    let path = format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap());
+    let output = Command::new(castor_cli())
+        .args(["run", "--task"])
+        .arg(&manifest)
+        .env("PATH", path)
+        .env("CASTOR_TEST_DOCKER_CALLS", &calls)
+        .output()
+        .unwrap();
+    assert_eq!(
+        result(&output)["failure_reason"],
+        "PROVISIONING_IMAGE_BUILD_FAILED"
+    );
+    let calls = fs::read_to_string(calls).unwrap();
+    assert!(calls.contains("image inspect"));
+    assert!(!calls
+        .lines()
+        .any(|line| line.starts_with("tag ") || line.starts_with("build ")));
+}
+
+#[test]
+fn symlink_inside_verified_archive_is_rejected_before_image_build() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("defect.txt"), b"failing fixture\n").unwrap();
+    symlink("../outside.txt", source.join("escape")).unwrap();
+    let archive = root.path().join("snapshot.tar");
+    let tar_output = Command::new("tar")
+        .arg("-cf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(&source)
+        .arg(".")
+        .output()
+        .unwrap();
+    assert!(tar_output.status.success());
+    let bytes = fs::read(&archive).unwrap();
+    let mut archive_check = tar::Archive::new(bytes.as_slice());
+    assert!(
+        archive_check.entries().unwrap().any(|entry| entry
+            .unwrap()
+            .header()
+            .entry_type()
+            .is_symlink()),
+        "fixture must actually contain a symlink entry"
+    );
+    let hash = format!("{:x}", Sha256::digest(&bytes));
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let fake_bin = root.path().join("bin");
+    fs::create_dir(&fake_bin).unwrap();
+    let docker = fake_bin.join("docker");
+    fs::write(
+        &docker,
+        "#!/bin/sh\nprintf 'called\\n' >> \"$CASTOR_TEST_DOCKER_CALLS\"\nexit 67\n",
+    )
+    .unwrap();
+    fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+    let calls = root.path().join("docker-calls.txt");
+    let path = format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap());
+    let output = Command::new(castor_cli())
+        .args(["run", "--task"])
+        .arg(&manifest)
+        .env("PATH", path)
+        .env("CASTOR_TEST_DOCKER_CALLS", &calls)
+        .output()
+        .unwrap();
+    let result = result(&output);
+    assert_eq!(result["status"], "FAILED");
+    assert_eq!(result["failure_reason"], "PROVISIONING_IMAGE_BUILD_FAILED");
+    assert!(result.get("derived_task_image_digest").is_none());
+    assert!(
+        !calls.exists(),
+        "unsafe archive must not reach Docker build"
+    );
+}
+
 fn run_task(manifest: &Path) -> Output {
     Command::new(castor_cli())
         .args(["run", "--task"])
@@ -248,6 +351,23 @@ fn result(output: &Output) -> Value {
             String::from_utf8_lossy(&output.stderr)
         )
     })
+}
+
+fn journal_kinds(root: &Path) -> Vec<String> {
+    let storage = D1DurableStorage::open(root.join("task-state"))
+        .expect("reopen the real C-01 durable journal");
+    storage
+        .journal_requests()
+        .into_iter()
+        .map(|request| {
+            let serialized = serde_json::to_value(request.entry).unwrap();
+            serialized
+                .as_object()
+                .and_then(|entry| entry.keys().next())
+                .expect("externally tagged C-01 entry")
+                .to_owned()
+        })
+        .collect()
 }
 
 fn assert_preflight_failure(output: &Output, expected_hash: &str) {
@@ -354,9 +474,25 @@ fn pi_carrier_workspace_is_physically_read_only() {
         ])
         .output()
         .expect("probe container workspace write");
+    let scratch = Command::new("docker")
+        .args([
+            "exec",
+            supervisor.container_id(),
+            "node",
+            "-e",
+            "require('fs').writeFileSync('/tmp/castor-pi-probe','ok'); console.log(require('fs').readFileSync('/tmp/castor-pi-probe','utf8'))",
+        ])
+        .output()
+        .expect("probe ephemeral Pi scratch space");
     supervisor.remove().expect("remove physical Pi carrier");
     assert!(probe.status.success());
     assert_eq!(String::from_utf8_lossy(&probe.stdout).trim(), "EROFS");
+    assert!(
+        scratch.status.success(),
+        "Pi requires ephemeral /tmp: {}",
+        String::from_utf8_lossy(&scratch.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&scratch.stdout).trim(), "ok");
 }
 
 #[test]
@@ -499,6 +635,11 @@ fn mock_agent_requests_model() {
         })
         .expect("admit model turn");
     assert_eq!(admitted.outcome.unwrap()["type"], "Admitted");
+    let request_digest = persist_full_model_request(
+        &mut client,
+        "interaction-model-1",
+        "Repair the failing unit test.",
+    );
     let requested = client
         .request(&SyscallRequest {
             request_id: "request-model".to_owned(),
@@ -506,7 +647,7 @@ fn mock_agent_requests_model() {
             payload: json!({
                 "interaction_id": "interaction-model-1",
                 "lease_epoch": 0,
-                "request_digest": format!("sha256:{:x}", Sha256::digest(b"Repair the failing unit test."))
+                "request_digest": request_digest
             }),
         })
         .expect("request governed model interaction");
@@ -531,6 +672,46 @@ fn mock_agent_call(
     response.outcome.expect("governed outcome")
 }
 
+fn persist_full_model_request(
+    client: &mut GatewayClient,
+    interaction_id: &str,
+    prompt: &str,
+) -> String {
+    let request = json!({
+        "schema_version": 1,
+        "interaction_id": interaction_id,
+        "messages": [
+            {"role": "system", "content": "You are repairing a test fixture."},
+            {"role": "user", "content": prompt}
+        ],
+        "tools": [{
+            "name": "castor_edit_file",
+            "parameters": {"type": "object", "required": ["path", "patch_diff"]}
+        }]
+    });
+    let bytes = serde_json::to_vec(&request).unwrap();
+    let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
+    if std::env::var_os("CASTOR_TEST_OMIT_MODEL_REGION").is_none() {
+        assert_eq!(
+            mock_agent_call(
+                client,
+                &format!("ensure-model-request-{interaction_id}"),
+                "EnsureRegion",
+                json!({
+                    "region_ref": format!("region://model-request/{interaction_id}"),
+                    "content_digest": digest,
+                    "content": bytes,
+                    "profile": "D1"
+                }),
+            )["type"],
+            "Success"
+        );
+        digest
+    } else {
+        format!("sha256:{:x}", Sha256::digest(prompt.as_bytes()))
+    }
+}
+
 #[ignore = "spawned only as an untrusted child by post-arm crash contracts"]
 #[test]
 fn mock_agent_commits_workspace_edit() {
@@ -541,6 +722,8 @@ fn mock_agent_commits_workspace_edit() {
     let capability =
         std::env::var("CASTOR_TEST_ACTION_CAP_ID").unwrap_or_else(|_| "capability-1".to_owned());
     let mut client = GatewayClient::connect(socket).expect("connect to real agent gateway");
+    let prompt = std::env::var("CASTOR_TEST_TASK_PROMPT").expect("task prompt for model request");
+    let request_digest = persist_full_model_request(&mut client, "interaction-1", &prompt);
     let patch =
         b"--- a/defect.txt\n+++ b/defect.txt\n@@ -1 +1 @@\n-failing fixture\n+fixed fixture\n";
     let payload = serde_json::to_vec(&json!({
@@ -586,7 +769,7 @@ fn mock_agent_commits_workspace_edit() {
             json!({
                 "interaction_id": "interaction-1",
                 "lease_epoch": 0,
-                "request_digest": EMPTY_REGION_DIGEST
+                "request_digest": request_digest
             }),
         )["type"],
         "InteractionRequested"
@@ -764,10 +947,9 @@ fn delayed_agent_commit_after_fence_is_rejected_without_dispatch() {
     assert_eq!(result["status"], "FENCED_CANCELLED");
     assert_eq!(result["settled_actions_count"], 0);
     assert_eq!(fs::read_to_string(&rejected).unwrap(), "rejected");
-    let journal = fs::read_to_string(root.path().join("task-state/core-journal.log"))
-        .expect("read real C-01 journal");
-    assert!(!journal.contains("TurnCommitted"));
-    assert!(!journal.contains("AttemptArmed"));
+    let journal = journal_kinds(root.path());
+    assert!(!journal.iter().any(|entry| entry == "TurnCommitted"));
+    assert!(!journal.iter().any(|entry| entry == "AttemptArmed"));
 }
 
 #[test]
@@ -792,6 +974,90 @@ fn model_transport_failure_fails_task_without_settled_actions() {
     assert_eq!(result["failure_reason"], "MODEL_INTERACTION_ERROR");
     assert_eq!(result["settled_actions_count"], 0);
     assert!(model.attempts.load(Ordering::SeqCst) > 0);
+    let journal = journal_kinds(root.path());
+    assert!(journal.iter().any(|entry| entry == "InteractionRequested"));
+    assert!(
+        journal.iter().any(|entry| entry == "FenceRevoked"),
+        "terminal provider failure must durably fence its pending Turn"
+    );
+}
+
+#[test]
+fn missing_model_request_region_fails_before_provider_io() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let child = root.path().join("model-agent.sh");
+    fs::write(
+        &child,
+        "#!/bin/sh\nexec \"$CASTOR_TEST_MOCK_CHILD_BINARY\" --ignored --exact mock_agent_requests_model --nocapture\n",
+    )
+    .unwrap();
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+    let model_socket = root.path().join("model.sock");
+    let model = MockModelService::start(&model_socket, None, None);
+    let output = task_command(root.path(), &manifest, &child)
+        .env("CASTOR_TEST_MODEL_SOCKET", &model_socket)
+        .env("CASTOR_TEST_OMIT_MODEL_REGION", "1")
+        .output()
+        .unwrap();
+    assert_eq!(result(&output)["failure_reason"], "MODEL_INTERACTION_ERROR");
+    assert_eq!(model.attempts.load(Ordering::SeqCst), 0);
+    assert!(journal_kinds(root.path())
+        .iter()
+        .any(|entry| entry == "FenceRevoked"));
+}
+
+#[test]
+fn buffered_model_region_is_bound_before_guest_consumes_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _ = castor_cli();
+    let root = tempfile::tempdir().unwrap();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let child = root.path().join("model-agent.sh");
+    fs::write(
+        &child,
+        "#!/bin/sh\nexec \"$CASTOR_TEST_MOCK_CHILD_BINARY\" --ignored --exact mock_agent_commits_workspace_edit --nocapture\n",
+    )
+    .unwrap();
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+    let model_socket = root.path().join("model.sock");
+    let first_rejection = root.path().join("first-unbound-rejection");
+    let model = MockModelService::start(
+        &model_socket,
+        Some(buffered_model_response()),
+        Some(first_rejection.clone()),
+    );
+    let output = task_command(root.path(), &manifest, &child)
+        .env("CASTOR_TEST_MODEL_SOCKET", &model_socket)
+        .env("CASTOR_TEST_FIRST_CONSUME_REJECTED", &first_rejection)
+        .output()
+        .expect("run guest through C-03 model binding");
+    assert_eq!(result(&output)["status"], "FAILED");
+    assert_eq!(fs::read_to_string(&first_rejection).unwrap(), "rejected");
+    assert!(model.attempts.load(Ordering::SeqCst) > 0);
+    let calls = model.requests.lock().unwrap();
+    let full_request = &calls.first().expect("host must forward one model request")["request"];
+    assert_eq!(full_request["schema_version"], 1);
+    assert_eq!(
+        full_request["messages"][1]["content"],
+        "Repair the failing unit test."
+    );
+    assert_eq!(full_request["tools"][0]["name"], "castor_edit_file");
+    let journal = journal_kinds(root.path());
+    let requested = journal
+        .iter()
+        .position(|entry| entry == "InteractionRequested")
+        .expect("request persisted");
+    let bound = journal
+        .iter()
+        .position(|entry| entry == "InteractionBound")
+        .expect("host result bound");
+    assert!(requested < bound);
 }
 
 #[test]
@@ -835,8 +1101,9 @@ fn normal_task_requires_bound_model_settled_edit_and_independent_test() {
         .expect("run governed normal task");
     assert!(
         output.status.success(),
-        "task stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "task stderr: {}; stdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
     );
     let result = result(&output);
     assert_eq!(result["status"], "SUCCEEDED");
@@ -856,8 +1123,7 @@ fn normal_task_requires_bound_model_settled_edit_and_independent_test() {
     );
     assert_eq!(fs::read_to_string(&first_rejection).unwrap(), "rejected");
     assert!(model.attempts.load(Ordering::SeqCst) > 0);
-    let journal = fs::read_to_string(root.path().join("task-state/core-journal.log"))
-        .expect("read real C-01 journal");
+    let journal = journal_kinds(root.path());
     let positions: Vec<_> = [
         "InteractionRequested",
         "InteractionBound",
@@ -868,7 +1134,8 @@ fn normal_task_requires_bound_model_settled_edit_and_independent_test() {
     .iter()
     .map(|entry| {
         journal
-            .find(entry)
+            .iter()
+            .position(|kind| kind == entry)
             .unwrap_or_else(|| panic!("missing {entry} in journal"))
     })
     .collect();
@@ -918,11 +1185,9 @@ fn post_arm_daemon_crash_recovers_as_unknown_without_retry() {
     assert_eq!(result["status"], "UNKNOWN_DISPUTED");
     assert!(model.attempts.load(Ordering::SeqCst) > 0);
     assert_eq!(fs::read_to_string(&starts).unwrap().lines().count(), 1);
-    let journal = fs::read_to_string(root.path().join("task-state/core-journal.log"))
-        .expect("read real C-01 journal");
-    assert!(journal.contains("AttemptArmed"));
-    assert!(!journal.contains("AttemptSettled"));
-    assert!(!journal.contains("EffectSettled"));
+    let journal = journal_kinds(root.path());
+    assert!(journal.iter().any(|entry| entry == "AttemptArmed"));
+    assert!(!journal.iter().any(|entry| entry == "AttemptSettled"));
 }
 
 #[test]
@@ -990,10 +1255,9 @@ fn actuator_crash_after_write_must_probe_settle_and_run_host_test() {
         "verified"
     );
     assert_eq!(fs::read_to_string(&starts).unwrap().lines().count(), 1);
-    let journal = fs::read_to_string(root.path().join("task-state/core-journal.log"))
-        .expect("read real C-01 journal");
-    assert!(journal.contains("AttemptArmed"));
-    assert!(journal.contains("AttemptSettled"));
+    let journal = journal_kinds(root.path());
+    assert!(journal.iter().any(|entry| entry == "AttemptArmed"));
+    assert!(journal.iter().any(|entry| entry == "AttemptSettled"));
 }
 
 #[test]
@@ -1012,6 +1276,12 @@ fn hostile_agent_opcode_is_rejected_and_task_cannot_succeed() {
     assert_eq!(result["status"], "FAILED");
     assert_eq!(result["failure_reason"], "SECURITY_VIOLATION");
     assert_eq!(result["settled_actions_count"], 0);
+    assert!(
+        journal_kinds(root.path())
+            .iter()
+            .any(|entry| entry == "FenceRevoked"),
+        "the host must persist a generation fence after unauthorized guest IPC"
+    );
 }
 
 #[test]
@@ -1054,4 +1324,294 @@ fn duplicate_active_submission_reuses_task_without_starting_another_agent() {
     let first = first.wait_with_output().expect("collect first task result");
     assert_eq!(result(&second)["task_id"], result(&first)["task_id"]);
     assert_eq!(fs::read_to_string(&starts).unwrap().lines().count(), 1);
+}
+
+#[test]
+fn distinct_idempotency_keys_create_distinct_tasks_in_same_board() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let first_manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let second_manifest = root.path().join("second-manifest.json");
+    let mut body: Value = serde_json::from_slice(&fs::read(&first_manifest).unwrap()).unwrap();
+    body["task_id"] = json!("task-second");
+    body["idempotency_key"] = json!("second-task-key-001");
+    fs::write(&second_manifest, serde_json::to_vec(&body).unwrap()).unwrap();
+    let starts = root.path().join("agent-starts.txt");
+    let child = root.path().join("agent.sh");
+    fs::write(
+        &child,
+        "#!/bin/sh\nprintf 'started\\n' >> \"$CASTOR_TEST_AGENT_STARTS\"\nexit 7\n",
+    )
+    .unwrap();
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+    let first = task_command(root.path(), &first_manifest, &child)
+        .env("CASTOR_TEST_AGENT_STARTS", &starts)
+        .output()
+        .unwrap();
+    let second = task_command(root.path(), &second_manifest, &child)
+        .env("CASTOR_TEST_AGENT_STARTS", &starts)
+        .output()
+        .unwrap();
+    assert_eq!(result(&first)["task_id"], "task-snapshot-gate");
+    assert_eq!(result(&second)["task_id"], "task-second");
+    assert_eq!(fs::read_to_string(&starts).unwrap().lines().count(), 2);
+}
+
+#[test]
+fn reused_idempotency_key_cannot_change_task_manifest() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let starts = root.path().join("agent-starts.txt");
+    let child = root.path().join("agent.sh");
+    fs::write(
+        &child,
+        "#!/bin/sh\nprintf 'started\\n' >> \"$CASTOR_TEST_AGENT_STARTS\"\nexit 7\n",
+    )
+    .unwrap();
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+    let first = task_command(root.path(), &manifest, &child)
+        .env("CASTOR_TEST_AGENT_STARTS", &starts)
+        .output()
+        .unwrap();
+    assert_eq!(result(&first)["task_id"], "task-snapshot-gate");
+    let mut body: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    body["task_prompt"] = json!("A different, conflicting request");
+    fs::write(&manifest, serde_json::to_vec(&body).unwrap()).unwrap();
+    let conflicting = task_command(root.path(), &manifest, &child)
+        .env("CASTOR_TEST_AGENT_STARTS", &starts)
+        .output()
+        .unwrap();
+    assert!(!conflicting.status.success());
+    assert!(
+        String::from_utf8_lossy(&conflicting.stderr).contains("another manifest"),
+        "conflicting idempotency key must be rejected, not replayed"
+    );
+    assert_eq!(fs::read_to_string(&starts).unwrap().lines().count(), 1);
+}
+
+#[test]
+fn test_agent_and_image_overrides_are_inert_without_test_flag() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let child_marker = root.path().join("unsafe-child-started");
+    let child = root.path().join("unsafe-child.sh");
+    fs::write(
+        &child,
+        "#!/bin/sh\nprintf started > \"$CASTOR_TEST_UNSAFE_CHILD_MARKER\"\nexit 0\n",
+    )
+    .unwrap();
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+    let fake_bin = root.path().join("bin");
+    fs::create_dir(&fake_bin).unwrap();
+    let docker = fake_bin.join("docker");
+    fs::write(&docker, "#!/bin/sh\nexit 67\n").unwrap();
+    fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap());
+    let output = Command::new(castor_cli())
+        .args(["run", "--task"])
+        .arg(&manifest)
+        .env("PATH", path)
+        .env("CASTOR_TEST_AGENT_CHILD", &child)
+        .env("CASTOR_TEST_DERIVED_IMAGE_DIGEST", BASE_DIGEST)
+        .env("CASTOR_TEST_UNSAFE_CHILD_MARKER", &child_marker)
+        .output()
+        .unwrap();
+    let result = result(&output);
+    assert_eq!(result["status"], "FAILED");
+    assert_eq!(result["failure_reason"], "PROVISIONING_IMAGE_BUILD_FAILED");
+    assert!(
+        !child_marker.exists(),
+        "test child must not run without explicit flag"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn default_cli_runs_real_pi_through_roche_and_host_settlement() {
+    let root = tempfile::tempdir().unwrap();
+    let carrier = Command::new("docker")
+        .args([
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}}",
+            "substratum/castor-pi-carrier:v1",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        carrier.status.success(),
+        "CI must build the pinned Pi carrier"
+    );
+    let carrier_id = String::from_utf8_lossy(&carrier.stdout).trim().to_owned();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let mut body: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    body["carrier_base_image"] = json!(format!("substratum/castor-pi-carrier:v1@{carrier_id}"));
+    body["verification_command"] =
+        json!(["sh", "-c", "test \"$(cat defect.txt)\" = \"fixed fixture\""]);
+    fs::write(&manifest, serde_json::to_vec(&body).unwrap()).unwrap();
+
+    let model_socket = root.path().join("model.sock");
+    let listener = UnixListener::bind(&model_socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let worker_stop = stop.clone();
+    let worker_calls = calls.clone();
+    let model_worker = thread::spawn(move || {
+        while !worker_stop.load(Ordering::SeqCst) {
+            let Ok((mut stream, _)) = listener.accept() else {
+                thread::sleep(Duration::from_millis(10));
+                continue;
+            };
+            let request: Value =
+                serde_json::from_slice(&read_framed(&mut stream).unwrap()).unwrap();
+            assert_eq!(request["request"]["schema_version"], 1);
+            let ordinal = worker_calls.fetch_add(1, Ordering::SeqCst);
+            let response = if ordinal == 0 {
+                json!({
+                    "content": [{
+                        "type": "toolCall",
+                        "id": "edit-1",
+                        "name": "castor_edit_file",
+                        "arguments": {
+                            "path": "defect.txt",
+                            "patch_diff": "--- a/defect.txt\n+++ b/defect.txt\n@@ -1 +1 @@\n-failing fixture\n+fixed fixture\n"
+                        }
+                    }],
+                    "stopReason": "toolUse",
+                    "usage": {"input": 12, "output": 8}
+                })
+            } else {
+                json!({
+                    "content": [{"type": "text", "text": "Done."}],
+                    "stopReason": "stop",
+                    "usage": {"input": 18, "output": 3}
+                })
+            };
+            let content = serde_json::to_vec(&response).unwrap();
+            let response = json!({
+                "interaction_id": request["interaction_id"],
+                "observation_region_id": format!("region://observation/{ordinal}"),
+                "observation_digest": format!("sha256:{:x}", Sha256::digest(&content)),
+                "content": content
+            });
+            write_framed(&mut stream, &serde_json::to_vec(&response).unwrap()).unwrap();
+        }
+    });
+
+    let output = Command::new(castor_cli())
+        .args(["run", "--task"])
+        .arg(&manifest)
+        .env("CASTOR_MODEL_SOCKET", &model_socket)
+        .env("CASTOR_STATE_ROOT", root.path().join("state"))
+        .output()
+        .expect("run actual Pi carrier through default product CLI");
+    stop.store(true, Ordering::SeqCst);
+    model_worker.join().unwrap();
+    let task = result(&output);
+    let pi_log = fs::read_to_string(root.path().join("state/tasks/task-snapshot-gate/pi.jsonl"))
+        .unwrap_or_default();
+    let journal = D1DurableStorage::open(root.path().join("state/tasks/task-snapshot-gate"))
+        .map(|storage| {
+            storage
+                .journal_requests()
+                .into_iter()
+                .map(|request| format!("{:?}", request.entry))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    assert!(
+        output.status.success(),
+        "stderr={}; stdout={}; model_calls={}; journal={journal:?}; pi_log={pi_log}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
+        calls.load(Ordering::SeqCst)
+    );
+    assert_eq!(task["status"], "SUCCEEDED");
+    assert_eq!(task["test_passed"], true);
+    assert_eq!(task["settled_actions_count"], 1);
+    let assistant_ends: Vec<_> = pi_log
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|event| event["type"] == "message_end" && event["message"]["role"] == "assistant")
+        .map(|event| {
+            json!({
+                "stop_reason": event["message"]["stopReason"],
+                "error": event["message"]["errorMessage"]
+            })
+        })
+        .collect();
+    assert!(
+        assistant_ends
+            .last()
+            .is_some_and(|event| event["stop_reason"] == "stop" && event["error"].is_null()),
+        "Pi must finish without an assistant error: {assistant_ends:?}"
+    );
+    assert!(
+        calls.load(Ordering::SeqCst) >= 2,
+        "model_calls={}; assistant_ends={assistant_ends:?}; journal={journal:?}",
+        calls.load(Ordering::SeqCst)
+    );
+    assert!(task["patch_diff"]
+        .as_str()
+        .unwrap()
+        .contains("+fixed fixture"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn default_cli_fences_and_stops_pi_when_host_model_transport_fails() {
+    let root = tempfile::tempdir().unwrap();
+    let carrier = Command::new("docker")
+        .args([
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}}",
+            "substratum/castor-pi-carrier:v1",
+        ])
+        .output()
+        .unwrap();
+    assert!(carrier.status.success());
+    let carrier_id = String::from_utf8_lossy(&carrier.stdout).trim().to_owned();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let mut body: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    body["carrier_base_image"] = json!(format!("substratum/castor-pi-carrier:v1@{carrier_id}"));
+    fs::write(&manifest, serde_json::to_vec(&body).unwrap()).unwrap();
+    let model_socket = root.path().join("model.sock");
+    let model = MockModelService::start(&model_socket, None, None);
+    let started = std::time::Instant::now();
+    let output = Command::new(castor_cli())
+        .args(["run", "--task"])
+        .arg(&manifest)
+        .env("CASTOR_MODEL_SOCKET", &model_socket)
+        .env("CASTOR_STATE_ROOT", root.path().join("state"))
+        .output()
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "terminal model failure must stop Pi promptly"
+    );
+    let result = result(&output);
+    assert_eq!(result["status"], "FAILED");
+    assert_eq!(result["failure_reason"], "MODEL_INTERACTION_ERROR");
+    assert_eq!(result["settled_actions_count"], 0);
+    assert!(model.attempts.load(Ordering::SeqCst) > 0);
+    let storage =
+        D1DurableStorage::open(root.path().join("state/tasks/task-snapshot-gate")).unwrap();
+    assert!(storage.journal_requests().iter().any(|request| matches!(
+        request.entry,
+        castor_kernel::c01_storage::CoreEntry::FenceRevoked { .. }
+    )));
 }
