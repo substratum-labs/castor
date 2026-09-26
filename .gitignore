@@ -7,8 +7,6 @@ __pycache__/
 *.egg
 dist/
 build/
-target/
-kernel/target/
 
 # Virtual environments
 .venv/

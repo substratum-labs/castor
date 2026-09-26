@@ -10,23 +10,34 @@
 # Uploads / archives evidence on every outcome.
 #
 
-set -uo pipefail
+set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EVIDENCE_DIR="${EVIDENCE_DIR:-$REPO_ROOT/evidence}"
 STAGED_DIR="${STAGED_DIR:-/tmp/task-fixture-t337e}"
 CASTOR_STATE_ROOT="${CASTOR_STATE_ROOT:-/tmp/castor-t337e-state}"
 CASTOR_MODEL_SOCKET="${CASTOR_MODEL_SOCKET:-/tmp/castor-model-t337e.sock}"
+CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/castor-cargo-target}"
 REQUIRED_DISK_KB="${REQUIRED_DISK_KB:-11000000}" # ~10.5 GiB minimum free
+
+compute_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
 
 echo "=========================================================="
 echo "Starting T-337-E Native Linux Host Runner"
 echo "Repository Root: $REPO_ROOT"
 echo "Evidence Directory: $EVIDENCE_DIR"
+echo "Cargo Target Dir: $CARGO_TARGET_DIR"
 echo "=========================================================="
 
 mkdir -p "$EVIDENCE_DIR"
 mkdir -p "$STAGED_DIR"
+mkdir -p "$CARGO_TARGET_DIR"
 rm -rf "$CASTOR_STATE_ROOT"
 mkdir -p "$CASTOR_STATE_ROOT"
 
@@ -117,13 +128,14 @@ echo "Disk headroom check PASSED: sufficient space for build, images, and model.
 # ----------------------------------------------------------------------
 echo "=== Gate 2: Castor and Castord Binaries Preflight ==="
 
+export CARGO_TARGET_DIR
 if ! command -v castor >/dev/null 2>&1 || ! command -v castord >/dev/null 2>&1; then
-  if [ -x "$REPO_ROOT/kernel/target/release/castor" ] && [ -x "$REPO_ROOT/kernel/target/release/castord" ]; then
-    export PATH="$REPO_ROOT/kernel/target/release:$PATH"
+  if [ -x "$CARGO_TARGET_DIR/release/castor" ] && [ -x "$CARGO_TARGET_DIR/release/castord" ]; then
+    export PATH="$CARGO_TARGET_DIR/release:$PATH"
   else
-    echo "Building release binaries for castor and castord..."
+    echo "Building release binaries for castor and castord (CARGO_TARGET_DIR=$CARGO_TARGET_DIR)..."
     cargo build --release --manifest-path "$REPO_ROOT/kernel/Cargo.toml" --bin castor --bin castord
-    export PATH="$REPO_ROOT/kernel/target/release:$PATH"
+    export PATH="$CARGO_TARGET_DIR/release:$PATH"
   fi
 fi
 
@@ -155,7 +167,7 @@ fi
 
 cp "$FIXTURE_SRC/workspace_snapshot.tar.gz" "$STAGED_DIR/workspace_snapshot.tar.gz"
 
-ACTUAL_FIXTURE_SHA=$(sha256sum "$STAGED_DIR/workspace_snapshot.tar.gz" | awk '{print $1}')
+ACTUAL_FIXTURE_SHA=$(compute_sha256 "$STAGED_DIR/workspace_snapshot.tar.gz")
 EXPECTED_FIXTURE_SHA="d64c1fb8f73530b81e43d621f2c9afad9ef2cc5c188c06ec5b0db7c389c4f99f"
 
 if [ "$ACTUAL_FIXTURE_SHA" != "$EXPECTED_FIXTURE_SHA" ]; then
@@ -212,6 +224,28 @@ if [ "$AVAILABLE_KB" -lt 7500000 ]; then # ~7.2 GiB required for 6.6 GiB model
   exit 1
 fi
 
+# Ensure Ollama binary is installed; if missing, install pinned official v0.34.4
+if ! command -v ollama >/dev/null 2>&1; then
+  echo "Ollama binary not found on host. Installing pinned official v0.34.4 Linux amd64..."
+  OLLAMA_TAR="/tmp/ollama-linux-amd64.tar.zst"
+  OLLAMA_URL="https://github.com/ollama/ollama/releases/download/v0.34.4/ollama-linux-amd64.tar.zst"
+  EXPECTED_OLLAMA_SHA="c238986e61d40c0cc5f4a9b9e40b9eea104350b77efa34741fc134e105cb9533"
+  curl -fL "$OLLAMA_URL" -o "$OLLAMA_TAR"
+  ACTUAL_OLLAMA_SHA=$(compute_sha256 "$OLLAMA_TAR")
+  if [ "$ACTUAL_OLLAMA_SHA" != "$EXPECTED_OLLAMA_SHA" ]; then
+    echo "ERROR: Pinned Ollama asset SHA-256 mismatch!" >&2
+    echo "Expected: $EXPECTED_OLLAMA_SHA" >&2
+    echo "Actual:   $ACTUAL_OLLAMA_SHA" >&2
+    exit 1
+  fi
+  sudo tar --zstd -xf "$OLLAMA_TAR" -C /usr/local
+  rm -f "$OLLAMA_TAR"
+fi
+
+OLLAMA_BIN_VERSION=$(ollama --version 2>/dev/null || ollama version 2>/dev/null || echo "unknown")
+echo "Ollama Binary Version: $OLLAMA_BIN_VERSION"
+echo "Ollama Binary Version: $OLLAMA_BIN_VERSION" >> "$EVIDENCE_DIR/environment.txt"
+
 # Ensure Ollama daemon is active
 if ! curl -s http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
   echo "Starting ollama serve in background..."
@@ -238,10 +272,27 @@ if ! ollama list | grep -q "qwen3.5:9b"; then
 fi
 ollama list
 
-# Launch bounded audited adapter on host
+# Record model metadata into environment evidence
+echo "" >> "$EVIDENCE_DIR/environment.txt"
+echo "=== Model Metadata Evidence ===" >> "$EVIDENCE_DIR/environment.txt"
+MODEL_TAGS=$(curl -s http://127.0.0.1:11434/api/tags 2>/dev/null || true)
+MODEL_DIGEST=$(python3 -c "
+import json
+try:
+    data = json.loads('''$MODEL_TAGS''')
+    models = [m for m in data.get('models', []) if 'qwen3.5:9b' in m.get('name', '')]
+    print(models[0].get('digest', 'unknown') if models else 'unknown')
+except Exception:
+    print('unknown')
+" 2>/dev/null || echo "unknown")
+echo "Model Name: qwen3.5:9b" >> "$EVIDENCE_DIR/environment.txt"
+echo "Model Digest: $MODEL_DIGEST" >> "$EVIDENCE_DIR/environment.txt"
+ollama show qwen3.5:9b >> "$EVIDENCE_DIR/environment.txt" 2>/dev/null || true
+
+# Launch audited adapter wrapper on host
 rm -f "$CASTOR_MODEL_SOCKET"
-echo "Starting bounded host Ollama adapter on $CASTOR_MODEL_SOCKET..."
-node "$REPO_ROOT/kernel/carrier/pi/host/ollama_model_adapter.mjs" "$CASTOR_MODEL_SOCKET" > "$EVIDENCE_DIR/adapter.log" 2>&1 &
+echo "Starting audited host Ollama adapter on $CASTOR_MODEL_SOCKET..."
+node "$REPO_ROOT/scripts/audited_adapter_wrapper.mjs" "$CASTOR_MODEL_SOCKET" "$EVIDENCE_DIR" > "$EVIDENCE_DIR/adapter.log" 2>&1 &
 ADAPTER_PID=$!
 
 for i in $(seq 1 30); do
@@ -266,6 +317,7 @@ export CASTOR_STATE_ROOT
 export CASTOR_MODEL_SOCKET
 
 echo "Running: castor run --task $STAGED_MANIFEST"
+# Narrowly disable -e around the bounded castor run so its exit code can be captured
 set +e
 timeout -s TERM -k 10 300 castor run --task "$STAGED_MANIFEST" > "$EVIDENCE_DIR/task_result.raw.txt" 2> "$EVIDENCE_DIR/castor_stderr.log"
 CASTOR_EXIT=$?
@@ -279,31 +331,130 @@ echo "Castor process exited with code: $CASTOR_EXIT"
 # ----------------------------------------------------------------------
 echo "=== Gate 6: Evidence Collection and Host Verification ==="
 
-# Preserve state directory
+# Preserve entire state directory (journal, regions, quarantine)
 mkdir -p "$EVIDENCE_DIR/state"
 if [ -d "$CASTOR_STATE_ROOT" ]; then
   cp -a "$CASTOR_STATE_ROOT/." "$EVIDENCE_DIR/state/" 2>/dev/null || true
 fi
 
+# Preserve Pi log if generated by container run
+PI_CONTAINER_LOG="$CASTOR_STATE_ROOT/tasks/task-t337e-duration-fix/pi.jsonl"
+if [ -f "$PI_CONTAINER_LOG" ]; then
+  cp "$PI_CONTAINER_LOG" "$EVIDENCE_DIR/pi.jsonl"
+  echo "Preserved Pi container log to $EVIDENCE_DIR/pi.jsonl"
+else
+  echo "Note: Pi log not generated at $PI_CONTAINER_LOG (omitted, not falsely claimed)"
+fi
+
 # Parse task result JSON if valid
+TASK_RESULT_JSON="$EVIDENCE_DIR/task_result.json"
 python3 -c "
 import json, sys
 try:
     with open('$EVIDENCE_DIR/task_result.raw.txt') as f:
         data = json.load(f)
-    with open('$EVIDENCE_DIR/task_result.json', 'w') as f:
+    with open('$TASK_RESULT_JSON', 'w') as f:
         json.dump(data, f, indent=2)
     print('Parsed task_result.json successfully.')
     print('Status: ' + str(data.get('status')))
     print('Failure Reason: ' + str(data.get('failure_reason')))
     print('Settled Actions: ' + str(data.get('settled_actions_count')))
     print('Committed Turns: ' + str(data.get('committed_turns')))
-    if data.get('patch_diff'):
-        with open('$EVIDENCE_DIR/applied.diff', 'w') as f:
-            f.write(data['patch_diff'])
 except Exception as e:
     print('Note: Could not parse task_result.raw.txt as JSON: ' + str(e))
 " || true
+
+# Independent Host Verification
+VERIFY_DIR=$(mktemp -d /tmp/t337e-verify.XXXXXX)
+HOST_VERIFY_LOG="$EVIDENCE_DIR/host_verification.txt"
+
+{
+  echo "=========================================================="
+  echo "T-337-E Independent Host Verification Report"
+  echo "Timestamp: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  echo "Fixture Tarball: $REPO_ROOT/fixtures/t337e_duration/workspace_snapshot.tar.gz"
+  echo "Expected Fixture SHA256: $EXPECTED_FIXTURE_SHA"
+  echo "=========================================================="
+
+  # 1. Baseline tests in isolated directory
+  echo ""
+  echo "--- Step 1: Baseline Test Execution (Independent Extract) ---"
+  BASELINE_DIR="$VERIFY_DIR/baseline"
+  mkdir -p "$BASELINE_DIR"
+  tar -xzf "$REPO_ROOT/fixtures/t337e_duration/workspace_snapshot.tar.gz" -C "$BASELINE_DIR"
+
+  set +e
+  BASELINE_OUT=$(cd "$BASELINE_DIR" && python3 -m unittest tests/test_duration.py 2>&1)
+  BASELINE_EXIT=$?
+  set -e
+
+  echo "Baseline command: python3 -m unittest tests/test_duration.py"
+  echo "Baseline exit code: $BASELINE_EXIT"
+  echo "Baseline output:"
+  echo "$BASELINE_OUT"
+
+  # 2. Extract patch_diff from TaskResult if provided
+  echo ""
+  echo "--- Step 2: TaskResult Patch Inspection ---"
+  PATCH_DIFF=""
+  if [ -f "$TASK_RESULT_JSON" ]; then
+    PATCH_DIFF=$(python3 -c "
+import json
+try:
+    with open('$TASK_RESULT_JSON') as f:
+        d = json.load(f)
+    p = d.get('patch_diff')
+    if p:
+        sys.stdout.write(p)
+except Exception:
+    pass
+" 2>/dev/null || true)
+  fi
+
+  if [ -n "$PATCH_DIFF" ]; then
+    echo "$PATCH_DIFF" > "$EVIDENCE_DIR/attempted_patch.diff"
+    PATCH_SHA=$(compute_sha256 "$EVIDENCE_DIR/attempted_patch.diff")
+    echo "TaskResult provided patch_diff. Saved to $EVIDENCE_DIR/attempted_patch.diff"
+    echo "Attempted Patch SHA256: $PATCH_SHA"
+
+    PATCHED_DIR="$VERIFY_DIR/patched"
+    mkdir -p "$PATCHED_DIR"
+    tar -xzf "$REPO_ROOT/fixtures/t337e_duration/workspace_snapshot.tar.gz" -C "$PATCHED_DIR"
+    (cd "$PATCHED_DIR" && git init -q && git config user.name "HostVerifier" && git config user.email "verifier@example.com" && git add . && git commit -q -m "baseline")
+
+    set +e
+    GIT_APPLY_OUT=$(cd "$PATCHED_DIR" && git apply --whitespace=nowarn "$EVIDENCE_DIR/attempted_patch.diff" 2>&1)
+    GIT_APPLY_EXIT=$?
+    set -e
+
+    echo "git apply exit code: $GIT_APPLY_EXIT"
+    echo "git apply output: ${GIT_APPLY_OUT:-<clean>}"
+
+    echo ""
+    echo "--- Step 3: Post-Patch Test Rerun ---"
+    if [ "$GIT_APPLY_EXIT" -eq 0 ]; then
+      set +e
+      POST_PATCH_OUT=$(cd "$PATCHED_DIR" && python3 -m unittest tests/test_duration.py 2>&1)
+      POST_PATCH_EXIT=$?
+      set -e
+      echo "Post-patch unittest exit code: $POST_PATCH_EXIT"
+      echo "Post-patch unittest output:"
+      echo "$POST_PATCH_OUT"
+    else
+      echo "Skipping post-patch unittest because git apply failed (exit code $GIT_APPLY_EXIT)."
+    fi
+  else
+    echo "TaskResult does not supply patch_diff (patch_diff is null or omitted)."
+    echo "attempted_patch.diff: ABSENT (truthfully not produced; no patch applied)"
+  fi
+
+  echo ""
+  echo "=========================================================="
+  echo "Verification Summary Complete"
+  echo "=========================================================="
+} | tee "$HOST_VERIFY_LOG"
+
+rm -rf "$VERIFY_DIR"
 
 # Inspect disk space after run
 {

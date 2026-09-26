@@ -1,13 +1,15 @@
 # T-337-E: Physical Pi One-Shot Execution Plan & Reviewable Staging
 
-## 1. Executive Summary & Material Corrections
+## 1. Executive Summary & Review Revisions
 
 This document defines the reviewable staging and execution plan for **T-337-E** ([EPIC-39 / Phase 4] Physical Pi Task, Review, and Product Decision).
 
-This revision corrects two material errors from the preliminary plan:
-1. **Workflow Trigger Mechanism**: GitHub documentation specifies that `workflow_dispatch` workflows only execute if the workflow definition already exists on the default repository branch (`main`). Because this work is staged on a feature PR branch, `workflow_dispatch` cannot be used. We replace it with a dedicated `pull_request` labeled-trigger workflow (`.github/workflows/t337e-physical-gate.yml`) strictly gated by an explicit one-use label (`run-t337e-physical`) and exact head/base branch assertions. No push, PR open, PR synchronize, or ordinary label event can invoke live inference.
-2. **Runner Disk Sizing & Headroom Strategy**: A runner with ~14 GB available root disk cannot become 45 GB free from simple toolchain cleanup. We do not claim more disk than the runner actually provides. The runner executes safe package cleanup, inspects `df -k /`, and strictly fails before model pull if available headroom is less than 11 GB (sufficient for the 6.6 GB `qwen3.5:9b` model, release binaries, and carrier image).
-3. **Certified Failure Matrix**: In the prior plan, an interaction budget exhaustion following an armed edit was erroneously described as ordinary `FAILED(MODEL_INTERACTION_ERROR)`. Castor's supervisor architecture dictates that any armed action lacking a trusted settlement receipt (e.g. C-05 `NotApplied` / `VerifiableNonExecution` or `Applied` / `Confirmed`) must be classified as **`UNKNOWN_DISPUTED`** (`ARMED_UNSETTLED_EFFECT`), retaining all workspace and journal evidence for forensic review.
+This document incorporates all blocking review findings:
+1. **Workflow Trigger & Label Management**: A dedicated `pull_request` labeled-trigger workflow (`.github/workflows/t337e-physical-gate.yml`) is strictly gated by an explicit one-use label (`run-t337e-physical`) and exact head/base branch assertions. The workflow strictly consumes and verifies label removal via `gh pr edit` before any model pull or execution (without ignoring errors via `|| true`), guaranteeing single-use semantics. In environments where automated PR mutation is disallowed, `pull-requests: write` may be omitted and manual maintainer label management applied truthfully.
+2. **Pinned Ollama Asset Verification**: Replaced unverified remote installer scripts (`curl | sh`) with pinned official Ollama v0.34.4 Linux amd64 `tar.zst` release assets from GitHub Releases verified against SHA-256 `c238986e61d40c0cc5f4a9b9e40b9eea104350b77efa34741fc134e105cb9533`. Ollama binary version and model ID/digest are permanently recorded in environment evidence.
+3. **Audited Host Adapter & Complete Evidence Bundle**: Integrated an audited wrapper (`scripts/audited_adapter_wrapper.mjs`) around the versioned host model adapter to log `adapter_events.jsonl`, count and log each unique Ollama HTTP call in `ollama_calls.jsonl`, enforce bounded `num_predict <= 512`, record stop reasons/usage/latencies, and generate `adapter_summary.json` without logging secrets.
+4. **Independent Post-Run Host Verification**: Post-run verification extracts the baseline fixture to an isolated directory and executes all 7 tests. If `TaskResult` supplies `patch_diff`, the exact patch is saved to `attempted_patch.diff`, verified with `git apply`, and retested, recording all exit codes and SHA digests in `host_verification.txt`. Entire task-state journal, regions, and Pi container logs are preserved. No absent evidence is falsely claimed.
+5. **Clean Working Tree & Isolated Build Artifacts**: Reverted unsolicited `.gitignore` additions; builds use `CARGO_TARGET_DIR` under temp to prevent repository pollution.
 
 ---
 
@@ -15,12 +17,13 @@ This revision corrects two material errors from the preliminary plan:
 
 | Scenario / Failure Mode | Detection Mechanism | Castor / Adapter Handling | Certified Task Outcome | Evidence Retained |
 | :--- | :--- | :--- | :--- | :--- |
-| **Clean Patch & Test Pass** | Actuator + Verification Command | Actuator validates with `git apply --check`, applies patch, commits turn, and signs HMAC receipt. All 7 duration tests pass. | **`SUCCEEDED`**<br>`settled_actions_count: 1`<br>`committed_turns: [1]` | Applied patch diff, passing test log, journal. |
-| **Invalid Patch Rejected by Actuator** | Actuator `validate_patch` (`git apply --check`) | Actuator certifies `NotApplied` / `VerifiableNonExecution` with HMAC-signed receipt. | **`FAILED(PATCH_VALIDATION_FAILED)`**<br>`settled_actions_count: 1`<br>`committed_turns: [1]` | Attempted diff, rejected receipt, journal. |
-| **Armed Unsettled Action followed by 4th Interaction / Severed Socket** | Adapter cap / Supervisor Journal check | Adapter returns framed `INTERACTION_BUDGET_EXHAUSTED` or socket closes. Supervisor checks `armed_without_settlement(&journal)`: action is armed without trusted settlement. | **`UNKNOWN_DISPUTED`**<br>`failure_reason: "ARMED_UNSETTLED_EFFECT"`<br>*(Never ordinary FAILED)* | Workspace dispute snapshot, full journal, adapter logs, raw result. |
-| **4th Interaction Requested Before Any Action Armed** | Adapter cap (`uniqueIds.size >= 3`) | Adapter returns framed `INTERACTION_BUDGET_EXHAUSTED`. Supervisor terminates Roche. Journal contains 0 armed actions. | **`FAILED(MODEL_INTERACTION_ERROR)`**<br>`settled_actions_count: 0`<br>`committed_turns: []` | Adapter events log, raw result, container stderr. |
-| **Hunk Syntax / Line Count Defect** | Pi Extension `checkPatchShape` | Cooperative client-side validation rejects malformed hunk before arming; model receives error in tool result. | Turn 3 repair opportunity; if unhandled: **`FAILED(UNSETTLED_ACTIONS)`** | Tool result log, Pi transcript. |
-| **Supervisor Timeout (>300s) Before Arming** | Supervisor watchdog | Host terminates Roche container and revokes fences. 0 armed actions. | **`FAILED(TIMEOUT_EXCEEDED)`**<br>`settled_actions_count: 0` | Process exit code, timeout log. |
+| **Clean Patch & Test Pass** | Actuator + Verification Command | Actuator validates with `git apply --check`, applies patch, commits turn, and signs HMAC receipt. All 7 duration tests pass. | **`SUCCEEDED`**<br>`failure_reason: "NONE"`<br>`settled_actions_count: 1`<br>`committed_turns: [1]`<br>`test_passed: true`<br>`test_exit_code: 0` | `task_result.json`, `attempted_patch.diff`, passing test log in `host_verification.txt`, state journal, `pi.jsonl`. |
+| **Patch Applied but Tests Fail** | Actuator + Verification Command | Actuator applies patch with signed HMAC receipt, but test command exits non-zero. | **`FAILED`**<br>`failure_reason: "TEST_VERIFICATION_FAILED"`<br>`settled_actions_count: 1`<br>`committed_turns: [1]`<br>`test_passed: false`<br>`test_exit_code: <non-zero>` | `task_result.json`, `attempted_patch.diff`, failing test output in `host_verification.txt`, state journal. |
+| **Invalid Patch Rejected by Actuator** | Actuator `validate_patch` (`git apply --check`) | Actuator certifies `NotApplied` / `VerifiableNonExecution` with HMAC-signed receipt. No workspace mutation. | **`FAILED`**<br>`failure_reason: "PATCH_VALIDATION_FAILED"`<br>`settled_actions_count: 1`<br>`committed_turns: [1]`<br>`test_passed: null`<br>`patch_diff: null` | `task_result.json`, rejected settlement receipt in `state/`, `host_verification.txt` (records baseline test run and notes absence of patch_diff). |
+| **Armed Unsettled Action followed by 4th Interaction / Severed Socket** | Adapter cap / Supervisor Journal check | Adapter returns framed `INTERACTION_BUDGET_EXHAUSTED` or socket closes. Supervisor checks `armed_without_settlement(&journal)`: action is armed without trusted settlement. | **`UNKNOWN_DISPUTED`**<br>`failure_reason: "ARMED_UNSETTLED_EFFECT"`<br>*(Never ordinary FAILED)* | Workspace dispute snapshot in `quarantine/`, full journal, `adapter_events.jsonl`, `ollama_calls.jsonl`, `adapter_summary.json`. |
+| **4th Interaction Requested Before Any Action Armed** | Adapter cap (`uniqueIds.size >= 3`) | Adapter returns framed `INTERACTION_BUDGET_EXHAUSTED`. Supervisor terminates Roche. Journal contains 0 armed actions. | **`FAILED`**<br>`failure_reason: "MODEL_INTERACTION_ERROR"`<br>`settled_actions_count: 0`<br>`committed_turns: []` | `adapter_events.jsonl` (framed error recorded), `ollama_calls.jsonl`, `adapter_summary.json`, `castor_stderr.log`. |
+| **Hunk Syntax / Line Count Defect** | Pi Extension `checkPatchShape` | Cooperative client-side validation rejects malformed hunk before arming; model receives error in tool result. If uncorrected before session exit: | **`FAILED`**<br>`failure_reason: "UNSETTLED_ACTIONS"`<br>`settled_actions_count: 0`<br>`committed_turns: []` | `pi.jsonl` (Pi container log), adapter logs, state journal. |
+| **Supervisor Timeout (>300s) Before Arming** | Supervisor watchdog | Host terminates Roche container and revokes fences. 0 armed actions. | **`FAILED`**<br>`failure_reason: "TIMEOUT_EXCEEDED"`<br>`settled_actions_count: 0`<br>`committed_turns: []` | Process exit code in `castor_exit_code.txt`, `castor_stderr.log`. |
 
 ---
 
@@ -32,10 +35,10 @@ Execution takes place directly on the GitHub-hosted Linux VM (`ubuntu-latest`) a
 flowchart TD
     subgraph HostVM ["GitHub-Hosted Linux VM (ubuntu-latest)"]
         subgraph HostProcesses ["Native Host Processes (Runner User)"]
-            Ollama["Ollama Engine (127.0.0.1:11434)\nModel: qwen3.5:9b (6.6 GB)"]
-            Adapter["Audited Model Adapter (Node.js)\nSocket: /tmp/castor-model-t337e.sock\nCaps: max 3 calls, 512 tokens"]
-            RunnerScript["Host Runner Script (scripts/run_t337e_physical.sh)\nHeadroom checks & manifest staging"]
-            CastorCLI["Castor CLI (castor run --task ...)\nBuilt from PR 13 head e126862"]
+            Ollama["Ollama Engine (127.0.0.1:11434)\nPinned v0.34.4 / Model: qwen3.5:9b (6.6 GB)"]
+            Adapter["Audited Model Adapter (scripts/audited_adapter_wrapper.mjs)\nSocket: /tmp/castor-model-t337e.sock\nCaps: max 3 calls, 512 tokens\nLogs: adapter_events, ollama_calls, summary"]
+            RunnerScript["Host Runner Script (scripts/run_t337e_physical.sh)\nset -euo pipefail & headroom checks"]
+            CastorCLI["Castor CLI (castor run --task ...)\nBuilt with isolated CARGO_TARGET_DIR"]
             CastorDaemon["Castor Product Daemon (castord)\nManages C-01 Journal & IPC"]
             DockerCLI["Host Docker CLI\n(Talks to VM system Docker daemon)"]
         end
@@ -72,6 +75,7 @@ flowchart TD
    - `--security-opt no-new-privileges`
    - Exactly one bind mount: host IPC socket mounted read-only to `/run/castor/ipc.sock`.
 3. **Loopback-Pinned Model Adapter**: Audited adapter connects strictly to `http://127.0.0.1:11434/api/chat` with `redirect: "error"`, refusing network egress or non-loopback endpoints.
+4. **No Remote Shell Scripts**: All installers are pinned binary release assets verified by SHA-256 checksums prior to extraction.
 
 ---
 
@@ -89,12 +93,19 @@ flowchart TD
 
 ---
 
-## 5. Reviewable Staging Inventory
+## 5. Reviewable Staging Inventory & Evidence Artifacts
 
-| Component | Path | Purpose |
+| Component / Artifact | Path | Purpose |
 | :--- | :--- | :--- |
-| **Workflow** | `.github/workflows/t337e-physical-gate.yml` | Gated `pull_request: [labeled]` workflow requiring label `run-t337e-physical`. Consumes label on start, checks disk headroom, runs host script, and uploads evidence on every outcome. |
-| **Runner Script** | `scripts/run_t337e_physical.sh` | Native Linux host orchestration: environment diagnostics, disk headroom check, binary build, carrier image build, manifest staging, Ollama & adapter lifecycle, bounded task run, evidence capture. |
+| **Workflow** | `.github/workflows/t337e-physical-gate.yml` | Gated `pull_request: [labeled]` workflow requiring label `run-t337e-physical`. Strictly consumes label before model pull, enforces headroom, installs pinned Ollama v0.34.4, runs host script, and uploads evidence bundle on every outcome. |
+| **Runner Script** | `scripts/run_t337e_physical.sh` | Native Linux host orchestration under `set -euo pipefail`: disk check, binary build under temp target dir, carrier build, manifest staging, Ollama & audited adapter lifecycle, bounded task run, and independent host verification. |
+| **Audited Adapter Wrapper** | `scripts/audited_adapter_wrapper.mjs` | Wrapper around versioned host adapter producing `adapter_events.jsonl`, `ollama_calls.jsonl`, and `adapter_summary.json` without logging secrets. |
+| **Adapter Test Suite** | `scripts/test_audited_adapter.mjs` | 100% mocked offline test suite verifying wrapper event logging, HTTP call logs, bounded num_predict, framed error recording, and zero secret leakage. |
+| **Preflight Abort Tests** | `scripts/test_preflight_aborts.sh` | Offline test suite asserting preflight fail-fast aborts (OS check, disk space, fixture SHA mismatch) and safety invariants. |
 | **Task Fixture** | `fixtures/t337e_duration/` | Pinned single-defect duration snapshot (`workspace_snapshot.tar.gz`), checksum verification file, and manifest template. |
-| **Audited Adapter** | `kernel/carrier/pi/host/ollama_model_adapter.mjs` | Bounded model adapter enforcing max 3 unique interactions, 512 max_tokens, 4-byte BE framing, and canonical request digests. |
-| **Offline Tests** | `kernel/carrier/pi/host/test_adapter.mjs` | 100% mocked offline adapter test suite verifying all invariants without network. |
+| **Evidence: Events Log** | `evidence/adapter_events.jsonl` | Line-by-line structured JSON log of adapter events, token bounds, and wire errors. |
+| **Evidence: HTTP Calls** | `evidence/ollama_calls.jsonl` | Line-by-line structured JSON log of each unique Ollama HTTP call with token usage, stop reason, and latency. |
+| **Evidence: Adapter Summary** | `evidence/adapter_summary.json` | High-level summary of total envelopes, unique interactions, calls, cache hits, and errors. |
+| **Evidence: Attempted Patch** | `evidence/attempted_patch.diff` | Exact unified diff extracted from `TaskResult` when supplied (omitted if no patch was produced). |
+| **Evidence: Host Verification** | `evidence/host_verification.txt` | Independent verification report running 7 baseline tests, applying patch via `git apply`, retesting, and recording SHA256 and exit codes. |
+| **Evidence: State & Logs** | `evidence/state/`, `evidence/pi.jsonl` | Preserved task-state journal, regions, dispute snapshots, and Pi container logs. |

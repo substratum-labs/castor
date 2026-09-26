@@ -31,7 +31,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "Consuming one-use label 'run-t337e-physical'..."
-          gh pr edit ${{ github.event.pull_request.number }} --remove-label "run-t337e-physical" || true
+          gh pr edit "${{ github.event.pull_request.number }}" --remove-label "run-t337e-physical"
+          # Verify label was strictly removed and abort if still present
+          ACTIVE_LABELS=$(gh pr view "${{ github.event.pull_request.number }}" --json labels -q '.labels[].name')
+          if echo "$ACTIVE_LABELS" | grep -q "^run-t337e-physical$"; then
+            echo "ERROR: Failed to remove one-use label 'run-t337e-physical'. Aborting run to enforce one-use gate." >&2
+            exit 1
+          fi
+          echo "One-use trigger label successfully removed."
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -68,9 +75,20 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Ollama
+      - name: Install Ollama (Pinned v0.34.4 amd64 with SHA-256 Checksum)
         run: |
-          curl -fsSL https://ollama.com/install.sh | sh
+          sudo apt-get update && sudo apt-get install -y zstd
+          OLLAMA_TAR="/tmp/ollama-linux-amd64.tar.zst"
+          OLLAMA_URL="https://github.com/ollama/ollama/releases/download/v0.34.4/ollama-linux-amd64.tar.zst"
+          EXPECTED_SHA="c238986e61d40c0cc5f4a9b9e40b9eea104350b77efa34741fc134e105cb9533"
+          echo "Downloading pinned Ollama v0.34.4 from $OLLAMA_URL..."
+          curl -fL "$OLLAMA_URL" -o "$OLLAMA_TAR"
+          echo "Verifying SHA-256 checksum..."
+          echo "$EXPECTED_SHA  $OLLAMA_TAR" | sha256sum -c -
+          echo "Extracting Ollama binary to /usr/local..."
+          sudo tar --zstd -xf "$OLLAMA_TAR" -C /usr/local
+          rm -f "$OLLAMA_TAR"
+          ollama --version
 
       - name: Execute Native Linux Host Runner
         run: |
