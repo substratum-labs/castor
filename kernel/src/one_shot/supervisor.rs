@@ -2,7 +2,7 @@ use crate::c01_storage::{CoreEntry, D1DurableStorage};
 use crate::host::{GatewayClient, SyscallRequest};
 use crate::one_shot::actuator::{
     apply_patch, evidence_key_hex, key_hex, settle_receipt, settle_workspace_edit,
-    settle_workspace_edit_with_key, ACTUATOR_ISSUER,
+    settle_workspace_edit_with_key, WorkspaceEditOutcome, ACTUATOR_ISSUER,
 };
 use crate::one_shot::image::StagedSnapshot;
 use crate::one_shot::manifest::TaskManifest;
@@ -435,7 +435,7 @@ pub fn run_test_task(
             &durable_workspace,
             false,
         )?;
-        if let Some(edit) = &edit {
+        if let Some(WorkspaceEditOutcome::Applied(edit)) = &edit {
             let postimage = fs::read(durable_workspace.join("defect.txt"))?;
             File::open(durable_workspace.join("defect.txt"))?.sync_all()?;
             let record = json!({
@@ -453,7 +453,7 @@ pub fn run_test_task(
     } else {
         None
     };
-    let result = if uncertain_edit.is_some() {
+    let mut result = if uncertain_edit.is_some() {
         let mut result = TaskResult::after_image(
             manifest.task_id.clone(),
             manifest.workspace_snapshot_sha256.clone(),
@@ -497,6 +497,17 @@ pub fn run_test_task(
             "AGENT_CRASHED",
             None,
         )
+    } else if matches!(settled_edit, Some(WorkspaceEditOutcome::NotApplied)) {
+        let mut result = TaskResult::after_image(
+            manifest.task_id.clone(),
+            manifest.workspace_snapshot_sha256.clone(),
+            image_digest,
+            "PATCH_VALIDATION_FAILED",
+            None,
+        );
+        result.committed_turns = vec![1];
+        result.settled_actions_count = 1;
+        result
     } else {
         let mut command = Command::new(&manifest.verification_command[0]);
         let test = command
@@ -511,7 +522,7 @@ pub fn run_test_task(
             manifest.task_id.clone(),
             manifest.workspace_snapshot_sha256.clone(),
             image_digest,
-            if code == 0 && settled_edit.is_some() {
+            if code == 0 && matches!(settled_edit, Some(WorkspaceEditOutcome::Applied(_))) {
                 "NONE"
             } else if code == 0 {
                 "UNSETTLED_ACTIONS"
@@ -521,7 +532,7 @@ pub fn run_test_task(
             Some(code),
         );
         if code == 0 {
-            if let Some(edit) = settled_edit {
+            if let Some(WorkspaceEditOutcome::Applied(edit)) = settled_edit {
                 result.status = "SUCCEEDED";
                 result.committed_turns = vec![1];
                 result.settled_actions_count = 1;
@@ -531,6 +542,16 @@ pub fn run_test_task(
         }
         result
     };
+    let journal = inspect_journal(&daemon.control_socket)?;
+    if armed_without_settlement(&journal) {
+        result.status = "UNKNOWN_DISPUTED";
+        result.failure_reason = "ARMED_UNSETTLED_EFFECT";
+        result.committed_turns = committed_turns(&journal);
+        result.settled_actions_count = 0;
+    }
+    if result.status == "UNKNOWN_DISPUTED" {
+        preserve_dispute_evidence(state_root, &manifest.task_id, staged, state_root)?;
+    }
     {
         let _lock = BoardLock::acquire(state_root)?;
         let mut board = read_board(state_root)?;
@@ -714,7 +735,7 @@ pub fn run_product_task(
             true,
             &daemon.evidence_key,
         ) {
-            Ok(Some(edit)) => {
+            Ok(Some(WorkspaceEditOutcome::Applied(edit))) => {
                 let code = Command::new(&manifest.verification_command[0])
                     .args(&manifest.verification_command[1..])
                     .current_dir(staged.workspace())
@@ -739,6 +760,13 @@ pub fn run_product_task(
                 }
                 result
             }
+            Ok(Some(WorkspaceEditOutcome::NotApplied)) => TaskResult::after_image(
+                manifest.task_id.clone(),
+                manifest.workspace_snapshot_sha256.clone(),
+                image_digest,
+                "PATCH_VALIDATION_FAILED",
+                None,
+            ),
             Ok(None) => TaskResult::after_image(
                 manifest.task_id.clone(),
                 manifest.workspace_snapshot_sha256.clone(),
@@ -762,22 +790,89 @@ pub fn run_product_task(
         }
     };
     let journal = inspect_journal(&daemon.control_socket)?;
-    result.committed_turns = journal
-        .iter()
-        .filter_map(|entry| entry.get("TurnCommitted")?.get("turn_id")?.as_u64())
-        .collect();
+    result.committed_turns = committed_turns(&journal);
     result.settled_actions_count = journal
         .iter()
         .filter(|entry| entry.get("AttemptSettled").is_some())
         .count() as u64;
+    if armed_without_settlement(&journal) {
+        result.status = "UNKNOWN_DISPUTED";
+        result.failure_reason = "ARMED_UNSETTLED_EFFECT";
+    }
     if result.status == "SUCCEEDED"
         && (result.committed_turns.is_empty() || result.settled_actions_count != 1)
     {
         result.status = "UNKNOWN_DISPUTED";
         result.failure_reason = "UNSETTLED_ACTIONS";
     }
+    if result.status == "UNKNOWN_DISPUTED" {
+        preserve_dispute_evidence(state_root, &manifest.task_id, staged, &task_state)?;
+    }
     persist_product_result(state_root, manifest, &manifest_digest, &result)?;
     Ok(RunOutcome::Terminal(result))
+}
+
+fn committed_turns(journal: &[Value]) -> Vec<u64> {
+    journal
+        .iter()
+        .filter_map(|entry| entry.get("TurnCommitted")?.get("turn_id")?.as_u64())
+        .collect()
+}
+
+fn armed_without_settlement(journal: &[Value]) -> bool {
+    journal
+        .iter()
+        .any(|entry| entry.get("AttemptArmed").is_some())
+        && !journal
+            .iter()
+            .any(|entry| entry.get("AttemptSettled").is_some())
+}
+
+fn preserve_dispute_evidence(
+    state_root: &Path,
+    task_id: &str,
+    staged: &StagedSnapshot,
+    journal_root: &Path,
+) -> io::Result<()> {
+    let quarantine = state_root.join("quarantine").join(task_id);
+    fs::create_dir_all(&quarantine)?;
+    fs::set_permissions(&quarantine, fs::Permissions::from_mode(0o700))?;
+    copy_regular_tree(&staged.workspace(), &quarantine.join("workspace"))?;
+    for name in ["core-journal.log", "pi.jsonl"] {
+        let source = journal_root.join(name);
+        if source.is_file() {
+            fs::copy(source, quarantine.join(name))?;
+        }
+    }
+    let regions = journal_root.join("regions");
+    if regions.is_dir() {
+        copy_regular_tree(&regions, &quarantine.join("regions"))?;
+    }
+    File::open(&quarantine)?.sync_all()?;
+    Ok(())
+}
+
+fn copy_regular_tree(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let path = entry.path();
+        let target = destination.join(entry.file_name());
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            copy_regular_tree(&path, &target)?;
+        } else if kind.is_file() {
+            fs::copy(&path, &target)?;
+            File::open(&target)?.sync_all()?;
+        } else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "quarantine source is not a regular file",
+            ));
+        }
+    }
+    File::open(destination)?.sync_all()?;
+    Ok(())
 }
 
 fn pi_finished_without_error(log: &[u8]) -> bool {

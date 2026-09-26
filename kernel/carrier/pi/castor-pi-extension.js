@@ -9,6 +9,40 @@ const EMPTY_DIGEST = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca49
 const WORKSPACE = "/workspace";
 const sha256 = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+// This is cooperative feedback for Pi, not an authority check. The trusted
+// actuator independently checks the exact patch before touching the workspace.
+function checkPatchShape(path, patch) {
+  if (typeof patch !== "string") throw new Error("patch must be a unified diff");
+  const lines = patch.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  let cursor = lines[0] === `diff --git a/${path} b/${path}` ? 1 : 0;
+  if (lines[cursor++] !== `--- a/${path}` || lines[cursor++] !== `+++ b/${path}`) {
+    throw new Error("patch must target exactly the requested file");
+  }
+  let hunks = 0;
+  while (cursor < lines.length) {
+    const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$/.exec(lines[cursor++]);
+    if (!header) throw new Error("invalid patch hunk header");
+    const oldCount = Number(header[2] ?? 1);
+    const newCount = Number(header[4] ?? 1);
+    let oldSeen = 0;
+    let newSeen = 0;
+    while (cursor < lines.length && !lines[cursor].startsWith("@@ ")) {
+      const line = lines[cursor++];
+      if (line === "\\ No newline at end of file") continue;
+      if (line.startsWith(" ")) { oldSeen++; newSeen++; }
+      else if (line.startsWith("-")) oldSeen++;
+      else if (line.startsWith("+")) newSeen++;
+      else throw new Error("invalid patch hunk line");
+    }
+    if (oldSeen !== oldCount || newSeen !== newCount) {
+      throw new Error("patch hunk line count mismatch");
+    }
+    hunks++;
+  }
+  if (hunks === 0) throw new Error("patch contains no hunks");
+}
+
 function requireOutcome(outcome, expected) {
   if (outcome?.type !== expected) throw new Error(`Castor expected ${expected}, got ${outcome?.type || "no outcome"}`);
   return outcome;
@@ -71,6 +105,7 @@ export default function castorExtension(pi) {
     nextAction: 0,
     lastObservation: null,
     modelBusy: false,
+    terminalArmed: false,
   };
 
   async function ensureTurn() {
@@ -196,6 +231,14 @@ export default function castorExtension(pi) {
         stopReason: "pending",
         timestamp: Date.now(),
       };
+      if (state.terminalArmed) {
+        queueMicrotask(() => emitBuffered(stream, output, {
+          content: [{ type: "text", text: "Patch candidate armed for host settlement. Concluding session." }],
+          stopReason: "stop",
+          usage: { input: 0, output: 0 },
+        }));
+        return stream;
+      }
       if (state.modelBusy) {
         output.stopReason = "error";
         output.errorMessage = "concurrent model requests are not supported";
@@ -227,6 +270,7 @@ export default function castorExtension(pi) {
     description: "Read a file from the immutable task snapshot.",
     parameters: Type.Object({ path: Type.String() }),
     async execute(_toolCallId, parameters) {
+      if (state.terminalArmed) throw new Error("workspace remains immutable and effect is unverified pending host settlement");
       const text = await readWorkspace(parameters.path);
       return { content: [{ type: "text", text }], details: { path: parameters.path } };
     },
@@ -235,12 +279,13 @@ export default function castorExtension(pi) {
   pi.registerTool({
     name: "castor_edit_file",
     label: "Propose edit",
-    description: "Submit one unified diff for governed host application; the host verifies the result independently.",
+    description: "Submit one terminal unified diff candidate. Castor verifies and settles it after this agent session ends; do not read or edit again.",
     parameters: Type.Object({ path: Type.String(), patch_diff: Type.String() }),
     async execute(_toolCallId, parameters) {
       if (!state.active || !state.lastObservation) throw new Error("model result must be bound before editing");
       if (state.nextAction > 0) throw new Error("bounded one-shot task permits one edit action");
       if (typeof parameters.path !== "string" || isAbsolute(parameters.path) || parameters.path.includes("..")) throw new Error("invalid workspace edit path");
+      checkPatchShape(parameters.path, parameters.patch_diff);
       const actionId = `action-${++state.nextAction}`;
       const payloadBytes = Buffer.from(canonicalJson({
         action_type: "WorkspaceEdit",
@@ -294,8 +339,9 @@ export default function castorExtension(pi) {
       state.turnId += 1;
       state.active = false;
       state.lastObservation = null;
+      state.terminalArmed = true;
       return {
-        content: [{ type: "text", text: "Edit submitted to Castor for trusted host settlement and verification." }],
+        content: [{ type: "text", text: "Patch candidate armed for trusted host settlement and verification. Session is complete." }],
         details: { action_id: actionId },
       };
     },

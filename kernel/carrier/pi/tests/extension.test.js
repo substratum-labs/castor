@@ -119,6 +119,15 @@ test("Pi provider binds a full request Region before returning a buffered model 
     assert.equal(events.at(-1).message.content[0].text, "The test is fixed.");
     const edit = tools.find((tool) => tool.name === "castor_edit_file");
     await assert.rejects(edit.execute("bad-path", { path: "../outside", patch_diff: "patch" }), /invalid workspace edit path/);
+    const beforeCorruptPatch = calls.length;
+    await assert.rejects(
+      edit.execute("bad-hunk", {
+        path: "defect.txt",
+        patch_diff: "--- a/defect.txt\n+++ b/defect.txt\n@@ -1,7 +1,7 @@\n-bad\n+good\n",
+      }),
+      /patch|hunk/i,
+    );
+    assert.equal(calls.length, beforeCorruptPatch, "a malformed patch must not reach AISA admission");
     await edit.execute("edit-1", { path: "defect.txt", patch_diff: "--- a/defect.txt\n+++ b/defect.txt\n@@ -1 +1 @@\n-bad\n+good\n" });
     assert.deepEqual(calls.slice(8).map((call) => call.op), [
       "EnsureRegion", "EnsureRegion", "CommitTurn", "RegisterAction", "PresentAdmissionCertificate",
@@ -126,13 +135,16 @@ test("Pi provider binds a full request Region before returning a buffered model 
     const committed = calls.find((call) => call.op === "CommitTurn").payload;
     assert.equal(committed.action_bindings[0].payload_digest, calls[8].payload.content_digest);
     assert.equal(committed.action_manifest_digest, calls[9].payload.content_digest);
-    const fencedEvents = [];
-    for await (const event of provider.streamSimple(model, context, { maxTokens: 256 })) fencedEvents.push(event);
-    assert.equal(fencedEvents.at(-1).type, "error");
-    assert.match(fencedEvents.at(-1).error.errorMessage, /projection generation changed; task is fenced/);
+    const callsAfterEdit = calls.length;
+    const terminalEvents = [];
+    for await (const event of provider.streamSimple(model, context, { maxTokens: 256 })) terminalEvents.push(event);
+    assert.equal(terminalEvents.at(-1).type, "done");
+    assert.equal(terminalEvents.at(-1).message.stopReason, "stop");
+    assert.equal(calls.length, callsAfterEdit, "terminal response must not request another model interaction");
+    const read = tools.find((tool) => tool.name === "castor_read_file");
+    await assert.rejects(read.execute("read-after-edit", { path: "defect.txt" }), /immutable.*unverified/i);
     assert.equal(calls.filter((call) => call.op === "AdmitTurn").length, 2);
-    assert.equal(calls.at(-1).op, "ObserveProjection");
-    assert.deepEqual(observedGenerations, [1, 1, 2]);
+    assert.deepEqual(observedGenerations, [1, 1]);
   } finally {
     if (originalSocket === undefined) delete process.env.CASTOR_IPC_SOCKET;
     else process.env.CASTOR_IPC_SOCKET = originalSocket;

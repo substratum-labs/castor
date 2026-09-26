@@ -724,12 +724,14 @@ fn mock_agent_commits_workspace_edit() {
     let mut client = GatewayClient::connect(socket).expect("connect to real agent gateway");
     let prompt = std::env::var("CASTOR_TEST_TASK_PROMPT").expect("task prompt for model request");
     let request_digest = persist_full_model_request(&mut client, "interaction-1", &prompt);
-    let patch =
-        b"--- a/defect.txt\n+++ b/defect.txt\n@@ -1 +1 @@\n-failing fixture\n+fixed fixture\n";
+    let patch = std::env::var("CASTOR_TEST_MOCK_PATCH").unwrap_or_else(|_| {
+        "--- a/defect.txt\n+++ b/defect.txt\n@@ -1 +1 @@\n-failing fixture\n+fixed fixture\n"
+            .to_owned()
+    });
     let payload = serde_json::to_vec(&json!({
         "action_type": "WorkspaceEdit",
         "target_path": "defect.txt",
-        "patch": String::from_utf8_lossy(patch)
+        "patch": patch
     }))
     .unwrap();
     let payload_digest = format!("sha256:{:x}", Sha256::digest(&payload));
@@ -866,6 +868,9 @@ fn mock_agent_commits_workspace_edit() {
             "generation": 1
         }),
     });
+    if std::env::var_os("CASTOR_TEST_EXIT_AFTER_ARM").is_some() {
+        std::process::exit(7);
+    }
 }
 
 #[ignore = "spawned only as an untrusted child by the stale-lease contract"]
@@ -1037,7 +1042,8 @@ fn buffered_model_region_is_bound_before_guest_consumes_it() {
         .env("CASTOR_TEST_FIRST_CONSUME_REJECTED", &first_rejection)
         .output()
         .expect("run guest through C-03 model binding");
-    assert_eq!(result(&output)["status"], "FAILED");
+    assert_eq!(result(&output)["status"], "UNKNOWN_DISPUTED");
+    assert_eq!(result(&output)["failure_reason"], "ARMED_UNSETTLED_EFFECT");
     assert_eq!(fs::read_to_string(&first_rejection).unwrap(), "rejected");
     assert!(model.attempts.load(Ordering::SeqCst) > 0);
     let calls = model.requests.lock().unwrap();
@@ -1140,6 +1146,83 @@ fn normal_task_requires_bound_model_settled_edit_and_independent_test() {
     })
     .collect();
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+}
+
+#[test]
+fn invalid_patch_is_certified_not_applied_before_any_workspace_write() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _ = castor_cli();
+    let root = tempfile::tempdir().unwrap();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let child = root.path().join("invalid-edit-agent.sh");
+    fs::write(
+        &child,
+        "#!/bin/sh\nexec \"$CASTOR_TEST_MOCK_CHILD_BINARY\" --ignored --exact mock_agent_commits_workspace_edit --nocapture\n",
+    )
+    .unwrap();
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+    let model_socket = root.path().join("model.sock");
+    let _model = MockModelService::start(&model_socket, Some(buffered_model_response()), None);
+    let output = task_command(root.path(), &manifest, &child)
+        .env("CASTOR_TEST_MODEL_SOCKET", &model_socket)
+        .env("CASTOR_TEST_ACTUATOR_MODE", "apply_and_settle")
+        .env(
+            "CASTOR_TEST_MOCK_PATCH",
+            "--- a/defect.txt\n+++ b/defect.txt\n@@ -1,7 +1,7 @@\n-failing fixture\n+fixed fixture\n",
+        )
+        .output()
+        .expect("run invalid candidate through the trusted actuator");
+    assert!(!output.status.success());
+    let result = result(&output);
+    assert_eq!(result["status"], "FAILED");
+    assert_eq!(result["failure_reason"], "PATCH_VALIDATION_FAILED");
+    assert_eq!(result["committed_turns"], json!([1]));
+    assert_eq!(result["settled_actions_count"], 1);
+    let journal = journal_kinds(root.path());
+    assert!(journal.iter().any(|entry| entry == "AttemptArmed"));
+    assert!(journal.iter().any(|entry| entry == "AttemptSettled"));
+    assert!(!root.path().join("applied-edit.json").exists());
+}
+
+#[test]
+fn agent_crash_after_arming_preserves_unknown_dispute_result() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _ = castor_cli();
+    let root = tempfile::tempdir().unwrap();
+    let hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+    let child = root.path().join("armed-crash-agent.sh");
+    fs::write(
+        &child,
+        "#!/bin/sh\nexec \"$CASTOR_TEST_MOCK_CHILD_BINARY\" --ignored --exact mock_agent_commits_workspace_edit --nocapture\n",
+    )
+    .unwrap();
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+    let model_socket = root.path().join("model.sock");
+    let _model = MockModelService::start(&model_socket, Some(buffered_model_response()), None);
+    let output = task_command(root.path(), &manifest, &child)
+        .env("CASTOR_TEST_MODEL_SOCKET", &model_socket)
+        .env("CASTOR_TEST_EXIT_AFTER_ARM", "1")
+        .output()
+        .expect("run armed agent until process crash");
+    assert!(!output.status.success());
+    let result = result(&output);
+    assert_eq!(result["status"], "UNKNOWN_DISPUTED");
+    assert_eq!(result["failure_reason"], "ARMED_UNSETTLED_EFFECT");
+    assert_eq!(result["committed_turns"], json!([1]));
+    assert_eq!(result["settled_actions_count"], 0);
+    let journal = journal_kinds(root.path());
+    assert!(journal.iter().any(|entry| entry == "AttemptArmed"));
+    assert!(!journal.iter().any(|entry| entry == "AttemptSettled"));
+    let quarantine = root.path().join("task-state/quarantine/task-snapshot-gate");
+    assert_eq!(
+        fs::read_to_string(quarantine.join("workspace/defect.txt")).unwrap(),
+        "failing fixture\n",
+    );
+    assert!(quarantine.join("core-journal.log").is_file());
 }
 
 #[test]
@@ -1557,10 +1640,10 @@ fn default_cli_runs_real_pi_through_roche_and_host_settlement() {
             .is_some_and(|event| event["stop_reason"] == "stop" && event["error"].is_null()),
         "Pi must finish without an assistant error: {assistant_ends:?}"
     );
-    assert!(
-        calls.load(Ordering::SeqCst) >= 2,
-        "model_calls={}; assistant_ends={assistant_ends:?}; journal={journal:?}",
-        calls.load(Ordering::SeqCst)
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "terminal edit must not request another external model call; assistant_ends={assistant_ends:?}; journal={journal:?}"
     );
     assert!(task["patch_diff"]
         .as_str()

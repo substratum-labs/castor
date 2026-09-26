@@ -79,7 +79,7 @@ jobs:
       - name: Build pinned Python-free Pi carrier
         run: docker build --tag substratum/castor-pi-carrier:v1 kernel/carrier/pi
 
-      - name: Exercise pinned Pi extension and two-turn CLI
+      - name: Exercise pinned Pi terminal CLI and host model adapter
         run: >-
           docker run --rm --network none --read-only
           --tmpfs /tmp:rw,nosuid,nodev,size=64m,mode=1777
@@ -89,6 +89,7 @@ jobs:
           --test /opt/castor/src/tests/protocol.test.js
           /opt/castor/src/tests/extension.test.js
           /opt/castor/src/tests/pi-cli-smoke.test.js
+          /opt/castor/src/host/test_adapter.mjs
 
       - name: Set up Python
         run: uv python install 3.11

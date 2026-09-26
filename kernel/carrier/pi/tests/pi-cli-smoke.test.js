@@ -105,22 +105,22 @@ test("pinned Pi CLI loads Castor provider in a networkless read-only container",
     const code = await new Promise((resolve) => child.on("exit", resolve));
     clearTimeout(timeout);
     assert.equal(code, 0, `Pi failed: ${stderr}\n${stdout}\nAISA calls: ${calls.map((call) => call.op)}`);
-    assert.equal(calls.filter((call) => call.op === "RequestInteraction").length, 2, `Pi must resume after edit; calls=${calls.map((call) => call.op)}; stdout=${stdout}; stderr=${stderr}`);
+    assert.equal(calls.filter((call) => call.op === "RequestInteraction").length, 1, `Pi must stop external model interactions after edit; calls=${calls.map((call) => call.op)}; stdout=${stdout}; stderr=${stderr}`);
     const projectionReads = calls.filter((call) => call.op === "ObserveProjection");
     const admissions = calls.filter((call) => call.op === "AdmitTurn");
-    assert.equal(projectionReads.length, 2);
-    assert.equal(admissions.length, 2);
+    assert.equal(projectionReads.length, 1);
+    assert.equal(admissions.length, 1);
     assert.deepEqual(
       admissions.map((admission) => admission.payload.base_projection_digest),
       observedDigests.map((digest) => digest ?? "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
     );
-    assert.deepEqual(admissions.map((admission) => admission.payload.expected_generation), [1, 1]);
+    assert.deepEqual(admissions.map((admission) => admission.payload.expected_generation), [1]);
     assert.ok(calls.some((call) => call.op === "CommitTurn"), "real Pi tool call must commit through Castor");
     assert.ok(calls.some((call) => call.op === "PresentAdmissionCertificate"), "real Pi tool call must arm through Castor");
     const region = calls.find((call) => call.op === "EnsureRegion");
     const request = JSON.parse(Buffer.from(region.payload.content).toString("utf8"));
     assert.deepEqual(request.tools.map((tool) => tool.name).sort(), ["castor_edit_file", "castor_read_file"]);
-    assert.match(stdout, /The task is complete/);
+    assert.match(stdout, /host settlement/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(root, { recursive: true, force: true });

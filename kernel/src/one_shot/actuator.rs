@@ -18,6 +18,11 @@ pub struct SettledEdit {
     pub target_path: String,
 }
 
+pub enum WorkspaceEditOutcome {
+    Applied(SettledEdit),
+    NotApplied,
+}
+
 pub fn evidence_key_hex() -> String {
     key_hex(EVIDENCE_KEY)
 }
@@ -69,7 +74,7 @@ pub fn settle_workspace_edit(
     evidence_socket: &Path,
     workspace: &Path,
     settle: bool,
-) -> io::Result<Option<SettledEdit>> {
+) -> io::Result<Option<WorkspaceEditOutcome>> {
     settle_workspace_edit_with_key(
         control_socket,
         actuator_socket,
@@ -87,7 +92,7 @@ pub fn settle_workspace_edit_with_key(
     workspace: &Path,
     settle: bool,
     key: &[u8],
-) -> io::Result<Option<SettledEdit>> {
+) -> io::Result<Option<WorkspaceEditOutcome>> {
     let journal = request(control_socket, "inspect-edit", "InspectJournal", json!({}))?;
     let Some(armed) = journal["entries"]
         .as_array()
@@ -149,16 +154,42 @@ pub fn settle_workspace_edit_with_key(
         ));
     }
     let patch = required_str(&edit, "patch")?.to_owned();
+    // No workspace write has occurred. A failed exact check can be certified
+    // as VerifiableNonExecution rather than left as an unresolved effect.
+    if validate_patch(workspace, target_path, &patch).is_err() {
+        if settle {
+            settle_receipt_with_key(
+                control_socket,
+                evidence_socket,
+                attempt_id,
+                scope,
+                key,
+                false,
+            )?;
+            return Ok(Some(WorkspaceEditOutcome::NotApplied));
+        }
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "patch cannot apply cleanly",
+        ));
+    }
     apply_patch(workspace, target_path, &patch)?;
     let patch_sha256 = format!("sha256:{:x}", Sha256::digest(patch.as_bytes()));
     if settle {
-        settle_receipt_with_key(control_socket, evidence_socket, attempt_id, scope, key)?;
+        settle_receipt_with_key(
+            control_socket,
+            evidence_socket,
+            attempt_id,
+            scope,
+            key,
+            true,
+        )?;
     }
-    Ok(Some(SettledEdit {
+    Ok(Some(WorkspaceEditOutcome::Applied(SettledEdit {
         patch,
         patch_sha256,
         target_path: target_path.to_owned(),
-    }))
+    })))
 }
 
 pub fn apply_patch(workspace: &Path, target_path: &str, patch: &str) -> io::Result<()> {
@@ -267,6 +298,7 @@ pub fn settle_receipt(
         attempt_id,
         scope,
         EVIDENCE_KEY,
+        true,
     )
 }
 
@@ -276,7 +308,13 @@ fn settle_receipt_with_key(
     attempt_id: u64,
     scope: &str,
     key: &[u8],
+    applied: bool,
 ) -> io::Result<()> {
+    let (resolution, actuator_state, proof_class) = if applied {
+        ("Confirmed", "Committed", "ProviderConfirmation")
+    } else {
+        ("NotApplied", "TerminatedRejected", "VerifiableNonExecution")
+    };
     let mut receipt = json!({
         "attempt_id": attempt_id,
         "stable_operation_id": "edit-1",
@@ -284,8 +322,8 @@ fn settle_receipt_with_key(
         "issuer": ACTUATOR_ISSUER,
         "adapter_id": "c04:generic",
         "settlement_schema_version": 1,
-        "resolution": "Confirmed",
-        "actuator_state": "Committed"
+        "resolution": resolution,
+        "actuator_state": actuator_state
     });
     let bytes = serde_json::to_vec(&receipt).map_err(io::Error::other)?;
     let mut mac = Hmac::<Sha256>::new_from_slice(key).map_err(io::Error::other)?;
@@ -310,7 +348,7 @@ fn settle_receipt_with_key(
     receipt["dispatch_identity"] = json!("edit-1");
     receipt["evidence_region_id"] = json!("region://settlement-receipt");
     receipt["evidence_digest"] = json!(evidence_digest);
-    receipt["proof_class"] = json!("ProviderConfirmation");
+    receipt["proof_class"] = json!(proof_class);
     expect_type(
         request(
             evidence_socket,
