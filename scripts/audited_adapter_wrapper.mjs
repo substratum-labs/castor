@@ -28,12 +28,20 @@ export class AuditedOllamaModelAdapter extends OllamaModelAdapter {
     const evidenceDir = options.evidenceDir || process.env.EVIDENCE_DIR || resolve(process.cwd(), "evidence");
     mkdirSync(evidenceDir, { recursive: true });
 
+    const appendFileFn = options.appendFileFn || appendFileSync;
+    const writeFileFn = options.writeFileFn || writeFileSync;
+
     const callsList = [];
     let callCounter = 0;
 
     const baseFetch = options.fetchFn || globalThis.fetch;
 
     const auditedFetch = async (url, fetchOptions) => {
+      // Fail closed immediately before any Ollama HTTP call if an audit write error occurred
+      if (this.auditError) {
+        throw new Error(`Audit failure: refusing inference due to audit write error (${this.auditError.message})`);
+      }
+
       const callIndex = ++callCounter;
       const startTime = Date.now();
       let requestedModel = null;
@@ -49,6 +57,9 @@ export class AuditedOllamaModelAdapter extends OllamaModelAdapter {
         // Body was not JSON or inaccessible
       }
 
+      // Log dispatch event BEFORE making Ollama HTTP call.
+      // If logEvent fails to write to disk, it sets this.auditError and throws,
+      // preventing baseFetch from ever being called.
       this.logEvent("ollama_http_dispatched", {
         call_index: callIndex,
         model: requestedModel,
@@ -151,6 +162,8 @@ export class AuditedOllamaModelAdapter extends OllamaModelAdapter {
     });
 
     this.evidenceDir = evidenceDir;
+    this.appendFileFn = appendFileFn;
+    this.writeFileFn = writeFileFn;
     this.eventsPath = join(this.evidenceDir, "adapter_events.jsonl");
     this.callsPath = join(this.evidenceDir, "ollama_calls.jsonl");
     this.summaryPath = join(this.evidenceDir, "adapter_summary.json");
@@ -160,35 +173,52 @@ export class AuditedOllamaModelAdapter extends OllamaModelAdapter {
     this.errorsCount = 0;
     this.callsList = callsList;
     this.interactionsList = [];
+    this.auditError = null;
 
-    // Ensure empty evidence files exist immediately on startup
-    writeFileSync(this.eventsPath, "", { flag: "a" });
-    writeFileSync(this.callsPath, "", { flag: "a" });
-    this.writeSummary("initialized");
+    // Ensure empty evidence files exist immediately on startup; fail closed if unwritable
+    try {
+      this.writeFileFn(this.eventsPath, "", { flag: "a" });
+      this.writeFileFn(this.callsPath, "", { flag: "a" });
+      this.writeSummary("initialized");
+    } catch (err) {
+      this.auditError = err;
+      throw new Error(`Failed to initialize audit evidence directory (${this.evidenceDir}): ${err.message}`);
+    }
   }
 
   logEvent(event, data = {}) {
+    if (this.auditError) {
+      throw new Error(`Audit failure: cannot write event '${event}' due to prior audit error (${this.auditError.message})`);
+    }
     const entry = {
       timestamp: new Date().toISOString(),
       event,
       ...data,
     };
     try {
-      appendFileSync(this.eventsPath, JSON.stringify(entry) + "\n", "utf8");
-    } catch {
-      // Ignore disk append errors in non-blocking audit logger
+      this.appendFileFn(this.eventsPath, JSON.stringify(entry) + "\n", "utf8");
+    } catch (err) {
+      this.auditError = err;
+      throw new Error(`Failed to write audit event log (${this.eventsPath}): ${err.message}`);
     }
   }
 
   logCall(callRecord) {
+    if (this.auditError) {
+      throw new Error(`Audit failure: cannot write call log due to prior audit error (${this.auditError.message})`);
+    }
     try {
-      appendFileSync(this.callsPath, JSON.stringify(callRecord) + "\n", "utf8");
-    } catch {
-      // Ignore disk append errors
+      this.appendFileFn(this.callsPath, JSON.stringify(callRecord) + "\n", "utf8");
+    } catch (err) {
+      this.auditError = err;
+      throw new Error(`Failed to write ollama calls log (${this.callsPath}): ${err.message}`);
     }
   }
 
   writeSummary(status = "running") {
+    if (this.auditError) {
+      throw new Error(`Audit failure: cannot write summary due to prior audit error (${this.auditError.message})`);
+    }
     const summary = {
       summary_schema_version: 1,
       model: this.model,
@@ -204,13 +234,17 @@ export class AuditedOllamaModelAdapter extends OllamaModelAdapter {
       status,
     };
     try {
-      writeFileSync(this.summaryPath, JSON.stringify(summary, null, 2) + "\n", "utf8");
-    } catch {
-      // Ignore disk write errors
+      this.writeFileFn(this.summaryPath, JSON.stringify(summary, null, 2) + "\n", "utf8");
+    } catch (err) {
+      this.auditError = err;
+      throw new Error(`Failed to write adapter summary (${this.summaryPath}): ${err.message}`);
     }
   }
 
   async handleEnvelope(envelope) {
+    if (this.auditError) {
+      throw new Error(`Audit failure: cannot process envelope due to prior audit error (${this.auditError.message})`);
+    }
     this.envelopesReceived += 1;
     const interactionId = envelope?.interaction_id;
     const requestDigest = envelope?.request_digest;
@@ -279,25 +313,36 @@ export class AuditedOllamaModelAdapter extends OllamaModelAdapter {
         ? "INTERACTION_BUDGET_EXHAUSTED"
         : "MODEL_ADAPTER_ERROR";
 
-      this.logEvent("framed_error", {
-        interaction_id: interactionId,
-        error_code: errorCode,
-        error_message: message,
-      });
+      try {
+        this.logEvent("framed_error", {
+          interaction_id: interactionId,
+          error_code: errorCode,
+          error_message: message,
+        });
 
-      this.writeSummary("running");
+        this.writeSummary("running");
+      } catch (writeErr) {
+        this.auditError = writeErr;
+      }
+
       throw err;
     }
   }
 
   async close() {
-    this.writeSummary("closed");
-    this.logEvent("adapter_stopped", {
-      total_envelopes: this.envelopesReceived,
-      unique_interactions: new Set(this.interactionsList.map((i) => i.interaction_id)).size,
-      unique_calls: this.callsList.length,
-      errors: this.errorsCount,
-    });
+    if (!this.auditError) {
+      try {
+        this.writeSummary("closed");
+        this.logEvent("adapter_stopped", {
+          total_envelopes: this.envelopesReceived,
+          unique_interactions: new Set(this.interactionsList.map((i) => i.interaction_id)).size,
+          unique_calls: this.callsList.length,
+          errors: this.errorsCount,
+        });
+      } catch (err) {
+        this.auditError = err;
+      }
+    }
     return super.close();
   }
 }

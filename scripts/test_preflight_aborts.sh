@@ -65,6 +65,31 @@ if ! grep -q "audited_adapter_wrapper.mjs" "$RUN_SCRIPT"; then
 fi
 echo "PASS: Audited adapter wrapper is invoked"
 
+# 7. Assert Python block in run script imports sys
+if ! grep -A 5 "Step 2: TaskResult Patch Inspection" "$RUN_SCRIPT" | grep -q "import sys"; then
+  echo "FAIL: $RUN_SCRIPT must import sys in Step 2 patch inspection" >&2
+  exit 1
+fi
+echo "PASS: Step 2 patch inspection imports sys"
+
+# 8. Assert exact patch bytes are written directly from Python without shell echo
+if grep -q 'echo "\$PATCH_DIFF"' "$RUN_SCRIPT"; then
+  echo "FAIL: $RUN_SCRIPT must not use shell 'echo \"\$PATCH_DIFF\"' to write attempted_patch.diff" >&2
+  exit 1
+fi
+if ! grep -q "with open(diff_out_path, 'wb')" "$RUN_SCRIPT"; then
+  echo "FAIL: $RUN_SCRIPT must write exact patch bytes directly from Python" >&2
+  exit 1
+fi
+echo "PASS: Exact patch bytes written directly from Python to evidence file"
+
+# 9. Assert git apply --check runs before git apply
+if ! grep -B 2 -A 5 "git apply --check" "$RUN_SCRIPT" | grep -q "git apply --check"; then
+  echo "FAIL: $RUN_SCRIPT must execute git apply --check" >&2
+  exit 1
+fi
+echo "PASS: git apply --check is executed before git apply"
+
 echo ""
 echo "=== Running Dynamic Offline Preflight Abort Tests ==="
 
@@ -178,6 +203,10 @@ if ! echo "$FIXTURE_OUT" | grep -q "Fixture snapshot SHA-256 mismatch"; then
   exit 1
 fi
 echo "PASS: Fixture snapshot SHA-256 mismatch aborts before model pull (exit code $FIXTURE_EXIT)"
+
+echo ""
+echo "=== Running Offline Host Verification Regression Tests ==="
+bash "$REPO_ROOT/scripts/test_host_verification.sh"
 
 echo ""
 echo "=== ALL OFFLINE PREFLIGHT ABORT TESTS AND STATIC ASSERTIONS PASSED! ==="

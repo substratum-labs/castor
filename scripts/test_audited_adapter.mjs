@@ -13,7 +13,7 @@
  */
 
 import assert from "node:assert/strict";
-import { readFileSync, rmSync, existsSync } from "node:fs";
+import { readFileSync, rmSync, existsSync, appendFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConnection } from "node:net";
@@ -254,7 +254,7 @@ async function runTests() {
     const cacheHitEvent = eventLines.find((e) => e.event === "cache_hit");
     assert.ok(cacheHitEvent, "Must log cache_hit event");
 
-    console.log("=== ALL AUDITED ADAPTER TESTS PASSED! ===");
+    console.log("=== ALL BASE AUDITED ADAPTER TESTS PASSED! ===");
   } finally {
     try {
       rmSync(testDir, { recursive: true, force: true });
@@ -264,7 +264,178 @@ async function runTests() {
   }
 }
 
-runTests().catch((err) => {
+async function runFailClosedTests() {
+  console.log("Running Fail-Closed Audit Error Tests...");
+
+  // Test 1: Write error on startup fails closed
+  {
+    assert.throws(
+      () => {
+        new AuditedOllamaModelAdapter({
+          evidenceDir: join(tmpdir(), `castor-fail-init-${Date.now()}`),
+          writeFileFn: () => {
+            throw new Error("ENOSPC: No space left on device");
+          },
+        });
+      },
+      (err) => err.message.includes("Failed to initialize audit evidence directory"),
+      "Must throw error on startup if evidence files cannot be initialized"
+    );
+    console.log("PASS: Constructor fails closed on startup write failure");
+  }
+
+  // Test 2: Write error on dispatch fails closed before Ollama HTTP call
+  {
+    const testDir = join(tmpdir(), `castor-aud-fail-dispatch-${Date.now()}`);
+    const socketPath = join("/tmp", `aud_fail_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.sock`);
+    const evidenceDir = join(testDir, "evidence");
+
+    let mockCallCount = 0;
+    const mockFetch = async () => {
+      mockCallCount += 1;
+      return new Response(JSON.stringify({}), { status: 200 });
+    };
+
+    let failOnDispatch = true;
+    const adapter = new AuditedOllamaModelAdapter({
+      evidenceDir,
+      fetchFn: mockFetch,
+      appendFileFn: (filePath, data, encoding) => {
+        if (failOnDispatch && typeof data === "string" && data.includes("ollama_http_dispatched")) {
+          throw new Error("EIO: Disk I/O failure during dispatch log");
+        }
+        return appendFileSync(filePath, data, encoding);
+      },
+    });
+
+    try {
+      await adapter.listen(socketPath);
+      const client = createConnection(socketPath);
+      await new Promise((resolve) => client.once("connect", resolve));
+
+      const env1 = makeEnvelope("interaction-fail-1");
+      sendFramed(client, env1);
+      const resp1 = await readFramed(client);
+
+      assert.ok(resp1.error, "Must return wire framed error on dispatch write failure");
+      assert.equal(resp1.error.code, "MODEL_ADAPTER_ERROR");
+      assert.ok(
+        resp1.error.message.includes("Failed to write audit event log") ||
+        resp1.error.message.includes("Disk I/O failure"),
+        `Error message must indicate write failure, got: ${resp1.error.message}`
+      );
+      assert.equal(mockCallCount, 0, "Ollama HTTP fetch MUST NOT be called if dispatch log write fails");
+
+      // Test 3: Subsequent inference requests MUST also fail closed without calling fetch
+      const env2 = makeEnvelope("interaction-fail-2");
+      sendFramed(client, env2);
+      const resp2 = await readFramed(client);
+
+      assert.ok(resp2.error, "Must return wire framed error on subsequent call after audit failure");
+      assert.equal(resp2.error.code, "MODEL_ADAPTER_ERROR");
+      assert.ok(
+        resp2.error.message.includes("Audit failure"),
+        `Error message must indicate audit failure, got: ${resp2.error.message}`
+      );
+      assert.equal(mockCallCount, 0, "Further Ollama HTTP inference MUST be refused after audit failure");
+
+      client.end();
+      await adapter.close();
+      console.log("PASS: Adapter fails closed before inference on dispatch write error and refuses further calls");
+    } finally {
+      try {
+        rmSync(testDir, { recursive: true, force: true });
+      } catch {}
+    }
+  }
+
+  // Test 4: Write error after call 1 refuses call 2
+  {
+    const testDir = join(tmpdir(), `castor-aud-fail-postcall-${Date.now()}`);
+    const socketPath = join("/tmp", `aud_post_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.sock`);
+    const evidenceDir = join(testDir, "evidence");
+
+    let mockCallCount = 0;
+    const mockFetch = async () => {
+      mockCallCount += 1;
+      const mockResponse = {
+        model: "qwen3.5:9b",
+        message: { role: "assistant", content: "ok" },
+        done: true,
+        done_reason: "stop",
+        prompt_eval_count: 10,
+        eval_count: 5,
+      };
+      return new Response(JSON.stringify(mockResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    let failOnCallLog = false;
+    const adapter = new AuditedOllamaModelAdapter({
+      evidenceDir,
+      fetchFn: mockFetch,
+      appendFileFn: (filePath, data, encoding) => {
+        if (failOnCallLog && String(filePath).includes("ollama_calls.jsonl")) {
+          throw new Error("EROFS: Read-only file system on calls log");
+        }
+        return appendFileSync(filePath, data, encoding);
+      },
+    });
+
+    try {
+      await adapter.listen(socketPath);
+      const client = createConnection(socketPath);
+      await new Promise((resolve) => client.once("connect", resolve));
+
+      // 1st interaction succeeds
+      const env1 = makeEnvelope("interaction-post-1");
+      sendFramed(client, env1);
+      const resp1 = await readFramed(client);
+      assert.ok(resp1.observation_digest);
+      assert.equal(mockCallCount, 1);
+
+      // Now trigger write failure on call log
+      failOnCallLog = true;
+      const env2 = makeEnvelope("interaction-post-2");
+      sendFramed(client, env2);
+      const resp2 = await readFramed(client);
+
+      assert.ok(resp2.error, "Must return wire framed error when call log write fails");
+      assert.equal(resp2.error.code, "MODEL_ADAPTER_ERROR");
+      assert.equal(mockCallCount, 2);
+
+      // Now attempt call 3: must be refused BEFORE fetch
+      const env3 = makeEnvelope("interaction-post-3");
+      sendFramed(client, env3);
+      const resp3 = await readFramed(client);
+
+      assert.ok(resp3.error, "Must refuse call 3 due to prior audit error");
+      assert.equal(resp3.error.code, "MODEL_ADAPTER_ERROR");
+      assert.ok(resp3.error.message.includes("Audit failure"));
+      assert.equal(mockCallCount, 2, "Call 3 must not dispatch HTTP request to Ollama");
+
+      client.end();
+      await adapter.close();
+      console.log("PASS: Write error after call permanently fails closed and blocks further Ollama HTTP inference");
+    } finally {
+      try {
+        rmSync(testDir, { recursive: true, force: true });
+      } catch {}
+    }
+  }
+
+  console.log("=== ALL FAIL-CLOSED AUDIT ERROR TESTS PASSED! ===");
+}
+
+async function main() {
+  await runTests();
+  await runFailClosedTests();
+  console.log("=== ALL AUDITED ADAPTER TEST SUITES PASSED! ===");
+}
+
+main().catch((err) => {
   console.error("Test failed:", err);
   process.exit(1);
 });

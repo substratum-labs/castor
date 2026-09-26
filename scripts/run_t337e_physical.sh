@@ -19,6 +19,7 @@ CASTOR_STATE_ROOT="${CASTOR_STATE_ROOT:-/tmp/castor-t337e-state}"
 CASTOR_MODEL_SOCKET="${CASTOR_MODEL_SOCKET:-/tmp/castor-model-t337e.sock}"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/castor-cargo-target}"
 REQUIRED_DISK_KB="${REQUIRED_DISK_KB:-11000000}" # ~10.5 GiB minimum free
+EXPECTED_FIXTURE_SHA="${EXPECTED_FIXTURE_SHA:-d64c1fb8f73530b81e43d621f2c9afad9ef2cc5c188c06ec5b0db7c389c4f99f}"
 
 compute_sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -62,6 +63,8 @@ cleanup() {
   exit "$exit_code"
 }
 trap cleanup EXIT INT TERM
+
+if [ "${1:-}" != "--verify-only" ] && [ "${VERIFY_ONLY:-0}" != "1" ]; then
 
 # ----------------------------------------------------------------------
 # Gate 1: Host Environment & Disk Headroom Check
@@ -326,6 +329,11 @@ set -e
 echo "$CASTOR_EXIT" > "$EVIDENCE_DIR/castor_exit_code.txt"
 echo "Castor process exited with code: $CASTOR_EXIT"
 
+else
+  echo "=== Running in Host Verification Only Mode (--verify-only) ==="
+  CASTOR_EXIT=$(cat "$EVIDENCE_DIR/castor_exit_code.txt" 2>/dev/null || echo 0)
+fi
+
 # ----------------------------------------------------------------------
 # Gate 6: Evidence Collection and Post-Run Verification
 # ----------------------------------------------------------------------
@@ -346,9 +354,10 @@ else
   echo "Note: Pi log not generated at $PI_CONTAINER_LOG (omitted, not falsely claimed)"
 fi
 
-# Parse task result JSON if valid
+# Parse task result JSON if raw output exists
 TASK_RESULT_JSON="$EVIDENCE_DIR/task_result.json"
-python3 -c "
+if [ -f "$EVIDENCE_DIR/task_result.raw.txt" ]; then
+  python3 -c "
 import json, sys
 try:
     with open('$EVIDENCE_DIR/task_result.raw.txt') as f:
@@ -363,6 +372,7 @@ try:
 except Exception as e:
     print('Note: Could not parse task_result.raw.txt as JSON: ' + str(e))
 " || true
+fi
 
 # Independent Host Verification
 VERIFY_DIR=$(mktemp -d /tmp/t337e-verify.XXXXXX)
@@ -396,23 +406,32 @@ HOST_VERIFY_LOG="$EVIDENCE_DIR/host_verification.txt"
   # 2. Extract patch_diff from TaskResult if provided
   echo ""
   echo "--- Step 2: TaskResult Patch Inspection ---"
-  PATCH_DIFF=""
+  rm -f "$EVIDENCE_DIR/attempted_patch.diff"
   if [ -f "$TASK_RESULT_JSON" ]; then
-    PATCH_DIFF=$(python3 -c "
+    python3 -c "
 import json
+import sys
+
+task_json_path = sys.argv[1]
+diff_out_path = sys.argv[2]
 try:
-    with open('$TASK_RESULT_JSON') as f:
+    with open(task_json_path, 'r', encoding='utf-8') as f:
         d = json.load(f)
     p = d.get('patch_diff')
     if p:
-        sys.stdout.write(p)
-except Exception:
-    pass
-" 2>/dev/null || true)
+        with open(diff_out_path, 'wb') as out:
+            if isinstance(p, str):
+                out.write(p.encode('utf-8'))
+            elif isinstance(p, (bytes, bytearray)):
+                out.write(p)
+            else:
+                out.write(str(p).encode('utf-8'))
+except Exception as e:
+    sys.stderr.write('Error extracting patch_diff: {}\n'.format(e))
+" "$TASK_RESULT_JSON" "$EVIDENCE_DIR/attempted_patch.diff" 2>/dev/null || true
   fi
 
-  if [ -n "$PATCH_DIFF" ]; then
-    echo "$PATCH_DIFF" > "$EVIDENCE_DIR/attempted_patch.diff"
+  if [ -f "$EVIDENCE_DIR/attempted_patch.diff" ]; then
     PATCH_SHA=$(compute_sha256 "$EVIDENCE_DIR/attempted_patch.diff")
     echo "TaskResult provided patch_diff. Saved to $EVIDENCE_DIR/attempted_patch.diff"
     echo "Attempted Patch SHA256: $PATCH_SHA"
@@ -423,25 +442,37 @@ except Exception:
     (cd "$PATCHED_DIR" && git init -q && git config user.name "HostVerifier" && git config user.email "verifier@example.com" && git add . && git commit -q -m "baseline")
 
     set +e
-    GIT_APPLY_OUT=$(cd "$PATCHED_DIR" && git apply --whitespace=nowarn "$EVIDENCE_DIR/attempted_patch.diff" 2>&1)
-    GIT_APPLY_EXIT=$?
+    GIT_CHECK_OUT=$(cd "$PATCHED_DIR" && git apply --check --whitespace=nowarn "$EVIDENCE_DIR/attempted_patch.diff" 2>&1)
+    GIT_CHECK_EXIT=$?
     set -e
 
-    echo "git apply exit code: $GIT_APPLY_EXIT"
-    echo "git apply output: ${GIT_APPLY_OUT:-<clean>}"
+    echo "git apply --check exit code: $GIT_CHECK_EXIT"
+    echo "git apply --check output: ${GIT_CHECK_OUT:-<clean>}"
 
-    echo ""
-    echo "--- Step 3: Post-Patch Test Rerun ---"
-    if [ "$GIT_APPLY_EXIT" -eq 0 ]; then
+    if [ "$GIT_CHECK_EXIT" -eq 0 ]; then
       set +e
-      POST_PATCH_OUT=$(cd "$PATCHED_DIR" && python3 -m unittest tests/test_duration.py 2>&1)
-      POST_PATCH_EXIT=$?
+      GIT_APPLY_OUT=$(cd "$PATCHED_DIR" && git apply --whitespace=nowarn "$EVIDENCE_DIR/attempted_patch.diff" 2>&1)
+      GIT_APPLY_EXIT=$?
       set -e
-      echo "Post-patch unittest exit code: $POST_PATCH_EXIT"
-      echo "Post-patch unittest output:"
-      echo "$POST_PATCH_OUT"
+
+      echo "git apply exit code: $GIT_APPLY_EXIT"
+      echo "git apply output: ${GIT_APPLY_OUT:-<clean>}"
+
+      echo ""
+      echo "--- Step 3: Post-Patch Test Rerun ---"
+      if [ "$GIT_APPLY_EXIT" -eq 0 ]; then
+        set +e
+        POST_PATCH_OUT=$(cd "$PATCHED_DIR" && python3 -m unittest tests/test_duration.py 2>&1)
+        POST_PATCH_EXIT=$?
+        set -e
+        echo "Post-patch unittest exit code: $POST_PATCH_EXIT"
+        echo "Post-patch unittest output:"
+        echo "$POST_PATCH_OUT"
+      else
+        echo "Skipping post-patch unittest because git apply failed (exit code $GIT_APPLY_EXIT)."
+      fi
     else
-      echo "Skipping post-patch unittest because git apply failed (exit code $GIT_APPLY_EXIT)."
+      echo "Skipping git apply and post-patch unittest because git apply --check failed (exit code $GIT_CHECK_EXIT)."
     fi
   else
     echo "TaskResult does not supply patch_diff (patch_diff is null or omitted)."
