@@ -388,7 +388,7 @@ fn commit_ready_turn(
             client,
             "admit",
             "AdmitTurn",
-            json!({ "agent_id": "agent-1", "turn_id": 1, "lease_epoch": 0, "base_projection_digest": DIGEST }),
+            json!({ "agent_id": "agent-1", "turn_id": 1, "lease_epoch": 0, "base_projection_digest": DIGEST, "expected_generation": 1 }),
         ),
         "Admitted",
     );
@@ -1132,6 +1132,143 @@ fn scenario_19_dual_socket_uses_closed_channel_allowlists() {
     );
     assert_eq!(summary.status, "Ok");
     assert_eq!(summary.outcome.unwrap()["generation"], json!(1));
+}
+
+#[test]
+fn agent_observe_projection_is_read_only_and_tracks_host_projection_updates() {
+    let harness = ContractHarness::without_test_opcodes();
+    let before = call(
+        &mut harness.client(),
+        "observe-before",
+        "ObserveProjection",
+        json!({}),
+    );
+    assert_eq!(before.status, "Ok");
+    assert_eq!(
+        before.outcome.as_ref().unwrap()["type"],
+        "ProjectionObserved"
+    );
+    assert_eq!(before.outcome.as_ref().unwrap()["generation"], 1);
+    assert!(before.outcome.as_ref().unwrap()["projection_digest"].is_null());
+    let initial_journal = call(
+        &mut harness.control_client(),
+        "journal-before",
+        "InspectJournal",
+        json!({}),
+    )
+    .outcome
+    .unwrap()["entries"]
+        .as_array()
+        .unwrap()
+        .len();
+    let mut agent = harness.client();
+    commit_ready_turn(
+        &mut agent,
+        &["action-1"],
+        Some(&mut harness.control_client()),
+    );
+    arm_action(&mut agent, "action-1", "scope-1");
+    let before_second_read = call(
+        &mut harness.control_client(),
+        "journal-before-second-read",
+        "InspectJournal",
+        json!({}),
+    )
+    .outcome
+    .unwrap()["entries"]
+        .as_array()
+        .unwrap()
+        .len();
+    let after = call(&mut agent, "observe-after", "ObserveProjection", json!({}));
+    assert_eq!(after.status, "Ok");
+    assert_eq!(after.outcome.as_ref().unwrap()["generation"], 1);
+    assert_ne!(
+        after.outcome.as_ref().unwrap()["projection_digest"],
+        before.outcome.as_ref().unwrap()["projection_digest"]
+    );
+    let final_journal = call(
+        &mut harness.control_client(),
+        "journal-after",
+        "InspectJournal",
+        json!({}),
+    )
+    .outcome
+    .unwrap()["entries"]
+        .as_array()
+        .unwrap()
+        .len();
+    assert_eq!(final_journal, before_second_read);
+    assert!(final_journal > initial_journal);
+
+    assert_eq!(
+        call(
+            &mut harness.control_client(),
+            "fence-host",
+            "PersistFence",
+            json!({ "generation": 2 }),
+        )
+        .outcome
+        .unwrap()["type"],
+        "GenerationFenced"
+    );
+    let fenced_journal_size = call(
+        &mut harness.control_client(),
+        "journal-before-fenced-admit",
+        "InspectJournal",
+        json!({}),
+    )
+    .outcome
+    .unwrap()["entries"]
+        .as_array()
+        .unwrap()
+        .len();
+    let stale_generation_admit = call(
+        &mut agent,
+        "fenced-admit",
+        "AdmitTurn",
+        json!({
+            "agent_id": "agent-1",
+            "turn_id": 2,
+            "lease_epoch": 0,
+            "base_projection_digest": after.outcome.as_ref().unwrap()["projection_digest"],
+            "expected_generation": 1
+        }),
+    );
+    assert_eq!(
+        stale_generation_admit.outcome,
+        Some(json!({ "type": "RejectedStaleGeneration", "current_generation": 2 }))
+    );
+    let fenced_journal_after = call(
+        &mut harness.control_client(),
+        "journal-after-fenced-admit",
+        "InspectJournal",
+        json!({}),
+    )
+    .outcome
+    .unwrap()["entries"]
+        .as_array()
+        .unwrap()
+        .len();
+    assert_eq!(fenced_journal_after, fenced_journal_size);
+    let fenced = call(&mut agent, "observe-fenced", "ObserveProjection", json!({}));
+    assert_eq!(fenced.outcome.as_ref().unwrap()["generation"], 2);
+    let control_observation = call(
+        &mut harness.control_client(),
+        "control-observe-fenced",
+        "ObserveProjection",
+        json!({}),
+    );
+    assert_eq!(control_observation.status, "Ok");
+    assert_eq!(control_observation.outcome, fenced.outcome);
+
+    let forbidden_summary = call(
+        &mut agent,
+        "agent-summary",
+        "GetProjectionSummary",
+        json!({}),
+    );
+    assert_eq!(forbidden_summary.status, "Error");
+    assert_eq!(forbidden_summary.error.unwrap().code, "UnauthorizedOpcode");
 }
 
 #[test]

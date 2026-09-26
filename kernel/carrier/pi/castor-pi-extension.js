@@ -65,6 +65,7 @@ export default function castorExtension(pi) {
     turnId: 1,
     leaseEpoch: 0,
     baseDigest: EMPTY_DIGEST,
+    expectedGeneration: 1,
     active: false,
     nextInteraction: 0,
     nextAction: 0,
@@ -74,14 +75,42 @@ export default function castorExtension(pi) {
 
   async function ensureTurn() {
     if (state.active) return;
-    requireOutcome(await ipc.request("AdmitTurn", {
-      agent_id: "agent-1",
-      turn_id: state.turnId,
-      lease_epoch: 0,
-      base_projection_digest: state.baseDigest,
-    }), "Admitted");
-    state.active = true;
-    state.leaseEpoch = 0;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const projection = requireOutcome(
+        await ipc.request("ObserveProjection", {}),
+        "ProjectionObserved",
+      );
+      if (
+        (projection.projection_digest !== null &&
+          (typeof projection.projection_digest !== "string" ||
+            !/^sha256:[0-9a-f]{64}$/.test(projection.projection_digest))) ||
+        !Number.isSafeInteger(projection.generation) ||
+        projection.generation < 1
+      ) {
+        throw new Error("Castor returned an invalid projection observation");
+      }
+      if (state.expectedGeneration !== projection.generation) {
+        throw new Error("Castor projection generation changed; task is fenced");
+      }
+      state.baseDigest = projection.projection_digest ?? EMPTY_DIGEST;
+      const admitted = await ipc.request("AdmitTurn", {
+        agent_id: "agent-1",
+        turn_id: state.turnId,
+        lease_epoch: 0,
+        base_projection_digest: state.baseDigest,
+        expected_generation: projection.generation,
+      });
+      if (admitted?.type === "Admitted") {
+        state.active = true;
+        state.leaseEpoch = 0;
+        return;
+      }
+      if (admitted?.type !== "RejectedStaleAuthority") {
+        requireOutcome(admitted, "Admitted");
+      }
+      if (attempt < 2) await delay(10 * (attempt + 1));
+    }
+    throw new Error("Castor projection kept changing during turn admission");
   }
 
   async function bindBufferedModel(model, context, options) {

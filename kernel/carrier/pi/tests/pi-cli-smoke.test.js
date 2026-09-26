@@ -11,7 +11,9 @@ test("pinned Pi CLI loads Castor provider in a networkless read-only container",
   const root = await mkdtemp(join(tmpdir(), "castor-pi-cli-"));
   const socketPath = join(root, "ipc.sock");
   const calls = [];
+  const observedDigests = [];
   let modelCalls = 0;
+  let projectionObservations = 0;
   const consumeAttempts = new Map();
   const server = createServer((stream) => {
     let data = Buffer.alloc(0);
@@ -24,6 +26,19 @@ test("pinned Pi CLI loads Castor provider in a networkless read-only container",
       calls.push(request);
       let outcome;
       switch (request.op) {
+        case "ObserveProjection": {
+          const ordinal = projectionObservations++;
+          const projectionDigest = ordinal === 0
+            ? null
+            : `sha256:${createHash("sha256").update(`projection-${ordinal}`).digest("hex")}`;
+          observedDigests.push(projectionDigest);
+          outcome = {
+            type: "ProjectionObserved",
+            projection_digest: projectionDigest,
+            generation: 1,
+          };
+          break;
+        }
         case "AdmitTurn": outcome = { type: "Admitted" }; break;
         case "EnsureRegion": outcome = { type: "Success" }; break;
         case "RequestInteraction": modelCalls += 1; outcome = { type: "InteractionRequested" }; break;
@@ -91,6 +106,15 @@ test("pinned Pi CLI loads Castor provider in a networkless read-only container",
     clearTimeout(timeout);
     assert.equal(code, 0, `Pi failed: ${stderr}\n${stdout}\nAISA calls: ${calls.map((call) => call.op)}`);
     assert.equal(calls.filter((call) => call.op === "RequestInteraction").length, 2, `Pi must resume after edit; calls=${calls.map((call) => call.op)}; stdout=${stdout}; stderr=${stderr}`);
+    const projectionReads = calls.filter((call) => call.op === "ObserveProjection");
+    const admissions = calls.filter((call) => call.op === "AdmitTurn");
+    assert.equal(projectionReads.length, 2);
+    assert.equal(admissions.length, 2);
+    assert.deepEqual(
+      admissions.map((admission) => admission.payload.base_projection_digest),
+      observedDigests.map((digest) => digest ?? "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+    );
+    assert.deepEqual(admissions.map((admission) => admission.payload.expected_generation), [1, 1]);
     assert.ok(calls.some((call) => call.op === "CommitTurn"), "real Pi tool call must commit through Castor");
     assert.ok(calls.some((call) => call.op === "PresentAdmissionCertificate"), "real Pi tool call must arm through Castor");
     const region = calls.find((call) => call.op === "EnsureRegion");

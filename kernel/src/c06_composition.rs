@@ -554,6 +554,17 @@ impl D1GovernedTurnAuthority {
         })
     }
 
+    /// Read-only observation for an agent to obtain a fresh AdmitTurn base.
+    /// The optional digest preserves the distinction between an unprojected
+    /// genesis state and a projected state whose digest happens to be present.
+    pub fn observe_projection(&self) -> serde_json::Value {
+        json!({
+            "type": "ProjectionObserved",
+            "projection_digest": self.projection_digest,
+            "generation": self.generation,
+        })
+    }
+
     pub fn inspect_journal(&self) -> Vec<CoreEntry> {
         self.storage()
             .journal_requests()

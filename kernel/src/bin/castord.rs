@@ -323,7 +323,8 @@ fn dispatch(
 ) -> Result<Value, String> {
     let agent_allowed = matches!(
         request.op.as_str(),
-        "AdmitTurn"
+        "ObserveProjection"
+            | "AdmitTurn"
             | "CommitTurn"
             | "RegisterAction"
             | "PresentAdmissionCertificate"
@@ -350,6 +351,7 @@ fn dispatch(
             | "ResolveQuarantinedDispute"
             | "PersistFence"
             | "GetProjectionSummary"
+            | "ObserveProjection"
             | "InspectJournal"
             | "SubmitDecision"
             | "EnsureRegion"
@@ -366,6 +368,9 @@ fn dispatch(
         return Err("UnauthorizedOpcode".into());
     }
     let p = &request.payload;
+    if request.op == "ObserveProjection" {
+        return Ok(authority.observe_projection());
+    }
     let governed = match request.op.as_str() {
         "GrantCapability" => {
             let request: GrantCapabilityRequest =
@@ -407,13 +412,27 @@ fn dispatch(
                 "content": content
             }));
         }
-        "AdmitTurn" => authority.admit_turn(AdmitTurnRequest {
-            agent_id: string(p, "agent_id")?,
-            turn_id: number(p, "turn_id")?,
-            lease_epoch: number(p, "lease_epoch")?,
-            base_projection_digest: string(p, "base_projection_digest")?,
-            cap_id: p.get("cap_id").and_then(Value::as_str).map(str::to_owned),
-        }),
+        "AdmitTurn" => {
+            if let Some(expected_generation) = p.get("expected_generation") {
+                let expected_generation = expected_generation
+                    .as_u64()
+                    .ok_or_else(|| "expected_generation must be an unsigned integer".to_owned())?;
+                if expected_generation != authority.generation() {
+                    return Ok(outcome_value(
+                        GovernedTurnOutcome::RejectedStaleGeneration {
+                            current_generation: authority.generation(),
+                        },
+                    ));
+                }
+            }
+            authority.admit_turn(AdmitTurnRequest {
+                agent_id: string(p, "agent_id")?,
+                turn_id: number(p, "turn_id")?,
+                lease_epoch: number(p, "lease_epoch")?,
+                base_projection_digest: string(p, "base_projection_digest")?,
+                cap_id: p.get("cap_id").and_then(Value::as_str).map(str::to_owned),
+            })
+        }
         "RequestInteraction" => {
             let query_operation = match p.get("descriptor") {
                 None => None,
