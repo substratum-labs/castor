@@ -14,7 +14,7 @@ use crate::sandbox::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
@@ -820,12 +820,19 @@ fn committed_turns(journal: &[Value]) -> Vec<u64> {
 }
 
 fn armed_without_settlement(journal: &[Value]) -> bool {
+    let settled: HashSet<u64> = journal
+        .iter()
+        .filter_map(|entry| entry.get("AttemptSettled")?.get("attempt_id")?.as_u64())
+        .collect();
     journal
         .iter()
-        .any(|entry| entry.get("AttemptArmed").is_some())
-        && !journal
-            .iter()
-            .any(|entry| entry.get("AttemptSettled").is_some())
+        .filter_map(|entry| entry.get("AttemptArmed"))
+        .any(|armed| {
+            armed
+                .get("attempt_id")
+                .and_then(Value::as_u64)
+                .is_none_or(|id| !settled.contains(&id))
+        })
 }
 
 fn preserve_dispute_evidence(
@@ -1117,7 +1124,18 @@ pub fn test_state_root() -> io::Result<PathBuf> {
 
 #[cfg(test)]
 mod pi_output_tests {
-    use super::pi_finished_without_error;
+    use super::{armed_without_settlement, pi_finished_without_error};
+    use serde_json::json;
+
+    #[test]
+    fn one_settlement_cannot_hide_a_different_unsettled_attempt() {
+        let journal = vec![
+            json!({"AttemptArmed": {"attempt_id": 1}}),
+            json!({"AttemptArmed": {"attempt_id": 2}}),
+            json!({"AttemptSettled": {"attempt_id": 1}}),
+        ];
+        assert!(armed_without_settlement(&journal));
+    }
 
     #[test]
     fn assistant_error_after_tool_use_is_not_a_successful_task() {
