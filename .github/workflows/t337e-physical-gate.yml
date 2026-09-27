@@ -29,11 +29,12 @@ jobs:
       - name: Consume one-use label
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           echo "Consuming one-use label 'run-t337e-physical'..."
-          gh pr edit "${{ github.event.pull_request.number }}" --remove-label "run-t337e-physical"
+          gh pr edit "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --remove-label "run-t337e-physical"
           # Verify label was strictly removed and abort if still present
-          ACTIVE_LABELS=$(gh pr view "${{ github.event.pull_request.number }}" --json labels -q '.labels[].name')
+          ACTIVE_LABELS=$(gh pr view "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --json labels -q '.labels[].name')
           if echo "$ACTIVE_LABELS" | grep -q "^run-t337e-physical$"; then
             echo "ERROR: Failed to remove one-use label 'run-t337e-physical'. Aborting run to enforce one-use gate." >&2
             exit 1
