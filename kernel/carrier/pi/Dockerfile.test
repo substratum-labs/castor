@@ -1,0 +1,4 @@
+FROM substratum/castor-pi-carrier:v1
+USER root
+COPY --chmod=0444 tests/fixtures/defect.txt /workspace/defect.txt
+USER 10001:10001

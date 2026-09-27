@@ -1,0 +1,107 @@
+name: T-337-E Physical Pi One-Shot Gate
+
+"on":
+  pull_request:
+    types: [labeled]
+    branches:
+      - feat/codex-t337g-model-wait
+      - feat/codex-t337h-diagnostic
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  physical-gate:
+    name: Native Linux Host Physical Pi Run
+    # Strictly gated: ONLY runs when explicitly labeled with 'run-t337e-physical'
+    # on an exact reviewed head/base pair. The second pair tests the approved
+    # T-337-I Pi edit repair; neither push nor synchronize invokes inference.
+    # No push, open, synchronize, or other label event can invoke live inference.
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'run-t337e-physical' &&
+      ((github.event.pull_request.head.ref == 'feat/agy-t337e-physical-gate' &&
+        github.event.pull_request.base.ref == 'feat/codex-t337g-model-wait') ||
+       (github.event.pull_request.head.ref == 'feat/codex-t337i-pi-edit' &&
+        github.event.pull_request.base.ref == 'feat/codex-t337h-diagnostic'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Consume one-use label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          echo "Consuming one-use label 'run-t337e-physical'..."
+          gh pr edit "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --remove-label "run-t337e-physical"
+          # Verify label was strictly removed and abort if still present
+          ACTIVE_LABELS=$(gh pr view "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --json labels -q '.labels[].name')
+          if echo "$ACTIVE_LABELS" | grep -q "^run-t337e-physical$"; then
+            echo "ERROR: Failed to remove one-use label 'run-t337e-physical'. Aborting run to enforce one-use gate." >&2
+            exit 1
+          fi
+          echo "One-use trigger label successfully removed."
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Runner Storage Cleanup & Headroom Check
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h /
+          # Safe cleanup of unused large packages without claiming impossible free disk expansions
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost 2>/dev/null || true
+          sudo docker system prune -af 2>/dev/null || true
+          echo "=== Disk space after cleanup ==="
+          df -h /
+          AVAILABLE_KB=$(df -k / | awk 'NR==2 {print $4}')
+          echo "Available disk: ${AVAILABLE_KB} KB"
+          # Require at least 11 GB free space (~11000000 KB) before proceeding
+          if [ "$AVAILABLE_KB" -lt 11000000 ]; then
+            echo "ERROR: Insufficient disk space on runner for Qwen 9B physical run (requires >= 11 GB)." >&2
+            exit 1
+          fi
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Ollama (Pinned v0.34.4 amd64 with SHA-256 Checksum)
+        run: |
+          sudo apt-get update && sudo apt-get install -y zstd
+          OLLAMA_TAR="/tmp/ollama-linux-amd64.tar.zst"
+          OLLAMA_URL="https://github.com/ollama/ollama/releases/download/v0.34.4/ollama-linux-amd64.tar.zst"
+          EXPECTED_SHA="c238986e61d40c0cc5f4a9b9e40b9eea104350b77efa34741fc134e105cb9533"
+          echo "Downloading pinned Ollama v0.34.4 from $OLLAMA_URL..."
+          curl -fL "$OLLAMA_URL" -o "$OLLAMA_TAR"
+          echo "Verifying SHA-256 checksum..."
+          echo "$EXPECTED_SHA  $OLLAMA_TAR" | sha256sum -c -
+          echo "Extracting Ollama binary to /usr/local..."
+          sudo tar --zstd -xf "$OLLAMA_TAR" -C /usr/local
+          rm -f "$OLLAMA_TAR"
+          ollama --version
+
+      - name: Execute Native Linux Host Runner
+        run: |
+          bash scripts/run_t337e_physical.sh
+
+      - name: Upload Evidence Bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: t337e-linux-evidence-${{ github.run_id }}
+          path: evidence/
+          retention-days: 14

@@ -1,0 +1,96 @@
+{
+  "kind": "offline_diagnostic_not_live_model",
+  "pi_version": "0.87.1",
+  "system_prompt": {
+    "actual_length": 0,
+    "upstream_rendered_length": 1611,
+    "sections": [
+      "cwd",
+      "docs",
+      "preamble",
+      "rules",
+      "tools"
+    ],
+    "expected": "<cwd>\n/workspace\n</cwd>\n\n<docs>\nPi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):\n- Main documentation: /opt/castor/node_modules/@earendil-works/pi-coding-agent/README.md\n- Additional docs: /opt/castor/node_modules/@earendil-works/pi-coding-agent/docs\n- Examples: /opt/castor/node_modules/@earendil-works/pi-coding-agent/examples (extensions, custom tools, SDK)\n- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory\n- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md)\n- When working on pi topics, read the docs and examples, and follow .md cross-references before implementing\n- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)\n</docs>\n\nYou are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.\n\n<rules>\n- Be concise in your responses\n- Show file paths clearly when working with files\n</rules>\n\n<tools>\n(none)\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.\n</tools>"
+  },
+  "patches": {
+    "raw": {
+      "patch": "--- a/duration.py\n+++ b/duration.py\n@@ -37,7 +37,7 @@ def parse_duration(spec: str) -> int:\n     if unit == \"h\":\n         return value * 3600\n     if unit == \"d\":\n-        # Defect: incorrectly using 3600 instead of 86400 (24 * 3600)\n+        return value * 86400\n         return value * 3600\n     raise ValueError(f\"Unknown duration unit: {unit}\")",
+      "lint": "patch hunk line count mismatch"
+    },
+    "newline_only": {
+      "patch": "--- a/duration.py\n+++ b/duration.py\n@@ -37,7 +37,7 @@ def parse_duration(spec: str) -> int:\n     if unit == \"h\":\n         return value * 3600\n     if unit == \"d\":\n-        # Defect: incorrectly using 3600 instead of 86400 (24 * 3600)\n+        return value * 86400\n         return value * 3600\n     raise ValueError(f\"Unknown duration unit: {unit}\")\n",
+      "lint": "patch hunk line count mismatch"
+    },
+    "counts_only": {
+      "patch": "--- a/duration.py\n+++ b/duration.py\n@@ -37,6 +37,6 @@ def parse_duration(spec: str) -> int:\n     if unit == \"h\":\n         return value * 3600\n     if unit == \"d\":\n-        # Defect: incorrectly using 3600 instead of 86400 (24 * 3600)\n+        return value * 86400\n         return value * 3600\n     raise ValueError(f\"Unknown duration unit: {unit}\")",
+      "lint": "accepted"
+    },
+    "counts_and_newline": {
+      "patch": "--- a/duration.py\n+++ b/duration.py\n@@ -37,6 +37,6 @@ def parse_duration(spec: str) -> int:\n     if unit == \"h\":\n         return value * 3600\n     if unit == \"d\":\n-        # Defect: incorrectly using 3600 instead of 86400 (24 * 3600)\n+        return value * 86400\n         return value * 3600\n     raise ValueError(f\"Unknown duration unit: {unit}\")\n",
+      "lint": "accepted"
+    },
+    "native_same_intent": {
+      "patch": "--- a/duration.py\n+++ b/duration.py\n@@ -36,7 +36,7 @@\n         return value * 60\n     if unit == \"h\":\n         return value * 3600\n     if unit == \"d\":\n-        # Defect: incorrectly using 3600 instead of 86400 (24 * 3600)\n+        return value * 86400\n         return value * 3600\n     raise ValueError(f\"Unknown duration unit: {unit}\")\n",
+      "lint": "accepted"
+    },
+    "native_clean_edit": {
+      "patch": "--- a/duration.py\n+++ b/duration.py\n@@ -36,7 +36,6 @@\n         return value * 60\n     if unit == \"h\":\n         return value * 3600\n     if unit == \"d\":\n-        # Defect: incorrectly using 3600 instead of 86400 (24 * 3600)\n-        return value * 3600\n+        return value * 86400\n     raise ValueError(f\"Unknown duration unit: {unit}\")\n",
+      "lint": "accepted"
+    },
+    "live_raw": {
+      "patch": "--- a/duration.py\n+++ b/duration.py\n@@ -35,7 +35,7 @@ def parse_duration(spec: str) -> int:\n     if unit == \"h\":\n         return value * 3600\n     if unit == \"d\":\n-        # Defect: incorrectly using 3600 instead of 86400 (24 * 3600)\n+        # Fixed: days = 24 hours * 3600 seconds = 86400 seconds\n         return value * 86400\n     raise ValueError(f\"Unknown duration unit: {unit}\")",
+      "lint": "patch hunk line count mismatch"
+    },
+    "live_raw_format_repaired": {
+      "patch": "--- a/duration.py\n+++ b/duration.py\n@@ -35,6 +35,6 @@ def parse_duration(spec: str) -> int:\n     if unit == \"h\":\n         return value * 3600\n     if unit == \"d\":\n-        # Defect: incorrectly using 3600 instead of 86400 (24 * 3600)\n+        # Fixed: days = 24 hours * 3600 seconds = 86400 seconds\n         return value * 86400\n     raise ValueError(f\"Unknown duration unit: {unit}\")\n",
+      "lint": "accepted"
+    },
+    "live_structured": {
+      "patch": "--- a/duration.py\n+++ b/duration.py\n@@ -36,7 +36,6 @@\n         return value * 60\n     if unit == \"h\":\n         return value * 3600\n     if unit == \"d\":\n-        # Defect: incorrectly using 3600 instead of 86400 (24 * 3600)\n-        return value * 3600\n+        return value * 86400\n     raise ValueError(f\"Unknown duration unit: {unit}\")\n",
+      "lint": "accepted"
+    }
+  },
+  "native": {
+    "same_intent": {
+      "accepted": true,
+      "patch": "--- a/duration.py\n+++ b/duration.py\n@@ -36,7 +36,7 @@\n         return value * 60\n     if unit == \"h\":\n         return value * 3600\n     if unit == \"d\":\n-        # Defect: incorrectly using 3600 instead of 86400 (24 * 3600)\n+        return value * 86400\n         return value * 3600\n     raise ValueError(f\"Unknown duration unit: {unit}\")\n",
+      "output_sha256": "ef8a94e81b98a07229e363f638ab7dd5d26731627e2ab06cfc7339391c9e2cad"
+    },
+    "clean_edit": {
+      "accepted": true,
+      "patch": "--- a/duration.py\n+++ b/duration.py\n@@ -36,7 +36,6 @@\n         return value * 60\n     if unit == \"h\":\n         return value * 3600\n     if unit == \"d\":\n-        # Defect: incorrectly using 3600 instead of 86400 (24 * 3600)\n-        return value * 3600\n+        return value * 86400\n     raise ValueError(f\"Unknown duration unit: {unit}\")\n",
+      "output_sha256": "0277e69073074debf43162bd1434a0027036b6893cd5a111666f7076f9aaaff4"
+    },
+    "ambiguous": {
+      "accepted": false,
+      "error": "Found 2 occurrences of the text in duration.py. The text must be unique. Please provide more context to make it unique."
+    },
+    "missing": {
+      "accepted": false,
+      "error": "Could not find the exact text in duration.py. The old text must match exactly including all whitespace and newlines."
+    },
+    "empty": {
+      "accepted": false,
+      "error": "oldText must not be empty in duration.py."
+    },
+    "overlapping": {
+      "accepted": false,
+      "error": "edits[0] and edits[1] overlap in duration.py. Merge them into one edit or target disjoint regions."
+    },
+    "fuzzy_whitespace": {
+      "accepted": true,
+      "patch": "--- a/duration.py\n+++ b/duration.py\n@@ -36,7 +36,7 @@\n         return value * 60\n     if unit == \"h\":\n         return value * 3600\n     if unit == \"d\":\n-        # Defect: incorrectly using 3600 instead of 86400 (24 * 3600)\n+        return value * 86400\n         return value * 3600\n     raise ValueError(f\"Unknown duration unit: {unit}\")\n",
+      "output_sha256": "ef8a94e81b98a07229e363f638ab7dd5d26731627e2ab06cfc7339391c9e2cad"
+    }
+  },
+  "strict": {
+    "same_intent": "accepted",
+    "clean_edit": "accepted",
+    "ambiguous": "rejected",
+    "missing": "rejected",
+    "empty": "rejected",
+    "overlapping": "rejected",
+    "fuzzy_whitespace": "rejected"
+  }
+}

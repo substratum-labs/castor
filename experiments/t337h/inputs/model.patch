@@ -1,0 +1,10 @@
+--- a/duration.py
++++ b/duration.py
+@@ -37,7 +37,7 @@ def parse_duration(spec: str) -> int:
+     if unit == "h":
+         return value * 3600
+     if unit == "d":
+-        # Defect: incorrectly using 3600 instead of 86400 (24 * 3600)
++        return value * 86400
+         return value * 3600
+     raise ValueError(f"Unknown duration unit: {unit}")

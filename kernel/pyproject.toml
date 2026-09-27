@@ -9,3 +9,4 @@ requires-python = ">=3.11"
 
 [tool.maturin]
 module-name = "castor_kernel"
+features = ["extension-module"]

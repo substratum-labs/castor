@@ -1,3 +1,5 @@
+#![cfg(feature = "python-bindings")]
+
 use castor_kernel::register_python_module;
 use pyo3::exceptions::PyPermissionError;
 use pyo3::prelude::*;

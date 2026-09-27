@@ -219,7 +219,7 @@ def prepare_turn(socket_path: Path, trial_id: str) -> None:
         "InteractionRequested",
     )
     expect_outcome(
-        socket_path,
+        socket_path.parent / "control.sock",
         "report-outcome",
         "ReportOutcome",
         {

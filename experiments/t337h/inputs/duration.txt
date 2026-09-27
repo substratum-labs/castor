@@ -1,0 +1,42 @@
+"""Simple duration parsing utility."""
+
+
+def parse_duration(spec: str) -> int:
+    """Parse a human-readable duration string into total seconds.
+
+    Supported units:
+      - 's': seconds
+      - 'm': minutes (60 seconds)
+      - 'h': hours (3600 seconds)
+      - 'd': days (86400 seconds)
+
+    Examples:
+      >>> parse_duration("45s")
+      45
+      >>> parse_duration("10m")
+      600
+      >>> parse_duration("2h")
+      7200
+      >>> parse_duration("1d")
+      86400
+    """
+    spec = spec.strip()
+    if not spec:
+        raise ValueError("Duration specification cannot be empty")
+
+    unit = spec[-1]
+    value_str = spec[:-1]
+    if not value_str.isdigit():
+        raise ValueError(f"Invalid duration value: {value_str}")
+
+    value = int(value_str)
+    if unit == "s":
+        return value
+    if unit == "m":
+        return value * 60
+    if unit == "h":
+        return value * 3600
+    if unit == "d":
+        # Defect: incorrectly using 3600 instead of 86400 (24 * 3600)
+        return value * 3600
+    raise ValueError(f"Unknown duration unit: {unit}")

@@ -492,6 +492,7 @@ class Daemon:
                 "observation_digest": region[1],
             },
             "InteractionBound",
+            "control",
         )
 
     def certificate(self, resolution="Confirmed", name="receipt"):
@@ -830,6 +831,7 @@ class CognitiveRecovery(unittest.TestCase):
                     "observation_region_id": region[0],
                     "observation_digest": region[1],
                 },
+                "control",
             ),
             "RejectedLateOrClosedTurn",
         )
