@@ -1,0 +1,134 @@
+{
+  "kind": "offline_replay_not_end_to_end",
+  "results": {
+    "baseline": {
+      "tests": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "...F...\n======================================================================\nFAIL: test_parse_days (test_duration.TestDuration.test_parse_days)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/var/folders/vq/0lmt2t7j6lz37pfmbx50x5k80000gn/T/castor-t337h-d85qybxy/tests/test_duration.py\", line 22, in test_parse_days\n    self.assertEqual(parse_duration(\"1d\"), 86400)\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 3600 != 86400\n\n----------------------------------------------------------------------\nRan 7 tests in 0.000s\n\nFAILED (failures=1)\n"
+      },
+      "output_sha256": "17cddcd16e953ad4bca7d61377ea1189f8526b2c570b528c55cbc65b1fa47f1d",
+      "dead_return_retained": false
+    },
+    "raw": {
+      "lint": "patch hunk line count mismatch",
+      "git_check": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "error: corrupt patch at <stdin>:10\n"
+      }
+    },
+    "newline_only": {
+      "lint": "patch hunk line count mismatch",
+      "git_check": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "error: corrupt patch at <stdin>:11\n"
+      }
+    },
+    "counts_only": {
+      "lint": "accepted",
+      "git_check": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "error: corrupt patch at <stdin>:10\n"
+      }
+    },
+    "counts_and_newline": {
+      "lint": "accepted",
+      "git_check": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "git_apply": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "tests": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ".......\n----------------------------------------------------------------------\nRan 7 tests in 0.000s\n\nOK\n"
+      },
+      "output_sha256": "ef8a94e81b98a07229e363f638ab7dd5d26731627e2ab06cfc7339391c9e2cad",
+      "dead_return_retained": true
+    },
+    "native_same_intent": {
+      "lint": "accepted",
+      "git_check": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "git_apply": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "tests": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ".......\n----------------------------------------------------------------------\nRan 7 tests in 0.000s\n\nOK\n"
+      },
+      "output_sha256": "ef8a94e81b98a07229e363f638ab7dd5d26731627e2ab06cfc7339391c9e2cad",
+      "dead_return_retained": true
+    },
+    "native_clean_edit": {
+      "lint": "accepted",
+      "git_check": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "git_apply": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "tests": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ".......\n----------------------------------------------------------------------\nRan 7 tests in 0.000s\n\nOK\n"
+      },
+      "output_sha256": "0277e69073074debf43162bd1434a0027036b6893cd5a111666f7076f9aaaff4",
+      "dead_return_retained": false
+    },
+    "live_raw": {
+      "lint": "patch hunk line count mismatch",
+      "git_check": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "error: corrupt patch at <stdin>:10\n"
+      }
+    },
+    "live_raw_format_repaired": {
+      "lint": "accepted",
+      "git_check": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "error: patch failed: duration.py:35\nerror: duration.py: patch does not apply\n"
+      }
+    },
+    "live_structured": {
+      "lint": "accepted",
+      "git_check": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "git_apply": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "tests": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ".......\n----------------------------------------------------------------------\nRan 7 tests in 0.000s\n\nOK\n"
+      },
+      "output_sha256": "0277e69073074debf43162bd1434a0027036b6893cd5a111666f7076f9aaaff4",
+      "dead_return_retained": false
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "run_id": "36297837163",
+  "castor_head": "6e0139bc955d7f1caf4a88b84e5ef761b97535f2",
+  "source_pi_jsonl_sha256": "5735fa51931b47694a6b82e185c63f7484199e8d5684ac66417d341c9aaa56e2",
+  "model_patch_sha256": "20185888db57991673c64e32cd72ca9115be925a8cbe0f42c923b1280e677acc",
+  "request_sha256": "f5a3cfbeae6a6bb978c439c4f250fe8969d2635aba1de4b62dca15e885e2e3f3",
+  "archive_sha256": "d64c1fb8f73530b81e43d621f2c9afad9ef2cc5c188c06ec5b0db7c389c4f99f",
+  "note": "Raw observed model patch/request. No fresh model call. duration.txt copied from pinned fixture."
+}
