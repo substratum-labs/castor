@@ -175,7 +175,9 @@ export default function castorExtension(pi) {
       request_digest: requestDigest,
     }), "InteractionRequested");
     const nextLease = state.leaseEpoch + 1;
-    const deadline = Date.now() + 60_000;
+    // The host task watchdog is 300 seconds. Do not abandon a legal model
+    // observation before the host can bind it and grant the next lease.
+    const deadline = Date.now() + 300_000;
     while (Date.now() < deadline) {
       if (options?.signal?.aborted) throw new Error("model request aborted");
       const consumed = await ipc.request("ConsumeInteraction", {

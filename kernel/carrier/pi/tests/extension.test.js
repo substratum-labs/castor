@@ -7,13 +7,16 @@ import { join } from "node:path";
 import { createServer } from "node:net";
 import castorExtension from "../castor-pi-extension.js";
 
-test("Pi provider binds a full request Region before returning a buffered model result", async () => {
+test("Pi provider binds a model result that arrives after 70 seconds of virtual time", async () => {
   const root = await mkdtemp(join(tmpdir(), "castor-pi-ext-"));
   const socketPath = join(root, "ipc.sock");
   const calls = [];
   const observedDigests = [];
   const observedGenerations = [];
   let consumeAttempts = 0;
+  const originalNow = Date.now;
+  let simulatedNow = originalNow();
+  const modelStart = simulatedNow;
   let observeAttempts = 0;
   let admitAttempts = 0;
   let provider;
@@ -39,7 +42,7 @@ test("Pi provider binds a full request Region before returning a buffered model 
       CommitTurn: { type: "TurnCommitted" },
       RegisterAction: { type: "ActionRegistered" },
       PresentAdmissionCertificate: { type: "AttemptArmed", attempt_id: 1 },
-      ConsumeInteraction: request.op === "ConsumeInteraction" && ++consumeAttempts === 1 ? { type: "RejectedStaleAuthority" } : {
+      ConsumeInteraction: request.op === "ConsumeInteraction" && ++consumeAttempts <= 7 ? { type: "RejectedStaleAuthority" } : {
         type: "InteractionConsumed",
         payload: {
           interaction_id: request.payload.interaction_id,
@@ -51,6 +54,7 @@ test("Pi provider binds a full request Region before returning a buffered model 
       },
     };
     let outcome = outcomes[request.op];
+    if (request.op === "ConsumeInteraction" && outcome.type === "RejectedStaleAuthority") simulatedNow += 10_000;
     if (request.op === "ObserveProjection") {
       const ordinal = observeAttempts++;
       outcome = {
@@ -85,15 +89,18 @@ test("Pi provider binds a full request Region before returning a buffered model 
     await new Promise((resolve) => server.listen(socketPath, resolve));
     process.env.CASTOR_IPC_SOCKET = socketPath;
     castorExtension(fakePi);
+    Date.now = () => simulatedNow;
     assert.deepEqual(tools.map((tool) => tool.name).sort(), ["castor_edit_file", "castor_read_file"]);
     assert.equal(typeof provider.streamSimple, "function");
     const model = { api: "castor-buffered", provider: "castor", id: "castor-task", maxTokens: 4096 };
     const context = { messages: [{ role: "user", content: "Repair the failing unit test." }] };
     const events = [];
     for await (const event of provider.streamSimple(model, context, { maxTokens: 256 })) events.push(event);
+    assert.equal(consumeAttempts, 8, "a model observation bound after 70 seconds must still be consumed");
+    assert.equal(simulatedNow - modelStart, 70_000);
     assert.deepEqual(calls.map((call) => call.op), [
       "ObserveProjection", "AdmitTurn", "ObserveProjection", "AdmitTurn",
-      "EnsureRegion", "RequestInteraction", "ConsumeInteraction", "ConsumeInteraction",
+      "EnsureRegion", "RequestInteraction", ...Array(8).fill("ConsumeInteraction"),
     ]);
     assert.equal(
       calls[1].payload.base_projection_digest,
@@ -128,13 +135,14 @@ test("Pi provider binds a full request Region before returning a buffered model 
       /patch|hunk/i,
     );
     assert.equal(calls.length, beforeCorruptPatch, "a malformed patch must not reach AISA admission");
+    const beforeEdit = calls.length;
     await edit.execute("edit-1", { path: "defect.txt", patch_diff: "--- a/defect.txt\n+++ b/defect.txt\n@@ -1 +1 @@\n-bad\n+good\n" });
-    assert.deepEqual(calls.slice(8).map((call) => call.op), [
+    assert.deepEqual(calls.slice(beforeEdit).map((call) => call.op), [
       "EnsureRegion", "EnsureRegion", "CommitTurn", "RegisterAction", "PresentAdmissionCertificate",
     ]);
     const committed = calls.find((call) => call.op === "CommitTurn").payload;
-    assert.equal(committed.action_bindings[0].payload_digest, calls[8].payload.content_digest);
-    assert.equal(committed.action_manifest_digest, calls[9].payload.content_digest);
+    assert.equal(committed.action_bindings[0].payload_digest, calls[beforeEdit].payload.content_digest);
+    assert.equal(committed.action_manifest_digest, calls[beforeEdit + 1].payload.content_digest);
     const callsAfterEdit = calls.length;
     const terminalEvents = [];
     for await (const event of provider.streamSimple(model, context, { maxTokens: 256 })) terminalEvents.push(event);
@@ -146,6 +154,7 @@ test("Pi provider binds a full request Region before returning a buffered model 
     assert.equal(calls.filter((call) => call.op === "AdmitTurn").length, 2);
     assert.deepEqual(observedGenerations, [1, 1]);
   } finally {
+    Date.now = originalNow;
     if (originalSocket === undefined) delete process.env.CASTOR_IPC_SOCKET;
     else process.env.CASTOR_IPC_SOCKET = originalSocket;
     await new Promise((resolve) => server.close(resolve));
