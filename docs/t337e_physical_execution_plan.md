@@ -10,6 +10,7 @@ This document incorporates all blocking review findings:
 3. **Audited Host Adapter & Complete Evidence Bundle**: Integrated an audited wrapper (`scripts/audited_adapter_wrapper.mjs`) around the versioned host model adapter to log `adapter_events.jsonl`, count and log each unique Ollama HTTP call in `ollama_calls.jsonl`, enforce bounded `num_predict <= 512`, record stop reasons/usage/latencies, fail closed on evidence write errors before further Ollama HTTP calls, and generate `adapter_summary.json` without logging secrets.
 4. **Independent Post-Run Host Verification**: Post-run verification extracts the baseline fixture to an isolated directory and executes all 7 tests. If `TaskResult` supplies `patch_diff`, exact patch bytes are written directly from Python to `attempted_patch.diff` (avoiding shell substitution or echo newline changes), verified independently with `git apply --check` followed by `git apply` on a fresh extracted snapshot, and retested across all 7 tests, recording all exit codes and SHA digests in `host_verification.txt`. Entire task-state journal, regions, and Pi container logs are preserved. No absent evidence is falsely claimed.
 5. **Clean Working Tree & Isolated Build Artifacts**: Reverted unsolicited `.gitignore` additions; builds use `CARGO_TARGET_DIR` under temp to prevent repository pollution.
+6. **Physical Run 36295027538 Accounting & T-337-G Integration**: First real run `36295027538` used one live model call and failed due to the 60s guest polling timeout (model observation bound at 70.27s). The T-337-G fix aligns guest timeout to the 300s host watchdog and has been integrated into `feat/agy-t337e-physical-gate`. End-to-end success remains unproven; prior one-run authorization is consumed; fresh idempotency key `t337e-local-model-run-003` is prepared.
 
 ---
 
@@ -89,7 +90,7 @@ flowchart TD
 ### Post-Fix Carrier Alignment
 1. Carrier image `substratum/castor-pi-carrier:v1` is built dynamically on the runner from `kernel/carrier/pi`.
 2. Exact carrier image ID (`sha256:...`) is inspected via `docker image inspect`.
-3. Staged manifest `task_manifest.json` is generated with `carrier_base_image: "substratum/castor-pi-carrier:v1@${CARRIER_IMAGE_ID}"` and fresh idempotency key `t337e-local-model-run-002`.
+3. Staged manifest `task_manifest.json` is generated with `carrier_base_image: "substratum/castor-pi-carrier:v1@${CARRIER_IMAGE_ID}"` and fresh idempotency key `t337e-local-model-run-003`.
 
 ---
 
@@ -97,7 +98,7 @@ flowchart TD
 
 | Component / Artifact | Path | Purpose |
 | :--- | :--- | :--- |
-| **Workflow** | `.github/workflows/t337e-physical-gate.yml` | Gated `pull_request: [labeled]` workflow requiring label `run-t337e-physical`. Strictly consumes label before model pull, enforces headroom, installs pinned Ollama v0.34.4, runs host script, and uploads evidence bundle on every outcome. |
+| **Workflow** | `.github/workflows/t337e-physical-gate.yml` | Gated `pull_request: [labeled]` workflow requiring label `run-t337e-physical` and targeting base `feat/codex-t337g-model-wait`. Strictly consumes label before model pull, enforces headroom, installs pinned Ollama v0.34.4, runs host script, and uploads evidence bundle on every outcome. |
 | **Runner Script** | `scripts/run_t337e_physical.sh` | Native Linux host orchestration under `set -euo pipefail`: disk check, binary build under temp target dir, carrier build, manifest staging, Ollama & audited adapter lifecycle, bounded task run, and independent host verification. |
 | **Audited Adapter Wrapper** | `scripts/audited_adapter_wrapper.mjs` | Wrapper around versioned host adapter producing `adapter_events.jsonl`, `ollama_calls.jsonl`, and `adapter_summary.json` without logging secrets, failing closed on evidence write errors. |
 | **Adapter Test Suite** | `scripts/test_audited_adapter.mjs` | 100% mocked offline test suite verifying wrapper event logging, HTTP call logs, bounded num_predict, framed error recording, fail-closed audit error handling, and zero secret leakage. |
@@ -110,3 +111,21 @@ flowchart TD
 | **Evidence: Attempted Patch** | `evidence/attempted_patch.diff` | Exact unified diff extracted from `TaskResult` when supplied (omitted if no patch was produced). |
 | **Evidence: Host Verification** | `evidence/host_verification.txt` | Independent verification report running 7 baseline tests, applying patch via `git apply`, retesting, and recording SHA256 and exit codes. |
 | **Evidence: State & Logs** | `evidence/state/`, `evidence/pi.jsonl` | Preserved task-state journal, regions, dispute snapshots, and Pi container logs. |
+
+---
+
+## 6. Readiness Status & Physical Run Accounting
+
+### Physical Run 1 Accounting (Run ID: 36295027538)
+- **Status**: Executed on Linux CI runner (`ubuntu-latest`) via authorized one-use trigger label `run-t337e-physical`.
+- **Inference Accounting**: Exactly one live Ollama HTTP call was dispatched (`qwen3.5:9b`). The model successfully returned a valid observation after 70.27s.
+- **Root Cause of Failure**: Guest Pi carrier had a hardcoded 60s client polling deadline (`Date.now() + 60_000`) in `castor-pi-extension.js`. Because the response arrived at 70.27s, the guest polling loop timed out prematurely before consuming the durably bound host observation, resulting in `FAILED(AGENT_CRASHED)` with 0 edits attempted.
+- **Resolution (T-337-G)**: PR #15 (`f51ab52`) aligns the guest polling deadline with the 300s host watchdog (`Date.now() + 300_000`). This fix has been integrated into `feat/agy-t337e-physical-gate`.
+- **End-to-End Status**: End-to-end success **remains unproven** until a complete physical run successfully produces an applied patch passing verification.
+- **Authorization Accounting**: The prior one-run authorization has been consumed. Any future model call requires separate explicit user approval.
+- **Next Run Preparation**:
+  - Fresh idempotency key: `t337e-local-model-run-003`
+  - Workflow target-branch filter and job base assertion retargeted to `feat/codex-t337g-model-wait`
+  - Exact head branch (`feat/agy-t337e-physical-gate`) and label gate (`run-t337e-physical`) preserved
+  - No trigger label applied
+  - Preserved original fixture (`workspace_snapshot.tar.gz`, SHA-256 `d64c1fb...`) and bounded 3 interaction / 512 token / 300s watchdog / one-edit caps.

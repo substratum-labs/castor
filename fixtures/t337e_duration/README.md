@@ -12,5 +12,5 @@ This directory contains the pinned task fixture for T-337-E physical execution:
 - `task_manifest.template.json`: Template task manifest pinning:
   - Task prompt and verification command
   - Strict resource limits: max 3 interactions, 512 tokens/call, 300s supervisor timeout, 1 action
-  - Fresh idempotency key: `t337e-local-model-run-002`
+  - Fresh idempotency key: `t337e-local-model-run-003`
   - Dynamic `carrier_base_image` placeholder to be populated with the post-fix carrier image ID (`substratum/castor-pi-carrier:v1@sha256:...`) built on the runner.

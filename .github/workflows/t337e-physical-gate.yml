@@ -4,7 +4,7 @@ name: T-337-E Physical Pi One-Shot Gate
   pull_request:
     types: [labeled]
     branches:
-      - feat/codex-t337d-one-shot-runtime
+      - feat/codex-t337g-model-wait
 
 permissions:
   contents: read
@@ -15,13 +15,13 @@ jobs:
     name: Native Linux Host Physical Pi Run
     # Strictly gated: ONLY runs when explicitly labeled with 'run-t337e-physical'
     # on the exact head branch 'feat/agy-t337e-physical-gate'
-    # targeting the exact base branch 'feat/codex-t337d-one-shot-runtime'.
+    # targeting the exact base branch 'feat/codex-t337g-model-wait'.
     # No push, open, synchronize, or other label event can invoke live inference.
     if: >-
       github.event.action == 'labeled' &&
       github.event.label.name == 'run-t337e-physical' &&
       github.event.pull_request.head.ref == 'feat/agy-t337e-physical-gate' &&
-      github.event.pull_request.base.ref == 'feat/codex-t337d-one-shot-runtime'
+      github.event.pull_request.base.ref == 'feat/codex-t337g-model-wait'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 

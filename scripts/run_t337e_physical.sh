@@ -186,7 +186,7 @@ STAGED_MANIFEST="$STAGED_DIR/task_manifest.json"
 cat <<EOF > "$STAGED_MANIFEST"
 {
   "task_id": "task-t337e-duration-fix",
-  "idempotency_key": "t337e-local-model-run-002",
+  "idempotency_key": "t337e-local-model-run-003",
   "carrier_base_image": "substratum/castor-pi-carrier:v1@${CARRIER_IMAGE_ID}",
   "workspace_snapshot_path": "workspace_snapshot.tar.gz",
   "workspace_snapshot_sha256": "${EXPECTED_FIXTURE_SHA}",
