@@ -4,6 +4,7 @@ import { resolve, relative, isAbsolute } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { Type, createAssistantMessageEventStream, getCurrentTools } from "@earendil-works/pi-ai";
 import { AisaClient, canonicalJson } from "./protocol.js";
+import { compileExactEdits } from "./edit-candidate.js";
 
 const EMPTY_DIGEST = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const WORKSPACE = "/workspace";
@@ -56,7 +57,7 @@ async function readWorkspace(path) {
   const physical = await realpath(full);
   const physicalRelative = relative(WORKSPACE, physical);
   if (!physicalRelative || physicalRelative === ".." || physicalRelative.startsWith("../")) throw new Error("workspace symlink escapes snapshot");
-  return readFile(physical, "utf8");
+  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await readFile(physical));
 }
 
 function emitBuffered(stream, output, result) {
@@ -281,18 +282,23 @@ export default function castorExtension(pi) {
   pi.registerTool({
     name: "castor_edit_file",
     label: "Propose edit",
-    description: "Submit one terminal unified diff candidate. Castor verifies and settles it after this agent session ends; do not read or edit again.",
-    parameters: Type.Object({ path: Type.String(), patch_diff: Type.String() }),
+    description: "Submit one terminal edit candidate using exact text replacements. Each oldText must match one unique, non-overlapping region of the original file. Castor verifies and settles it after this agent session ends; do not read or edit again.",
+    parameters: Type.Object({
+      path: Type.String(),
+      edits: Type.Array(Type.Object({ oldText: Type.String(), newText: Type.String() }), { minItems: 1 }),
+    }),
     async execute(_toolCallId, parameters) {
       if (!state.active || !state.lastObservation) throw new Error("model result must be bound before editing");
       if (state.nextAction > 0) throw new Error("bounded one-shot task permits one edit action");
       if (typeof parameters.path !== "string" || isAbsolute(parameters.path) || parameters.path.includes("..")) throw new Error("invalid workspace edit path");
-      checkPatchShape(parameters.path, parameters.patch_diff);
+      const original = await readWorkspace(parameters.path);
+      const { patch } = compileExactEdits(parameters.path, original, parameters.edits);
+      checkPatchShape(parameters.path, patch);
       const actionId = `action-${++state.nextAction}`;
       const payloadBytes = Buffer.from(canonicalJson({
         action_type: "WorkspaceEdit",
         target_path: parameters.path,
-        patch: parameters.patch_diff,
+        patch,
       }));
       const payloadDigest = sha256(payloadBytes);
       requireOutcome(await ipc.request("EnsureRegion", {

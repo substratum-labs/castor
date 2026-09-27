@@ -55,7 +55,7 @@ test("pinned Pi CLI loads Castor provider in a networkless read-only container",
           const responseBytes = Buffer.from(JSON.stringify(modelCalls === 1 ? {
             content: [{
               type: "toolCall", id: "tool-edit-1", name: "castor_edit_file",
-              arguments: { path: "defect.txt", patch_diff: "--- a/defect.txt\n+++ b/defect.txt\n@@ -1 +1 @@\n-bad\n+good\n" },
+              arguments: { path: "defect.txt", edits: [{ oldText: "bad", newText: "good" }] },
             }],
             stopReason: "toolUse",
             usage: { input: 12, output: 8 },

@@ -79,14 +79,18 @@ jobs:
       - name: Build pinned Python-free Pi carrier
         run: docker build --tag substratum/castor-pi-carrier:v1 kernel/carrier/pi
 
+      - name: Build fixture-only Pi test image
+        run: docker build --file kernel/carrier/pi/Dockerfile.test --tag substratum/castor-pi-carrier:test kernel/carrier/pi
+
       - name: Exercise pinned Pi terminal CLI and host model adapter
         run: >-
           docker run --rm --network none --read-only
           --tmpfs /tmp:rw,nosuid,nodev,size=64m,mode=1777
           --user 10001:10001
           --mount type=bind,src=${{ github.workspace }}/kernel/carrier/pi,dst=/opt/castor/src,readonly
-          --entrypoint node substratum/castor-pi-carrier:v1
+          --entrypoint node substratum/castor-pi-carrier:test
           --test /opt/castor/src/tests/protocol.test.js
+          /opt/castor/src/tests/edit-candidate.test.js
           /opt/castor/src/tests/extension.test.js
           /opt/castor/src/tests/pi-cli-smoke.test.js
           /opt/castor/src/host/test_adapter.mjs

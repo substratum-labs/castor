@@ -50,7 +50,21 @@ export function computeSha256(data) {
 
 export function formatMessagesForOllama(messages) {
   if (!Array.isArray(messages)) return [];
+  let firstSystem = true;
   return messages.map((msg) => {
+    if (msg.role === "system") {
+      const content = typeof msg.content === "string" ? msg.content : Array.isArray(msg.content)
+        ? msg.content.filter((block) => block?.type === "text").map((block) => block.text).join("\n") : "";
+      const sections = msg.sections && typeof msg.sections === "object" ? msg.sections : {};
+      if (firstSystem) {
+        firstSystem = false;
+        return { role: "system", content: [content, ...Object.values(sections).filter((value) => value !== null)].filter((value) => value.length > 0).join("\n\n") };
+      }
+      const updates = Object.entries(sections).map(([name, value]) => value === null
+        ? `Removed system prompt section "${name}".`
+        : `Updated system prompt section "${name}":\n\n${value}`);
+      return { role: "system", content: [content, ...updates].filter((part) => part.length > 0).join("\n\n") };
+    }
     if (msg.role === "user") {
       let content = "";
       if (typeof msg.content === "string") {

@@ -125,22 +125,32 @@ test("Pi provider binds a model result that arrives after 70 seconds of virtual 
     assert.equal(events.at(-1).type, "done");
     assert.equal(events.at(-1).message.content[0].text, "The test is fixed.");
     const edit = tools.find((tool) => tool.name === "castor_edit_file");
-    await assert.rejects(edit.execute("bad-path", { path: "../outside", patch_diff: "patch" }), /invalid workspace edit path/);
+    await assert.rejects(edit.execute("bad-path", { path: "../outside", edits: [{ oldText: "bad", newText: "good" }] }), /invalid workspace edit path/);
     const beforeCorruptPatch = calls.length;
     await assert.rejects(
-      edit.execute("bad-hunk", {
+      edit.execute("bad-match", {
         path: "defect.txt",
-        patch_diff: "--- a/defect.txt\n+++ b/defect.txt\n@@ -1,7 +1,7 @@\n-bad\n+good\n",
+        edits: [{ oldText: "absent", newText: "good" }],
       }),
-      /patch|hunk/i,
+      /not found/i,
     );
-    assert.equal(calls.length, beforeCorruptPatch, "a malformed patch must not reach AISA admission");
+    assert.equal(calls.length, beforeCorruptPatch, "an unmatched edit must not reach AISA admission");
+    await assert.rejects(
+      edit.execute("legacy-diff", { path: "defect.txt", patch_diff: "--- a/defect.txt\n+++ b/defect.txt\n@@ -1 +1 @@\n-bad\n+good\n" }),
+      /edits must be a non-empty array/,
+    );
+    assert.equal(calls.length, beforeCorruptPatch, "a legacy raw diff must not bypass the replacement contract");
     const beforeEdit = calls.length;
-    await edit.execute("edit-1", { path: "defect.txt", patch_diff: "--- a/defect.txt\n+++ b/defect.txt\n@@ -1 +1 @@\n-bad\n+good\n" });
+    await edit.execute("edit-1", { path: "defect.txt", edits: [{ oldText: "bad", newText: "good" }] });
     assert.deepEqual(calls.slice(beforeEdit).map((call) => call.op), [
       "EnsureRegion", "EnsureRegion", "CommitTurn", "RegisterAction", "PresentAdmissionCertificate",
     ]);
     const committed = calls.find((call) => call.op === "CommitTurn").payload;
+    const submitted = JSON.parse(Buffer.from(calls[beforeEdit].payload.content).toString("utf8"));
+    assert.equal(submitted.action_type, "WorkspaceEdit");
+    assert.equal(submitted.target_path, "defect.txt");
+    assert.match(submitted.patch, /^--- a\/defect\.txt\n\+\+\+ b\/defect\.txt\n/m);
+    assert.match(submitted.patch, /^\+good$/m);
     assert.equal(committed.action_bindings[0].payload_digest, calls[beforeEdit].payload.content_digest);
     assert.equal(committed.action_manifest_digest, calls[beforeEdit + 1].payload.content_digest);
     const callsAfterEdit = calls.length;

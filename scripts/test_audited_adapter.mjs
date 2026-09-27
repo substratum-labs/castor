@@ -38,14 +38,14 @@ function makeEnvelope(interactionId, opts = {}) {
     tools: [
       {
         name: "castor_edit_file",
-        description: "Submit unified diff for file edit",
+        description: "Submit exact text replacements for file edit",
         parameters: {
           type: "object",
           properties: {
             path: { type: "string" },
-            patch_diff: { type: "string" },
+            edits: { type: "array" },
           },
-          required: ["path", "patch_diff"],
+          required: ["path", "edits"],
         },
       },
     ],
@@ -121,7 +121,7 @@ async function runTests() {
               name: "castor_edit_file",
               arguments: {
                 path: "duration.py",
-                patch_diff: "--- a/duration.py\n+++ b/duration.py\n@@ -41,1 +41,1 @@\n-        return value * 3600\n+        return value * 86400\n",
+                edits: [{ oldText: "return value * 3600", newText: "return value * 86400" }],
               },
             },
           },

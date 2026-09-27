@@ -46,14 +46,14 @@ function makeTestRequest(interactionId, opts = {}) {
     tools: opts.tools || [
       {
         name: "castor_edit_file",
-        description: "Submit unified diff for file edit",
+        description: "Submit exact text replacements for file edit",
         parameters: {
           type: "object",
           properties: {
             path: { type: "string" },
-            patch_diff: { type: "string" },
+            edits: { type: "array" },
           },
-          required: ["path", "patch_diff"],
+          required: ["path", "edits"],
         },
       },
     ],
@@ -235,7 +235,7 @@ async function testIdempotentSameIdRetry() {
             {
               function: {
                 name: "castor_edit_file",
-                arguments: { path: "duration.py", patch_diff: "test diff" },
+                arguments: { path: "duration.py", edits: [{ oldText: "wrong", newText: "right" }] },
               },
             },
           ],
@@ -555,7 +555,7 @@ async function testResponseConversion() {
             name: "castor_edit_file",
             arguments: {
               path: "duration.py",
-              patch_diff: "--- a/duration.py\n+++ b/duration.py\n@@ -41,1 +41,1 @@\n-        return value * 3600\n+        return value * 86400\n",
+              edits: [{ oldText: "return value * 3600", newText: "return value * 86400" }],
             },
           },
         },
@@ -600,7 +600,7 @@ async function testResponseConversion() {
   assert.equal(innerTool.content[1].type, "toolCall");
   assert.equal(innerTool.content[1].name, "castor_edit_file");
   assert.equal(innerTool.content[1].arguments.path, "duration.py");
-  assert.ok(innerTool.content[1].arguments.patch_diff.includes("86400"));
+  assert.ok(innerTool.content[1].arguments.edits[0].newText.includes("86400"));
 
   // 5b: Plain Text Completion Conversion
   const mockTextOllama = {
@@ -727,7 +727,7 @@ async function testAssistantToolCallFollowedByToolResult() {
           name: "castor_edit_file",
           arguments: {
             path: "duration.py",
-            patch_diff: "--- a/duration.py\n+++ b/duration.py\n@@ -41,1 +41,1 @@\n-        return value * 3600\n+        return value * 86400\n",
+            edits: [{ oldText: "return value * 3600", newText: "return value * 86400" }],
           },
         },
       ],
@@ -755,7 +755,14 @@ async function testAssistantToolCallFollowedByToolResult() {
 
   assert.equal(formatted.length, 4);
   assert.equal(formatted[0].role, "system");
-  assert.equal(formatted[0].content, "");
+  assert.equal(formatted[0].content, "You are an expert coding assistant...");
+
+  const updatedSystem = formatMessagesForOllama([
+    { role: "system", content: [{ type: "text", text: "Base" }], sections: { rules: "First rule" } },
+    { role: "system", content: "", sections: { rules: "Second rule", old: null } },
+  ]);
+  assert.equal(updatedSystem[0].content, "Base\n\nFirst rule");
+  assert.equal(updatedSystem[1].content, 'Updated system prompt section "rules":\n\nSecond rule\n\nRemoved system prompt section "old".');
 
   assert.equal(formatted[1].role, "user");
   assert.equal(formatted[1].content, "Fix the duration defect in duration.py.");
