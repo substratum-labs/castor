@@ -686,7 +686,7 @@ fn persist_full_model_request(
         ],
         "tools": [{
             "name": "castor_edit_file",
-            "parameters": {"type": "object", "required": ["path", "patch_diff"]}
+            "parameters": {"type": "object", "required": ["path", "edits"]}
         }]
     });
     let bytes = serde_json::to_vec(&request).unwrap();
@@ -1568,7 +1568,7 @@ fn default_cli_runs_real_pi_through_roche_and_host_settlement() {
                         "name": "castor_edit_file",
                         "arguments": {
                             "path": "defect.txt",
-                            "patch_diff": "--- a/defect.txt\n+++ b/defect.txt\n@@ -1 +1 @@\n-failing fixture\n+fixed fixture\n"
+                            "edits": [{"oldText": "failing fixture", "newText": "fixed fixture"}]
                         }
                     }],
                     "stopReason": "toolUse",
