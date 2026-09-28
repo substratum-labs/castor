@@ -1,5 +1,4 @@
-//! T-363-B: verifier isolation contract. The isolation cases are intentionally
-//! RED while the supervisor executes verification through host Command::new.
+//! T-363: hostile verifier isolation contract.
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

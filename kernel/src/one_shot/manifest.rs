@@ -16,6 +16,8 @@ pub struct TaskManifest {
     pub task_prompt: String,
     pub verification_command: Vec<String>,
     #[serde(default)]
+    pub verification_timeout_seconds: Option<u64>,
+    #[serde(default)]
     pub limits: Option<serde_json::Value>,
 }
 

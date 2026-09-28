@@ -1067,22 +1067,18 @@ fn buffered_model_region_is_bound_before_guest_consumes_it() {
 }
 
 #[test]
-fn normal_task_requires_bound_model_settled_edit_and_independent_test() {
+fn normal_task_requires_bound_model_settled_edit_and_isolated_test() {
     use std::os::unix::fs::PermissionsExt;
 
     let _ = castor_cli();
     let root = tempfile::tempdir().unwrap();
     let hash = create_archive(root.path(), "snapshot.tar");
     let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
-    let verification_marker = root.path().join("normal-host-test-ran.txt");
     let mut body: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
     body["verification_command"] = json!([
         "sh",
         "-c",
-        format!(
-            "test \"$(cat defect.txt)\" = \"fixed fixture\" && printf verified > '{}'",
-            verification_marker.display()
-        )
+        "test \"$(cat /candidate/defect.txt)\" = \"fixed fixture\" && printf verified"
     ]);
     fs::write(&manifest, serde_json::to_vec(&body).unwrap()).unwrap();
     let child = root.path().join("editing-agent.sh");
@@ -1117,6 +1113,7 @@ fn normal_task_requires_bound_model_settled_edit_and_independent_test() {
     assert_eq!(result["derived_task_image_digest"], BASE_DIGEST);
     assert_eq!(result["test_passed"], true);
     assert_eq!(result["test_exit_code"], 0);
+    assert_eq!(result["verifier_evidence"]["container_removed"], true);
     assert_eq!(result["committed_turns"], json!([1]));
     assert_eq!(result["settled_actions_count"], 1);
     assert!(result["patch_diff"]
@@ -1124,7 +1121,7 @@ fn normal_task_requires_bound_model_settled_edit_and_independent_test() {
         .unwrap()
         .contains("+fixed fixture"));
     assert_eq!(
-        fs::read_to_string(&verification_marker).unwrap(),
+        fs::read_to_string(root.path().join("task-state/verifier_stdout.log")).unwrap(),
         "verified"
     );
     assert_eq!(fs::read_to_string(&first_rejection).unwrap(), "rejected");
@@ -1274,22 +1271,18 @@ fn post_arm_daemon_crash_recovers_as_unknown_without_retry() {
 }
 
 #[test]
-fn actuator_crash_after_write_must_probe_settle_and_run_host_test() {
+fn actuator_crash_after_write_must_probe_settle_and_run_isolated_test() {
     use std::os::unix::fs::PermissionsExt;
 
     let _ = castor_cli();
     let root = tempfile::tempdir().unwrap();
     let hash = create_archive(root.path(), "snapshot.tar");
     let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
-    let verification_marker = root.path().join("host-verification-ran.txt");
     let mut body: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
     body["verification_command"] = json!([
         "sh",
         "-c",
-        format!(
-            "test \"$(cat defect.txt)\" = \"fixed fixture\" && printf verified > '{}'",
-            verification_marker.display()
-        )
+        "test \"$(cat /candidate/defect.txt)\" = \"fixed fixture\" && printf verified"
     ]);
     fs::write(&manifest, serde_json::to_vec(&body).unwrap()).unwrap();
     let starts = root.path().join("agent-starts.txt");
@@ -1320,7 +1313,7 @@ fn actuator_crash_after_write_must_probe_settle_and_run_host_test() {
     assert_eq!(result(&uncertain)["status"], "UNKNOWN_DISPUTED");
     assert!(model.attempts.load(Ordering::SeqCst) > 0);
     assert!(
-        !verification_marker.exists(),
+        !root.path().join("task-state/verifier_stdout.log").exists(),
         "test cannot run before settlement"
     );
 
@@ -1333,8 +1326,9 @@ fn actuator_crash_after_write_must_probe_settle_and_run_host_test() {
     assert_eq!(result["status"], "SUCCEEDED");
     assert_eq!(result["test_passed"], true);
     assert_eq!(result["test_exit_code"], 0);
+    assert_eq!(result["verifier_evidence"]["container_removed"], true);
     assert_eq!(
-        fs::read_to_string(&verification_marker).unwrap(),
+        fs::read_to_string(root.path().join("task-state/verifier_stdout.log")).unwrap(),
         "verified"
     );
     assert_eq!(fs::read_to_string(&starts).unwrap().lines().count(), 1);
