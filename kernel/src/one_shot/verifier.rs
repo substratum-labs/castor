@@ -277,7 +277,7 @@ fn inspect(docker: &str, id: &str, deadline: Instant) -> Option<Value> {
 
 fn terminal_verdict(state: &Value, waited: i32) -> Option<&'static str> {
     if state.get("Status")?.as_str()? != "exited"
-        || state.get("Error")?.as_str()? != ""
+        || !state.get("Error")?.as_str()?.is_empty()
         || state.get("Running")?.as_bool()?
         || state.get("ExitCode")?.as_i64()? != i64::from(waited)
     {
