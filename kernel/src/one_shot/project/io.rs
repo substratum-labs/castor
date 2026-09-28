@@ -6,6 +6,7 @@ use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path};
+use std::time::Instant;
 
 fn openat(parent: &File, name: &OsStr, flags: i32) -> io::Result<File> {
     let name = CString::new(name.as_bytes()).map_err(|_| invalid("NUL in path"))?;
@@ -110,8 +111,19 @@ pub fn open_child_dir(parent: &File, name: &OsStr) -> io::Result<File> {
     )
 }
 
-pub fn directory_names(dir: &File) -> io::Result<Vec<std::ffi::OsString>> {
-    let copy = unsafe { libc::dup(dir.as_raw_fd()) };
+pub fn directory_names(
+    dir: &File,
+    max_entries: usize,
+    deadline: Instant,
+) -> io::Result<Vec<std::ffi::OsString>> {
+    let copy = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            c".".as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+            0,
+        )
+    };
     if copy < 0 {
         return Err(io::Error::last_os_error());
     }
@@ -124,12 +136,24 @@ pub fn directory_names(dir: &File) -> io::Result<Vec<std::ffi::OsString>> {
     }
     let mut names = Vec::new();
     loop {
+        if Instant::now() >= deadline {
+            unsafe {
+                libc::closedir(stream);
+            }
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "pack deadline"));
+        }
         let entry = unsafe { libc::readdir(stream) };
         if entry.is_null() {
             break;
         }
         let bytes = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
         if bytes != b"." && bytes != b".." {
+            if names.len() >= max_entries {
+                unsafe {
+                    libc::closedir(stream);
+                }
+                return Err(invalid("asset traversal entry cap exceeded"));
+            }
             use std::os::unix::ffi::OsStringExt;
             names.push(std::ffi::OsString::from_vec(bytes.to_vec()));
         }

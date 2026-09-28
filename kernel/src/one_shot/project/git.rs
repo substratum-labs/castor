@@ -252,12 +252,22 @@ fn resolved_git_dir(root: &Path) -> io::Result<PathBuf> {
     } else {
         root.join(link)
     };
+    let fd = open_root_dir(&path)?;
     let canonical = fs::canonicalize(path)?;
-    open_root_dir(&canonical)?;
+    let reopened = open_root_dir(&canonical)?;
+    if fd.metadata()?.ino() != reopened.metadata()?.ino()
+        || fd.metadata()?.dev() != reopened.metadata()?.dev()
+    {
+        return Err(invalid("Git directory changed during resolution"));
+    }
     Ok(canonical)
 }
 
 fn nofollow_bytes(path: &Path, cap: usize) -> io::Result<Vec<u8>> {
+    open_root_dir(
+        path.parent()
+            .ok_or_else(|| invalid("invalid Git metadata path"))?,
+    )?;
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
@@ -269,54 +279,83 @@ fn nofollow_bytes(path: &Path, cap: usize) -> io::Result<Vec<u8>> {
     capped_read(file, cap)
 }
 
-fn check_one_config(path: &Path) -> io::Result<()> {
-    let config = String::from_utf8(nofollow_bytes(path, 1024 * 1024)?)
-        .map_err(|_| invalid("non-UTF-8 Git config"))?;
-    let mut section = String::new();
-    for line in config.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            section = line.to_ascii_lowercase();
-            continue;
-        }
-        let (key, value) = line.split_once('=').unwrap_or((line, ""));
-        let key = key.trim().to_ascii_lowercase();
-        let value = value
-            .trim()
-            .split(['#', ';'])
-            .next()
-            .unwrap_or("")
-            .trim()
+fn config_bool(value: &str) -> io::Result<bool> {
+    match value.to_ascii_lowercase().as_str() {
+        "" | "true" | "yes" | "on" | "1" => Ok(true),
+        "false" | "no" | "off" | "0" => Ok(false),
+        _ => Err(invalid("invalid Git boolean configuration")),
+    }
+}
+
+fn check_one_config(root: &Path, git_dir: &Path, path: &Path, deadline: Instant) -> io::Result<()> {
+    nofollow_bytes(path, 1024 * 1024)?;
+    let path = path
+        .to_str()
+        .ok_or_else(|| invalid("non-UTF-8 Git config path"))?;
+    let bytes = git(
+        root,
+        git_dir,
+        &[
+            "config",
+            "--null",
+            "--list",
+            "--no-includes",
+            "--file",
+            path,
+        ],
+        None,
+        META_CAP,
+        META_CAP,
+        deadline,
+    )?;
+    for record in bytes.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+        let (key, value) = match record.iter().position(|b| *b == b'\n') {
+            Some(at) => (&record[..at], &record[at + 1..]),
+            None => (record, &[][..]),
+        };
+        let key = std::str::from_utf8(key)
+            .map_err(|_| invalid("invalid Git config key"))?
             .to_ascii_lowercase();
-        let enabled = matches!(value.as_str(), "" | "true" | "yes" | "on" | "1");
-        if (section.starts_with("[extensions") && key == "partialclone")
-            || (section.starts_with("[remote ") && key == "promisor" && enabled)
-            || (section.starts_with("[core") && key == "sparsecheckout" && enabled)
-            || (section.starts_with("[index") && key == "sparse" && enabled)
-            || section.starts_with("[include")
-        {
+        let value = std::str::from_utf8(value).map_err(|_| invalid("invalid Git config value"))?;
+        let unsupported = key == "extensions.partialclone"
+            || key.starts_with("include.")
+            || key.starts_with("includeif.")
+            || (key.starts_with("remote.") && key.ends_with(".promisor") && config_bool(value)?)
+            || ((key == "core.sparsecheckout" || key == "index.sparse") && config_bool(value)?);
+        if unsupported {
             return Err(invalid("unsupported partial or sparse Git repository"));
         }
     }
     Ok(())
 }
 
-fn check_config(git_dir: &Path) -> io::Result<()> {
+fn check_config(root: &Path, git_dir: &Path, deadline: Instant) -> io::Result<()> {
     let common_file = git_dir.join("commondir");
-    let common = if common_file.exists() {
-        let value = String::from_utf8(nofollow_bytes(&common_file, 4096)?)
-            .map_err(|_| invalid("invalid commondir"))?;
-        fs::canonicalize(git_dir.join(value.trim()))?
-    } else {
-        git_dir.to_path_buf()
+    let common = match fs::symlink_metadata(&common_file) {
+        Ok(_) => {
+            let value = String::from_utf8(nofollow_bytes(&common_file, 4096)?)
+                .map_err(|_| invalid("invalid commondir"))?;
+            let path = git_dir.join(value.trim());
+            let fd = open_root_dir(&path)?;
+            let canonical = fs::canonicalize(&path)?;
+            let reopened = open_root_dir(&canonical)?;
+            if fd.metadata()?.ino() != reopened.metadata()?.ino()
+                || fd.metadata()?.dev() != reopened.metadata()?.dev()
+            {
+                return Err(invalid("Git common directory changed during resolution"));
+            }
+            canonical
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => git_dir.to_path_buf(),
+        Err(error) => return Err(error),
     };
     open_root_dir(&common)?;
-    check_one_config(&common.join("config"))?;
-    if common != git_dir {
-        let worktree_config = git_dir.join("config.worktree");
-        if worktree_config.exists() {
-            check_one_config(&worktree_config)?;
-        }
+    check_one_config(root, git_dir, &common.join("config"), deadline)?;
+    let worktree_config = git_dir.join("config.worktree");
+    match fs::symlink_metadata(&worktree_config) {
+        Ok(_) => check_one_config(root, git_dir, &worktree_config, deadline)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+        Err(error) => return Err(error),
     }
     match open_root_dir(&common.join("objects/info")) {
         Ok(info) => {
@@ -389,7 +428,7 @@ pub fn inspect_clean_git_tree(
         return Err(invalid("project root changed during resolution"));
     }
     let git_dir = resolved_git_dir(&root)?;
-    check_config(&git_dir)?;
+    check_config(&root, &git_dir, deadline)?;
     let commit_bytes = git(
         &root,
         &git_dir,

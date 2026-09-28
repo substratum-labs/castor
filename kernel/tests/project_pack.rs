@@ -16,6 +16,24 @@ fn pack(root: &Path, output: &Path) -> std::process::Output {
         .unwrap()
 }
 
+fn pack_with_fake_carrier(root: &Path, output: &Path) -> std::process::Output {
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let docker = bin.join("docker");
+    fs::write(&docker, b"#!/bin/sh\nprintf 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n'\n").unwrap();
+    fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+    Command::new(env!("CARGO_BIN_EXE_castor"))
+        .args(["pack", "--project"])
+        .arg(root.join("source"))
+        .arg("--task-spec")
+        .arg(root.join("spec.json"))
+        .arg("--out")
+        .arg(output)
+        .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        .output()
+        .unwrap()
+}
+
 fn fixture(root: &Path) {
     let source = root.join("source");
     fs::create_dir(&source).unwrap();
@@ -275,6 +293,9 @@ fn git_hooks_filters_and_remote_helpers_are_never_run() {
     let root = tempfile::tempdir().unwrap();
     fixture(root.path());
     let source = root.path().join("source");
+    let docker = root.path().join("docker");
+    fs::write(&docker, b"#!/bin/sh\nprintf 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n'\n").unwrap();
+    fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
     let marker = root.path().join("canary-ran");
     let script = root.path().join("canary.sh");
     fs::write(
@@ -492,15 +513,26 @@ fn unsupported_git_configuration_fails_before_object_lookup() {
     let source = root.path().join("source");
     let config = source.join(".git/config");
     let original = fs::read(&config).unwrap();
+    assert!(
+        pack_with_fake_carrier(root.path(), &root.path().join("baseline"))
+            .status
+            .success()
+    );
     for hostile in [
         "\n[extensions]\npartialclone = origin\n",
         "\n[remote \"origin\"]\npromisor = true\n",
         "\n[core]\nsparseCheckout = true\n",
         "\n[index]\nsparse = true\n",
+        "\n[remote \"origin\"]\npromisor = \"true\"\n",
+        "\n[remote.origin]\npromisor = true\n",
+        "\n[core]\nsparseCheckout = \"yes\"\n",
+        "\n[includeIf \"gitdir:./\"]\npath = /dev/null\n",
     ] {
         fs::write(&config, [original.as_slice(), hostile.as_bytes()].concat()).unwrap();
         assert_eq!(
-            pack(root.path(), &root.path().join("out")).status.code(),
+            pack_with_fake_carrier(root.path(), &root.path().join("out"))
+                .status
+                .code(),
             Some(2)
         );
     }
@@ -515,6 +547,84 @@ fn unsupported_git_configuration_fails_before_object_lookup() {
         pack(root.path(), &root.path().join("out")).status.code(),
         Some(2)
     );
+}
+
+#[test]
+fn group_or_other_execute_bits_do_not_make_nonexecutable_source_dirty() {
+    let root = tempfile::tempdir().unwrap();
+    fixture(root.path());
+    let source = root.path().join("source");
+    for mode in [0o654, 0o645] {
+        fs::set_permissions(source.join("hello.txt"), fs::Permissions::from_mode(mode)).unwrap();
+        let out = root.path().join(format!("out-{mode:o}"));
+        let result = pack_with_fake_carrier(root.path(), &out);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let tar_file = fs::File::open(out.join("workspace.tar")).unwrap();
+        let mut tar = tar::Archive::new(tar_file);
+        let header = tar.entries().unwrap().next().unwrap().unwrap();
+        assert_eq!(header.header().mode().unwrap(), 0o644);
+    }
+}
+
+#[test]
+fn primary_worktree_config_and_gitdir_parent_symlink_fail_preflight() {
+    let root = tempfile::tempdir().unwrap();
+    fixture(root.path());
+    let source = root.path().join("source");
+    let out = root.path().join("out");
+    assert!(
+        pack_with_fake_carrier(root.path(), &root.path().join("baseline"))
+            .status
+            .success()
+    );
+    let config = source.join(".git/config");
+    let original = fs::read(&config).unwrap();
+    fs::write(
+        &config,
+        [
+            original.as_slice(),
+            b"\n[extensions]\nworktreeConfig = true\n",
+        ]
+        .concat(),
+    )
+    .unwrap();
+    fs::write(
+        source.join(".git/config.worktree"),
+        b"[core]\nsparseCheckout = true\n",
+    )
+    .unwrap();
+    assert_eq!(
+        pack_with_fake_carrier(root.path(), &out).status.code(),
+        Some(2)
+    );
+    fs::remove_file(source.join(".git/config.worktree")).unwrap();
+    fs::write(&config, &original).unwrap();
+    fs::rename(source.join(".git"), source.join("real-git")).unwrap();
+    symlink("real-git", source.join("git-link")).unwrap();
+    fs::write(source.join(".git"), b"gitdir: git-link\n").unwrap();
+    let result = pack_with_fake_carrier(root.path(), &out);
+    assert_eq!(result.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("Not a directory"));
+}
+
+#[test]
+fn dangling_common_directory_symlink_is_not_treated_as_absent() {
+    let root = tempfile::tempdir().unwrap();
+    fixture(root.path());
+    let source = root.path().join("source");
+    assert!(
+        pack_with_fake_carrier(root.path(), &root.path().join("baseline"))
+            .status
+            .success()
+    );
+    symlink("missing-common", source.join(".git/commondir")).unwrap();
+    let result = pack_with_fake_carrier(root.path(), &root.path().join("out"));
+    assert_eq!(result.status.code(), Some(2));
+    assert!(!String::from_utf8_lossy(&result.stderr).contains("Git plumbing failed"));
 }
 
 #[test]

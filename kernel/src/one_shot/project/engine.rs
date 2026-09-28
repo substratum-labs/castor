@@ -19,13 +19,11 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 pub const VERIFIER_PIN: &str =
     "python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea";
 const CARRIER_TAG: &str = "substratum/castor-pi-carrier:v1";
-static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct StagingDir {
     parent: File,
@@ -34,13 +32,41 @@ struct StagingDir {
     published: bool,
 }
 
+fn remove_owned_directory(parent: &File, name: &str, owned: &File) {
+    let Ok(c) = CString::new(name.as_bytes()) else {
+        return;
+    };
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    let rc = unsafe {
+        libc::fstatat(
+            parent.as_raw_fd(),
+            c.as_ptr(),
+            &mut st,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if rc != 0 {
+        return;
+    }
+    let Ok(meta) = owned.metadata() else { return };
+    if st.st_dev == meta.dev() as libc::dev_t && st.st_ino == meta.ino() as libc::ino_t {
+        unsafe {
+            libc::unlinkat(parent.as_raw_fd(), c.as_ptr(), libc::AT_REMOVEDIR);
+        }
+    }
+}
+
 impl StagingDir {
     fn create(parent: &File, prefix: &str) -> io::Result<Self> {
         for _ in 0..32 {
+            let mut nonce = [0u8; 16];
+            let rc = unsafe { libc::getentropy(nonce.as_mut_ptr().cast(), nonce.len()) };
+            if rc != 0 {
+                return Err(io::Error::last_os_error());
+            }
             let name = format!(
-                "{prefix}{}-{}",
-                std::process::id(),
-                STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+                "{prefix}{}",
+                nonce.iter().map(|b| format!("{b:02x}")).collect::<String>()
             );
             let c = CString::new(name.as_bytes()).map_err(|_| invalid("invalid staging name"))?;
             let rc = unsafe { libc::mkdirat(parent.as_raw_fd(), c.as_ptr(), 0o700) };
@@ -48,18 +74,13 @@ impl StagingDir {
                 let dir = match open_child_dir(parent, std::ffi::OsStr::new(&name)) {
                     Ok(dir) => dir,
                     Err(error) => {
-                        unsafe {
-                            libc::unlinkat(parent.as_raw_fd(), c.as_ptr(), libc::AT_REMOVEDIR);
-                        }
                         return Err(error);
                     }
                 };
                 let parent = match parent.try_clone() {
                     Ok(parent) => parent,
                     Err(error) => {
-                        unsafe {
-                            libc::unlinkat(parent.as_raw_fd(), c.as_ptr(), libc::AT_REMOVEDIR);
-                        }
+                        remove_owned_directory(parent, &name, &dir);
                         return Err(error);
                     }
                 };
@@ -127,11 +148,7 @@ impl Drop for StagingDir {
                 }
             }
         }
-        if let Ok(c) = CString::new(self.name.as_bytes()) {
-            unsafe {
-                libc::unlinkat(self.parent.as_raw_fd(), c.as_ptr(), libc::AT_REMOVEDIR);
-            }
-        }
+        remove_owned_directory(&self.parent, &self.name, &self.dir);
     }
 }
 
@@ -498,5 +515,42 @@ pub fn run_project(project_path: &Path, spec_path: &Path) -> io::Result<PathBuf>
             exclusive_rename(&stage_root.dir, &provisional, &pack_fd, &final_out)?;
         }
         Ok(final_out.join("manifest.json"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn staging_uses_private_unpredictable_name_and_cleans_its_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = open_root_dir(root.path()).unwrap();
+        let name = {
+            let staging = StagingDir::create(&parent, "bundle.tmp-pack-").unwrap();
+            let suffix = staging.name.strip_prefix("bundle.tmp-pack-").unwrap();
+            assert_eq!(suffix.len(), 32);
+            assert!(suffix.bytes().all(|b| b.is_ascii_hexdigit()));
+            assert_eq!(
+                staging.dir.metadata().unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            staging.name.clone()
+        };
+        assert!(!root.path().join(name).exists());
+    }
+
+    #[test]
+    fn staging_cleanup_does_not_remove_replaced_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = open_root_dir(root.path()).unwrap();
+        let staging = StagingDir::create(&parent, "bundle.tmp-pack-").unwrap();
+        let original = root.path().join(&staging.name);
+        let moved = root.path().join("moved");
+        fs::rename(&original, &moved).unwrap();
+        fs::create_dir(&original).unwrap();
+        drop(staging);
+        assert!(original.is_dir());
     }
 }
