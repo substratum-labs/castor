@@ -157,6 +157,9 @@ fn collect_assets(
         if Instant::now() >= context.deadline {
             return Err(io::Error::new(io::ErrorKind::TimedOut, "pack deadline"));
         }
+        if budget.entries >= budget.entry_cap {
+            return Err(invalid("asset traversal entry cap exceeded"));
+        }
         budget.entries += 1;
         let rel = relative.join(&name);
         let path = rel
@@ -180,7 +183,7 @@ fn collect_assets(
                 budget.file_read_cap()?
             };
             let (bytes, mode) = read_bounded(dir, Path::new(&name), cap)?;
-            if mode & u32::from(libc::S_IXUSR) != 0 {
+            if mode & 0o100 != 0 {
                 return Err(invalid("executable verification asset"));
             }
             let archive_path = format!(".castor_verification_assets/{path}");
@@ -237,7 +240,7 @@ pub fn build_deterministic_tar(
             budget.file_read_cap()?
         };
         let (bytes, mode) = read_bounded(project_fd, &tracked.path, cap)?;
-        let actual_mode = if mode & u32::from(libc::S_IXUSR) != 0 {
+        let actual_mode = if mode & 0o100 != 0 {
             0o100755
         } else {
             0o100644
@@ -414,5 +417,38 @@ mod tests {
         let deadline = Instant::now() - std::time::Duration::from_millis(1);
         let error = directory_names(&dir, 1, deadline).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn nested_assets_cannot_spend_prelisted_sibling_entry_budget() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("a-dir")).unwrap();
+        fs::write(root.path().join("a-dir/inside"), b"i").unwrap();
+        fs::write(root.path().join("b-file"), b"b").unwrap();
+        let dir = open_root_dir(root.path()).unwrap();
+        let spec = serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "task_prompt": "x",
+            "verification_command": ["true"]
+        }))
+        .unwrap();
+        let context = AssetScanContext {
+            spec: &spec,
+            deadline: Instant::now() + std::time::Duration::from_secs(2),
+        };
+        let mut members = Vec::new();
+        let mut excluded = Vec::new();
+        let mut budget = ArchiveBudget::testing(10, 10, 10, 2, 2);
+        let error = collect_assets(
+            &dir,
+            Path::new(""),
+            &context,
+            &mut members,
+            &mut excluded,
+            &mut budget,
+            0,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("entry cap"));
     }
 }

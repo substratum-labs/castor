@@ -525,6 +525,10 @@ fn unsupported_git_configuration_fails_before_object_lookup() {
         "\n[index]\nsparse = true\n",
         "\n[remote \"origin\"]\npromisor = \"true\"\n",
         "\n[remote.origin]\npromisor = true\n",
+        "\n[remote\t\"origin\"]\npromisor = true\n",
+        "\n[remote \"origin\"]\npromisor = 2\n",
+        "\n[index]\nsparse = 2\n",
+        "\n[remote \"origin\"]\npromisor = tr\\\nue\n",
         "\n[core]\nsparseCheckout = \"yes\"\n",
         "\n[includeIf \"gitdir:./\"]\npath = /dev/null\n",
     ] {

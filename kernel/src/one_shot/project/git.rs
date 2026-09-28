@@ -3,11 +3,11 @@ use super::{
     io::{open_root_dir, regular_file_at},
 };
 use std::collections::BTreeMap;
-use std::fs;
-use std::fs::OpenOptions;
+use std::ffi::OsStr;
+use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -264,19 +264,46 @@ fn resolved_git_dir(root: &Path) -> io::Result<PathBuf> {
 }
 
 fn nofollow_bytes(path: &Path, cap: usize) -> io::Result<Vec<u8>> {
-    open_root_dir(
+    let parent = open_root_dir(
         path.parent()
             .ok_or_else(|| invalid("invalid Git metadata path"))?,
     )?;
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
-        .open(path)?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| invalid("invalid Git metadata path"))?;
+    nofollow_bytes_at(&parent, name, cap)
+}
+
+fn nofollow_bytes_at(parent: &File, name: &OsStr, cap: usize) -> io::Result<Vec<u8>> {
+    let file =
+        regular_file_at(parent, name)?.ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
     let meta = file.metadata()?;
-    if !meta.is_file() || meta.nlink() != 1 || meta.len() > cap as u64 {
+    if meta.len() > cap as u64 {
         return Err(invalid("unsafe Git metadata file"));
     }
     capped_read(file, cap)
+}
+
+#[cfg(test)]
+mod pinned_metadata_tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn metadata_read_stays_on_pinned_parent_after_path_replacement() {
+        let root = tempfile::tempdir().unwrap();
+        let original = root.path().join("metadata");
+        fs::create_dir(&original).unwrap();
+        fs::write(original.join("config"), b"checked").unwrap();
+        let pinned = open_root_dir(&original).unwrap();
+        fs::rename(&original, root.path().join("moved")).unwrap();
+        fs::create_dir(&original).unwrap();
+        fs::write(original.join("config"), b"replacement").unwrap();
+        assert_eq!(
+            nofollow_bytes_at(&pinned, OsStr::new("config"), 64).unwrap(),
+            b"checked"
+        );
+    }
 }
 
 fn config_bool(value: &str) -> io::Result<bool> {
@@ -288,22 +315,12 @@ fn config_bool(value: &str) -> io::Result<bool> {
 }
 
 fn check_one_config(root: &Path, git_dir: &Path, path: &Path, deadline: Instant) -> io::Result<()> {
-    nofollow_bytes(path, 1024 * 1024)?;
-    let path = path
-        .to_str()
-        .ok_or_else(|| invalid("non-UTF-8 Git config path"))?;
+    let checked = nofollow_bytes(path, 1024 * 1024)?;
     let bytes = git(
         root,
         git_dir,
-        &[
-            "config",
-            "--null",
-            "--list",
-            "--no-includes",
-            "--file",
-            path,
-        ],
-        None,
+        &["config", "--null", "--list", "--no-includes", "--file", "-"],
+        Some(&checked),
         META_CAP,
         META_CAP,
         deadline,
