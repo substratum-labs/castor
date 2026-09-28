@@ -8,6 +8,7 @@ use crate::one_shot::image::StagedSnapshot;
 use crate::one_shot::manifest::TaskManifest;
 use crate::one_shot::model::SocketModelService;
 use crate::one_shot::result::TaskResult;
+use crate::one_shot::verifier::{IsolatedVerifier, Verification};
 use crate::sandbox::{
     build_castor_untrusted_agent_config, RocheProcessSupervisor, RocheSandboxRunner,
 };
@@ -29,7 +30,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug)]
 pub enum RunOutcome {
     Active(Value),
-    Terminal(TaskResult),
+    Terminal(Box<TaskResult>),
     Replayed(Value),
 }
 
@@ -316,7 +317,7 @@ pub fn run_test_task(
                         None,
                     );
                     result.status = "UNKNOWN_DISPUTED";
-                    return Ok(RunOutcome::Terminal(result));
+                    return Ok(RunOutcome::Terminal(Box::new(result)));
                 }
             }
             return Ok(RunOutcome::Active(json!({
@@ -509,29 +510,23 @@ pub fn run_test_task(
         result.settled_actions_count = 1;
         result
     } else {
-        let mut command = Command::new(&manifest.verification_command[0]);
-        let test = command
-            .args(&manifest.verification_command[1..])
-            .current_dir(staged.workspace())
-            .output();
-        let code = match test {
-            Ok(output) => output.status.code().unwrap_or(1),
-            Err(_) => 1,
-        };
+        let verification = IsolatedVerifier::run(manifest, &staged.workspace(), state_root, true);
+        let code = verification.code;
         let mut result = TaskResult::after_image(
             manifest.task_id.clone(),
             manifest.workspace_snapshot_sha256.clone(),
             image_digest,
-            if code == 0 && matches!(settled_edit, Some(WorkspaceEditOutcome::Applied(_))) {
+            if verification.reason != "NONE" {
+                verification.reason
+            } else if matches!(settled_edit, Some(WorkspaceEditOutcome::Applied(_))) {
                 "NONE"
-            } else if code == 0 {
-                "UNSETTLED_ACTIONS"
             } else {
-                "TEST_VERIFICATION_FAILED"
+                "UNSETTLED_ACTIONS"
             },
             Some(code),
         );
-        if code == 0 {
+        result.verifier_evidence = Some(verification.evidence);
+        if verification.reason == "NONE" {
             if let Some(WorkspaceEditOutcome::Applied(edit)) = settled_edit {
                 result.status = "SUCCEEDED";
                 result.committed_turns = vec![1];
@@ -571,7 +566,7 @@ pub fn run_test_task(
         task.result = Some(serde_json::to_value(&result).map_err(io::Error::other)?);
         write_board(state_root, &board)?;
     }
-    Ok(RunOutcome::Terminal(result))
+    Ok(RunOutcome::Terminal(Box::new(result)))
 }
 
 /// Run the pinned Pi carrier with only its AISA guest socket inside Roche.
@@ -614,7 +609,7 @@ pub fn run_product_task(
                         None,
                     );
                     result.status = "UNKNOWN_DISPUTED";
-                    return Ok(RunOutcome::Terminal(result));
+                    return Ok(RunOutcome::Terminal(Box::new(result)));
                 }
             }
             return Ok(RunOutcome::Active(
@@ -650,7 +645,7 @@ pub fn run_product_task(
             None,
         );
         persist_product_result(state_root, manifest, &manifest_digest, &result)?;
-        return Ok(RunOutcome::Terminal(result));
+        return Ok(RunOutcome::Terminal(Box::new(result)));
     }
     let daemon = ProductDaemon::start(&task_state)?;
     let model = SocketModelService::start(
@@ -736,26 +731,19 @@ pub fn run_product_task(
             &daemon.evidence_key,
         ) {
             Ok(Some(WorkspaceEditOutcome::Applied(edit))) => {
-                let code = Command::new(&manifest.verification_command[0])
-                    .args(&manifest.verification_command[1..])
-                    .current_dir(staged.workspace())
-                    .output()
-                    .map(|output| output.status.code().unwrap_or(1))
-                    .unwrap_or(1);
+                let verification = verify_product_task(manifest, &staged.workspace(), &task_state);
+                let code = verification.code;
                 let mut result = TaskResult::after_image(
                     manifest.task_id.clone(),
                     manifest.workspace_snapshot_sha256.clone(),
                     image_digest,
-                    if code == 0 {
-                        "NONE"
-                    } else {
-                        "TEST_VERIFICATION_FAILED"
-                    },
+                    verification.reason,
                     Some(code),
                 );
+                result.verifier_evidence = Some(verification.evidence);
                 result.final_patch_sha256 = Some(edit.patch_sha256);
                 result.patch_diff = Some(edit.patch);
-                if code == 0 {
+                if verification.reason == "NONE" {
                     result.status = "SUCCEEDED";
                 }
                 result
@@ -809,7 +797,7 @@ pub fn run_product_task(
         preserve_dispute_evidence(state_root, &manifest.task_id, staged, &task_state)?;
     }
     persist_product_result(state_root, manifest, &manifest_digest, &result)?;
-    Ok(RunOutcome::Terminal(result))
+    Ok(RunOutcome::Terminal(Box::new(result)))
 }
 
 fn committed_turns(journal: &[Value]) -> Vec<u64> {
@@ -817,6 +805,14 @@ fn committed_turns(journal: &[Value]) -> Vec<u64> {
         .iter()
         .filter_map(|entry| entry.get("TurnCommitted")?.get("turn_id")?.as_u64())
         .collect()
+}
+
+fn verify_product_task(
+    manifest: &TaskManifest,
+    candidate: &Path,
+    state_root: &Path,
+) -> Verification {
+    IsolatedVerifier::run(manifest, candidate, state_root, false)
 }
 
 fn armed_without_settlement(journal: &[Value]) -> bool {
@@ -1015,25 +1011,19 @@ fn recover_applied_edit(
         1,
         "workspace:defect.txt",
     )?;
-    let test = Command::new(&manifest.verification_command[0])
-        .args(&manifest.verification_command[1..])
-        .current_dir(staged.workspace())
-        .output()?;
-    let code = test.status.code().unwrap_or(1);
+    let verification = IsolatedVerifier::run(manifest, &staged.workspace(), state_root, true);
+    let code = verification.code;
     let mut result = TaskResult::after_image(
         manifest.task_id.clone(),
         manifest.workspace_snapshot_sha256.clone(),
         image_digest,
-        if code == 0 {
-            "NONE"
-        } else {
-            "TEST_VERIFICATION_FAILED"
-        },
+        verification.reason,
         Some(code),
     );
+    result.verifier_evidence = Some(verification.evidence);
     result.committed_turns = vec![1];
     result.settled_actions_count = 1;
-    if code == 0 {
+    if verification.reason == "NONE" {
         result.status = "SUCCEEDED";
         result.patch_diff = Some(patch.to_owned());
         result.final_patch_sha256 = Some(patch_digest);
@@ -1046,7 +1036,7 @@ fn recover_applied_edit(
     task.status = result.status.to_owned();
     task.result = Some(serde_json::to_value(&result).map_err(io::Error::other)?);
     write_board(state_root, &board)?;
-    Ok(RunOutcome::Terminal(result))
+    Ok(RunOutcome::Terminal(Box::new(result)))
 }
 
 fn inspect_journal(control_socket: &Path) -> io::Result<Vec<Value>> {
@@ -1124,7 +1114,8 @@ pub fn test_state_root() -> io::Result<PathBuf> {
 
 #[cfg(test)]
 mod pi_output_tests {
-    use super::{armed_without_settlement, pi_finished_without_error};
+    use super::{armed_without_settlement, pi_finished_without_error, verify_product_task};
+    use crate::one_shot::manifest::TaskManifest;
     use serde_json::json;
 
     #[test]
@@ -1153,5 +1144,27 @@ mod pi_output_tests {
 "#;
         assert!(pi_finished_without_error(complete));
         assert!(!pi_finished_without_error(b""));
+    }
+
+    #[test]
+    fn product_task_verification_uses_isolated_docker() {
+        let root = tempfile::tempdir().unwrap();
+        let candidate = root.path().join("candidate");
+        std::fs::create_dir(&candidate).unwrap();
+        std::fs::write(candidate.join("defect.txt"), "fixed fixture").unwrap();
+        let manifest: TaskManifest = serde_json::from_value(json!({
+            "task_id": "task-product-verifier",
+            "idempotency_key": "product-verifier-001",
+            "carrier_base_image": "unused",
+            "workspace_snapshot_path": "unused.tar",
+            "workspace_snapshot_sha256": "unused",
+            "task_prompt": "unused",
+            "verification_command": ["python3", "-c", "from pathlib import Path; assert Path('defect.txt').read_text() == 'fixed fixture'"]
+        })).unwrap();
+        let verification = verify_product_task(&manifest, &candidate, root.path());
+        assert_eq!(verification.reason, "NONE");
+        assert_eq!(verification.code, 0);
+        assert!(verification.evidence.container_removed);
+        assert!(verification.evidence.inspected_profile.is_some());
     }
 }

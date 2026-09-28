@@ -16,6 +16,8 @@ pub struct TaskManifest {
     pub task_prompt: String,
     pub verification_command: Vec<String>,
     #[serde(default)]
+    pub verification_timeout_seconds: Option<u64>,
+    #[serde(default)]
     pub limits: Option<serde_json::Value>,
 }
 
@@ -37,6 +39,9 @@ impl TaskManifest {
             || manifest.idempotency_key.len() < 8
             || manifest.verification_command.is_empty()
             || manifest.verification_command[0].is_empty()
+            || manifest
+                .verification_timeout_seconds
+                .is_some_and(|seconds| seconds == 0 || seconds > 86_400)
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

@@ -1,3 +1,4 @@
+use crate::one_shot::verifier::VerifierEvidence;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -18,6 +19,8 @@ pub struct TaskResult {
     pub test_passed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub test_exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verifier_evidence: Option<VerifierEvidence>,
 }
 
 impl TaskResult {
@@ -34,6 +37,7 @@ impl TaskResult {
             patch_diff: None,
             test_passed: None,
             test_exit_code: None,
+            verifier_evidence: None,
         }
     }
 
@@ -50,6 +54,7 @@ impl TaskResult {
             patch_diff: None,
             test_passed: None,
             test_exit_code: None,
+            verifier_evidence: None,
         }
     }
 
@@ -72,6 +77,7 @@ impl TaskResult {
             patch_diff: None,
             test_passed: test_exit_code.map(|code| code == 0),
             test_exit_code,
+            verifier_evidence: None,
         }
     }
 }
