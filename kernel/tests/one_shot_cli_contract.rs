@@ -1513,6 +1513,17 @@ fn test_agent_and_image_overrides_are_inert_without_test_flag() {
 #[cfg(target_os = "linux")]
 #[test]
 fn default_cli_runs_real_pi_through_roche_and_host_settlement() {
+    real_pi_cli_contract(false);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn project_cli_runs_real_pi_and_replays_without_model_call() {
+    real_pi_cli_contract(true);
+}
+
+#[cfg(target_os = "linux")]
+fn real_pi_cli_contract(project_frontend: bool) {
     let root = tempfile::tempdir().unwrap();
     let carrier = Command::new("docker")
         .args([
@@ -1529,13 +1540,47 @@ fn default_cli_runs_real_pi_through_roche_and_host_settlement() {
         "CI must build the pinned Pi carrier"
     );
     let carrier_id = String::from_utf8_lossy(&carrier.stdout).trim().to_owned();
-    let hash = create_archive(root.path(), "snapshot.tar");
-    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
-    let mut body: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
-    body["carrier_base_image"] = json!(format!("substratum/castor-pi-carrier:v1@{carrier_id}"));
-    body["verification_command"] =
-        json!(["sh", "-c", "test \"$(cat defect.txt)\" = \"fixed fixture\""]);
-    fs::write(&manifest, serde_json::to_vec(&body).unwrap()).unwrap();
+    let manifest = if project_frontend {
+        let source = root.path().join("source");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("defect.txt"), b"failing fixture\n").unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec!["add", "defect.txt"],
+            vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+                "init",
+            ],
+        ] {
+            assert!(Command::new("git")
+                .args(args)
+                .current_dir(&source)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let spec = root.path().join("spec.json");
+        fs::write(&spec, serde_json::to_vec(&json!({
+            "schema_version": 1,
+            "task_prompt": "Repair the failing fixture.",
+            "verification_command": ["sh", "-c", "test \"$(cat defect.txt)\" = \"fixed fixture\""]
+        })).unwrap()).unwrap();
+        spec
+    } else {
+        let hash = create_archive(root.path(), "snapshot.tar");
+        let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
+        let mut body: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+        body["carrier_base_image"] = json!(format!("substratum/castor-pi-carrier:v1@{carrier_id}"));
+        body["verification_command"] =
+            json!(["sh", "-c", "test \"$(cat defect.txt)\" = \"fixed fixture\""]);
+        fs::write(&manifest, serde_json::to_vec(&body).unwrap()).unwrap();
+        manifest
+    };
 
     let model_socket = root.path().join("model.sock");
     let listener = UnixListener::bind(&model_socket).unwrap();
@@ -1586,19 +1631,45 @@ fn default_cli_runs_real_pi_through_roche_and_host_settlement() {
         }
     });
 
-    let output = Command::new(castor_cli())
-        .args(["run", "--task"])
-        .arg(&manifest)
-        .env("CASTOR_MODEL_SOCKET", &model_socket)
-        .env("CASTOR_STATE_ROOT", root.path().join("state"))
-        .output()
-        .expect("run actual Pi carrier through default product CLI");
+    let run = || {
+        let mut command = Command::new(castor_cli());
+        if project_frontend {
+            command
+                .args(["run", "--project"])
+                .arg(root.path().join("source"))
+                .arg("--task-spec")
+                .arg(&manifest);
+        } else {
+            command.args(["run", "--task"]).arg(&manifest);
+        }
+        command
+            .env("CASTOR_MODEL_SOCKET", &model_socket)
+            .env("CASTOR_STATE_ROOT", root.path().join("state"))
+            .output()
+            .expect("run actual Pi carrier through default product CLI")
+    };
+    let output = run();
+    let task = result(&output);
+    if project_frontend {
+        let replay = run();
+        assert!(
+            replay.status.success(),
+            "replay: {}",
+            String::from_utf8_lossy(&replay.stderr)
+        );
+        assert_eq!(result(&replay), task);
+    }
     stop.store(true, Ordering::SeqCst);
     model_worker.join().unwrap();
-    let task = result(&output);
-    let pi_log = fs::read_to_string(root.path().join("state/tasks/task-snapshot-gate/pi.jsonl"))
-        .unwrap_or_default();
-    let journal = D1DurableStorage::open(root.path().join("state/tasks/task-snapshot-gate"))
+    let task_id = task["task_id"].as_str().unwrap();
+    let pi_log = fs::read_to_string(
+        root.path()
+            .join("state/tasks")
+            .join(task_id)
+            .join("pi.jsonl"),
+    )
+    .unwrap_or_default();
+    let journal = D1DurableStorage::open(root.path().join("state/tasks").join(task_id))
         .map(|storage| {
             storage
                 .journal_requests()
@@ -1617,6 +1688,7 @@ fn default_cli_runs_real_pi_through_roche_and_host_settlement() {
     assert_eq!(task["status"], "SUCCEEDED");
     assert_eq!(task["test_passed"], true);
     assert_eq!(task["settled_actions_count"], 1);
+    assert_eq!(task["verifier_evidence"]["container_removed"], true);
     let assistant_ends: Vec<_> = pi_log
         .lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())

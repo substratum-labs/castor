@@ -270,7 +270,7 @@ export default function castorExtension(pi) {
   pi.registerTool({
     name: "castor_read_file",
     label: "Read file",
-    description: "Read a file from the immutable task snapshot.",
+    description: "Read a workspace-relative path from the immutable task snapshot.",
     parameters: Type.Object({ path: Type.String() }),
     async execute(_toolCallId, parameters) {
       if (state.terminalArmed) throw new Error("workspace remains immutable and effect is unverified pending host settlement");
@@ -282,7 +282,7 @@ export default function castorExtension(pi) {
   pi.registerTool({
     name: "castor_edit_file",
     label: "Propose edit",
-    description: "Submit one terminal edit candidate using exact text replacements. Each oldText must match one unique, non-overlapping region of the original file. Castor verifies and settles it after this agent session ends; do not read or edit again.",
+    description: "Submit one terminal edit candidate at a workspace-relative path using exact text replacements. Each oldText must match one unique, non-overlapping region of the original file. Castor verifies and settles it after this agent session ends; do not read or edit again.",
     parameters: Type.Object({
       path: Type.String(),
       edits: Type.Array(Type.Object({ oldText: Type.String(), newText: Type.String() }), { minItems: 1 }),
