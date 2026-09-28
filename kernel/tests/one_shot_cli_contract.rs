@@ -1533,8 +1533,11 @@ fn default_cli_runs_real_pi_through_roche_and_host_settlement() {
     let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &hash);
     let mut body: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
     body["carrier_base_image"] = json!(format!("substratum/castor-pi-carrier:v1@{carrier_id}"));
-    body["verification_command"] =
-        json!(["sh", "-c", "test \"$(cat defect.txt)\" = \"fixed fixture\""]);
+    body["verification_command"] = json!([
+        "sh",
+        "-c",
+        "test \"$(cat /candidate/defect.txt)\" = \"fixed fixture\""
+    ]);
     fs::write(&manifest, serde_json::to_vec(&body).unwrap()).unwrap();
 
     let model_socket = root.path().join("model.sock");
