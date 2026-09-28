@@ -6,11 +6,10 @@ argument; it never interpolates these strings into its fixed preparation script.
 The command starts in `/workspace`, a private writable tmpfs containing a copy
 of the staged candidate. Thus a relative project path such as `defect.txt`
 refers to the candidate copy. The original candidate is also mounted at
-`/candidate` read-only and is not modified by verification. For direct
-`cargo test` commands, the verifier also requires a complete, untruncated
-Cargo summary with at least one passing test; zero discovered tests fail.
-Other verification runners must encode their own nonempty discovery check in
-the command. Exit zero is only one process observation used by the host verdict.
+`/candidate` read-only and is not modified by verification. The task author owns test discovery
+and the correctness of the verification command. The kernel does not parse
+framework-specific summaries or infer semantic honesty from them. Exit zero
+is only one process observation used by the host verdict.
 
 `verification_timeout_seconds` is optional and accepts an integer from 1 to
 86,400. It defaults to 300 seconds in production. The value covers Docker

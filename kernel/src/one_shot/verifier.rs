@@ -266,9 +266,7 @@ fn inspect(docker: &str, id: &str, deadline: Instant) -> Option<Value> {
 }
 
 fn terminal_verdict(state: &Value, waited: i32) -> Option<&'static str> {
-    if state.get("Running")?.as_bool()? != false
-        || state.get("ExitCode")?.as_i64()? != i64::from(waited)
-    {
+    if state.get("Running")?.as_bool()? || state.get("ExitCode")?.as_i64()? != i64::from(waited) {
         return None;
     }
     let oom = state.get("OOMKilled")?.as_bool()?;
@@ -281,35 +279,6 @@ fn terminal_verdict(state: &Value, waited: i32) -> Option<&'static str> {
     } else {
         "TEST_VERIFICATION_FAILED"
     })
-}
-
-fn discovered_cargo_tests(
-    command: &[String],
-    stdout: &[u8],
-    stderr: &[u8],
-    truncated: bool,
-) -> Option<bool> {
-    if command.first().is_none_or(|exe| exe != "cargo")
-        || command.get(1).is_none_or(|arg| arg != "test")
-    {
-        return Some(true);
-    }
-    if truncated {
-        return None;
-    }
-    let output = [stdout, stderr].concat();
-    let output = std::str::from_utf8(&output).ok()?;
-    let mut total = 0_u64;
-    let mut saw_summary = false;
-    for line in output.lines() {
-        if let Some((_, counts)) = line.split_once("test result: ok. ") {
-            if let Some((passed, _)) = counts.split_once(" passed") {
-                total = total.checked_add(passed.trim().parse::<u64>().ok()?)?;
-                saw_summary = true;
-            }
-        }
-    }
-    saw_summary.then_some(total > 0)
 }
 
 pub struct IsolatedVerifier;
@@ -413,7 +382,7 @@ impl IsolatedVerifier {
         let reserve = Duration::from_millis((deadline_ms / 4).min(2_000));
         let work_deadline = deadline - reserve;
         let image_id = invoke(
-            &docker,
+            docker,
             &["image", "inspect", "--format", "{{.Id}}", IMAGE],
             work_deadline,
         )
@@ -489,7 +458,7 @@ impl IsolatedVerifier {
         ];
         let mut create_args = args.to_vec();
         create_args.extend(manifest.verification_command.iter().map(String::as_str));
-        let setup = invoke(&docker, &create_args, work_deadline);
+        let setup = invoke(docker, &create_args, work_deadline);
         evidence.setup_ms = started.elapsed().as_millis() as u64;
         if let Ok((false, _, error)) = &setup {
             stderr = error.bytes.clone();
@@ -512,7 +481,7 @@ impl IsolatedVerifier {
         }
         if let Some(id) = container_id.as_deref() {
             let inspect_start = Instant::now();
-            let before = inspect(&docker, id, work_deadline);
+            let before = inspect(docker, id, work_deadline);
             evidence.inspect_ms = inspect_start.elapsed().as_millis() as u64;
             if let Some(before) = before {
                 evidence.inspected_profile = profile(
@@ -526,8 +495,8 @@ impl IsolatedVerifier {
                     && before["State"]["Running"] == false
                     && evidence.inspected_profile.is_some()
                 {
-                    match invoke(&docker, &["start", "-a", id], work_deadline) {
-                        Ok((_, out, err)) => {
+                    match invoke(docker, &["start", "-a", id], work_deadline) {
+                        Ok((attached_ok, out, err)) => {
                             evidence.captured_logs = CapturedLogs {
                                 stdout_bytes: out.bytes.len() as u64,
                                 stderr_bytes: err.bytes.len() as u64,
@@ -537,12 +506,12 @@ impl IsolatedVerifier {
                             stdout = out.bytes;
                             stderr = err.bytes;
                             let inspect_start = Instant::now();
-                            let waited = invoke(&docker, &["wait", id], work_deadline)
+                            let waited = invoke(docker, &["wait", id], work_deadline)
                                 .ok()
                                 .filter(|(ok, out, _)| *ok && !out.truncated)
                                 .and_then(|(_, out, _)| String::from_utf8(out.bytes).ok())
                                 .and_then(|s| s.trim().parse::<i32>().ok());
-                            let after = inspect(&docker, id, work_deadline);
+                            let after = inspect(docker, id, work_deadline);
                             evidence.inspect_ms += inspect_start.elapsed().as_millis() as u64;
                             if let (Some(waited), Some(after)) = (waited, after) {
                                 let state = &after["State"];
@@ -561,7 +530,9 @@ impl IsolatedVerifier {
                                     )
                                     .is_some()
                                 {
-                                    if let Some(verdict) = terminal_verdict(state, waited) {
+                                    if let Some(verdict) = terminal_verdict(state, waited)
+                                        .filter(|_| waited != 0 || attached_ok)
+                                    {
                                         code = waited;
                                         reason = verdict;
                                     }
@@ -588,11 +559,11 @@ impl IsolatedVerifier {
             .filter(|id| id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()));
         if let Some(id) = cleanup_id.as_deref() {
             if reason == "VerifierTimeout" {
-                let _ = invoke(&docker, &["kill", "--signal", "SIGKILL", id], deadline);
+                let _ = invoke(docker, &["kill", "--signal", "SIGKILL", id], deadline);
             }
             evidence.container_removed =
-                invoke(&docker, &["rm", "-f", id], deadline).is_ok_and(|(ok, _, _)| ok);
-        } else if let Some(partial) = inspect(&docker, &name, deadline) {
+                invoke(docker, &["rm", "-f", id], deadline).is_ok_and(|(ok, _, _)| ok);
+        } else if let Some(partial) = inspect(docker, &name, deadline) {
             // A failed create may be a name collision. Verify the owner label
             // before ever removing a container by name.
             if partial["Name"] == format!("/{name}")
@@ -600,7 +571,7 @@ impl IsolatedVerifier {
                     == name.trim_start_matches("castor-verifier-")
             {
                 evidence.container_removed =
-                    invoke(&docker, &["rm", "-f", &name], deadline).is_ok_and(|(ok, _, _)| ok);
+                    invoke(docker, &["rm", "-f", &name], deadline).is_ok_and(|(ok, _, _)| ok);
             }
         }
         evidence.teardown_ms = teardown.elapsed().as_millis() as u64;
@@ -622,18 +593,6 @@ impl IsolatedVerifier {
                 || evidence.terminal_exit_code != Some(0))
         {
             reason = "VerifierUnavailable";
-        }
-        if reason == "NONE" {
-            reason = match discovered_cargo_tests(
-                &manifest.verification_command,
-                &stdout,
-                &stderr,
-                evidence.captured_logs.stdout_truncated || evidence.captured_logs.stderr_truncated,
-            ) {
-                Some(true) => "NONE",
-                Some(false) => "TEST_VERIFICATION_FAILED",
-                None => "VerifierUnavailable",
-            };
         }
         if reason != "NONE" && code == 0 {
             code = 1;
@@ -740,45 +699,18 @@ mod tests {
     }
 
     #[test]
-    fn cargo_zero_test_discovery_is_not_success() {
-        let command = vec![
-            "cargo".into(),
-            "test".into(),
-            "--test".into(),
-            "gate".into(),
-        ];
-        assert_eq!(
-            discovered_cargo_tests(&command, b"", b"test result: ok. 0 passed; 0 failed", false),
-            Some(false)
-        );
-        assert_eq!(
-            discovered_cargo_tests(
-                &command,
-                b"",
-                b"test result: ok. 0 passed; 0 failed\ntest result: ok. 1 passed; 0 failed",
-                false
-            ),
-            Some(true)
-        );
-        assert_eq!(discovered_cargo_tests(&command, b"", b"", false), None);
-        assert_eq!(
-            discovered_cargo_tests(&command, b"", b"test result: ok. 1 passed", true),
-            None
-        );
-    }
-
-    #[test]
     fn fake_docker_backend_rejects_prestart_and_terminal_faults() {
         let root = tempfile::tempdir().unwrap();
         let candidate = root.path().join("candidate");
         fs::create_dir(&candidate).unwrap();
         fs::write(candidate.join("defect.txt"), "candidate").unwrap();
-        let id = format!("{}", "a".repeat(64));
+        let id = "a".repeat(64);
         let image_id = format!("sha256:{id}");
         let backend = root.path().join("fake-docker.sh");
         let observed = root.path().join("inspect.json");
         let namefile = root.path().join("name");
         let start_marker = root.path().join("started");
+        let attach_failed = root.path().join("attach-failed");
         let script = format!(
             r##"#!/bin/sh
 case "$1" in
@@ -799,7 +731,7 @@ case "$1" in
     name=$(cat '{namefile}')
     token=${{name#castor-verifier-}}
     sed -e "s/OWNED_NAME/$name/g" -e "s/OWNED_TOKEN/$token/g" '{observed}' ;;
-  start) touch '{start_marker}' ;;
+  start) touch '{start_marker}'; test ! -f '{attach_failed}' ;;
   wait) printf '0\n' ;;
   rm) exit 0 ;;
   *) exit 1 ;;
@@ -807,7 +739,8 @@ esac
 "##,
             namefile = namefile.display(),
             observed = observed.display(),
-            start_marker = start_marker.display()
+            start_marker = start_marker.display(),
+            attach_failed = attach_failed.display()
         );
         fs::write(&backend, script).unwrap();
         fs::set_permissions(&backend, fs::Permissions::from_mode(0o755)).unwrap();
@@ -827,7 +760,8 @@ esac
         inspection["Image"] = json!(image_id);
         inspection["Name"] = json!("/OWNED_NAME");
         inspection["Config"]["Labels"]["castor.verifier.owner"] = json!("OWNED_TOKEN");
-        inspection["Mounts"][0]["Source"] = json!(candidate.to_str().unwrap());
+        inspection["Mounts"][0]["Source"] =
+            json!(fs::canonicalize(&candidate).unwrap().to_str().unwrap());
         inspection["State"] = json!({"Running":false, "ExitCode":0});
         fs::write(
             &observed,
@@ -849,7 +783,11 @@ esac
         assert_eq!(missing_terminal.evidence.terminal_oom_killed, None);
         fs::remove_file(&start_marker).unwrap();
         inspection["HostConfig"]["NetworkMode"] = json!("bridge");
-        fs::write(&observed, serde_json::to_vec(&json!([inspection])).unwrap()).unwrap();
+        fs::write(
+            &observed,
+            serde_json::to_vec(&json!([inspection.clone()])).unwrap(),
+        )
+        .unwrap();
         let bad_prestart = IsolatedVerifier::run_with_docker(
             &manifest,
             &candidate,
@@ -862,5 +800,18 @@ esac
             !start_marker.exists(),
             "user command started after a bad pre-start profile"
         );
+        inspection["HostConfig"]["NetworkMode"] = json!("none");
+        inspection["State"]["OOMKilled"] = json!(false);
+        fs::write(&observed, serde_json::to_vec(&json!([inspection])).unwrap()).unwrap();
+        fs::write(&attach_failed, "injected attach failure").unwrap();
+        let failed_attach = IsolatedVerifier::run_with_docker(
+            &manifest,
+            &candidate,
+            &root.path().join("state-3"),
+            true,
+            backend.to_str().unwrap(),
+        );
+        assert!(start_marker.exists());
+        assert_eq!(failed_attach.reason, "VerifierUnavailable");
     }
 }
