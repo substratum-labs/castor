@@ -1078,7 +1078,7 @@ fn normal_task_requires_bound_model_settled_edit_and_isolated_test() {
     body["verification_command"] = json!([
         "sh",
         "-c",
-        "test \"$(cat /candidate/defect.txt)\" = \"fixed fixture\" && printf verified"
+        "test \"$(cat defect.txt)\" = \"fixed fixture\" && printf verified"
     ]);
     fs::write(&manifest, serde_json::to_vec(&body).unwrap()).unwrap();
     let child = root.path().join("editing-agent.sh");
@@ -1282,7 +1282,7 @@ fn actuator_crash_after_write_must_probe_settle_and_run_isolated_test() {
     body["verification_command"] = json!([
         "sh",
         "-c",
-        "test \"$(cat /candidate/defect.txt)\" = \"fixed fixture\" && printf verified"
+        "test \"$(cat defect.txt)\" = \"fixed fixture\" && printf verified"
     ]);
     fs::write(&manifest, serde_json::to_vec(&body).unwrap()).unwrap();
     let starts = root.path().join("agent-starts.txt");

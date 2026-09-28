@@ -1159,7 +1159,7 @@ mod pi_output_tests {
             "workspace_snapshot_path": "unused.tar",
             "workspace_snapshot_sha256": "unused",
             "task_prompt": "unused",
-            "verification_command": ["python3", "-c", "from pathlib import Path; assert Path('/candidate/defect.txt').read_text() == 'fixed fixture'"]
+            "verification_command": ["python3", "-c", "from pathlib import Path; assert Path('defect.txt').read_text() == 'fixed fixture'"]
         })).unwrap();
         let verification = verify_product_task(&manifest, &candidate, root.path());
         assert_eq!(verification.reason, "NONE");

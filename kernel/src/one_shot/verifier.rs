@@ -116,7 +116,13 @@ fn invoke(
             ));
         }
         if status.is_none() {
-            status = child.try_wait()?;
+            status = match child.try_wait() {
+                Ok(status) => status,
+                Err(error) => {
+                    kill_group(&mut child);
+                    return Err(error);
+                }
+            };
         }
         if status.is_some() && !open[0] && !open[1] {
             break;
@@ -145,8 +151,12 @@ fn invoke(
         let timeout = remaining.as_millis().min(20) as i32;
         let polled = unsafe { libc::poll(fds.as_mut_ptr(), 2, timeout) };
         if polled < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
             kill_group(&mut child);
-            return Err(io::Error::last_os_error());
+            return Err(error);
         }
         for i in 0..2 {
             if !open[i] || fds[i].revents == 0 {
@@ -266,13 +276,17 @@ fn inspect(docker: &str, id: &str, deadline: Instant) -> Option<Value> {
 }
 
 fn terminal_verdict(state: &Value, waited: i32) -> Option<&'static str> {
-    if state.get("Running")?.as_bool()? || state.get("ExitCode")?.as_i64()? != i64::from(waited) {
+    if state.get("Status")?.as_str()? != "exited"
+        || state.get("Error")?.as_str()? != ""
+        || state.get("Running")?.as_bool()?
+        || state.get("ExitCode")?.as_i64()? != i64::from(waited)
+    {
         return None;
     }
     let oom = state.get("OOMKilled")?.as_bool()?;
     Some(if oom || waited >= 128 {
         "VerifierCrashed"
-    } else if waited == 126 || waited == 127 {
+    } else if matches!(waited, 125..=127) {
         "VerifierUnavailable"
     } else if waited == 0 {
         "NONE"
@@ -492,6 +506,8 @@ impl IsolatedVerifier {
                     &manifest.verification_command,
                 );
                 if before["Id"] == id
+                    && before["State"]["Status"] == "created"
+                    && before["State"]["Error"] == ""
                     && before["State"]["Running"] == false
                     && evidence.inspected_profile.is_some()
                 {
@@ -680,9 +696,11 @@ mod tests {
 
     #[test]
     fn incomplete_or_inconsistent_terminal_evidence_never_succeeds() {
-        let good = json!({"Running":false, "OOMKilled":false, "ExitCode":0});
+        let good = json!({"Status":"exited", "Error":"", "Running":false, "OOMKilled":false, "ExitCode":0});
         assert_eq!(terminal_verdict(&good, 0), Some("NONE"));
         for bad in [
+            json!({"Status":"created", "Error":"", "Running":false, "OOMKilled":false, "ExitCode":0}),
+            json!({"Status":"exited", "Error":"launch failed", "Running":false, "OOMKilled":false, "ExitCode":0}),
             json!({"Running":true, "OOMKilled":false, "ExitCode":0}),
             json!({"OOMKilled":false, "ExitCode":0}),
             json!({"Running":false, "ExitCode":0}),
@@ -693,7 +711,10 @@ mod tests {
             assert_eq!(terminal_verdict(&bad, 0), None, "accepted {bad}");
         }
         assert_eq!(
-            terminal_verdict(&json!({"Running":false,"OOMKilled":true,"ExitCode":0}), 0),
+            terminal_verdict(
+                &json!({"Status":"exited", "Error":"", "Running":false,"OOMKilled":true,"ExitCode":0}),
+                0
+            ),
             Some("VerifierCrashed")
         );
     }
@@ -730,7 +751,9 @@ case "$1" in
   inspect)
     name=$(cat '{namefile}')
     token=${{name#castor-verifier-}}
-    sed -e "s/OWNED_NAME/$name/g" -e "s/OWNED_TOKEN/$token/g" '{observed}' ;;
+    state=created
+    if test -f '{start_marker}'; then state=exited; fi
+    sed -e "s/OWNED_NAME/$name/g" -e "s/OWNED_TOKEN/$token/g" -e "s/STATE_STATUS/$state/g" '{observed}' ;;
   start) touch '{start_marker}'; test ! -f '{attach_failed}' ;;
   wait) printf '0\n' ;;
   rm) exit 0 ;;
@@ -762,7 +785,8 @@ esac
         inspection["Config"]["Labels"]["castor.verifier.owner"] = json!("OWNED_TOKEN");
         inspection["Mounts"][0]["Source"] =
             json!(fs::canonicalize(&candidate).unwrap().to_str().unwrap());
-        inspection["State"] = json!({"Running":false, "ExitCode":0});
+        inspection["State"] =
+            json!({"Status":"STATE_STATUS", "Error":"", "Running":false, "ExitCode":0});
         fs::write(
             &observed,
             serde_json::to_vec(&json!([inspection.clone()])).unwrap(),
