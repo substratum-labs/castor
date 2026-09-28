@@ -70,10 +70,71 @@ class TrustedSlotUnits(unittest.TestCase):
                 with self.assertRaises((ValueError, EOFError)):
                     self.mock.read_frame(left)
 
-    def test_nonfixing_is_a_real_wrong_edit_with_content_digest(self):
-        reply = self.mock.reply(
-            {"request": {"schema_version": 1}, "interaction_id": "i-1"}, "nonfixing", 0
+    @staticmethod
+    def read_observation_request():
+        return {
+            "interaction_id": "i-2",
+            "request": {
+                "schema_version": 1,
+                "messages": [
+                    {
+                        "role": "toolResult",
+                        "toolCallId": "read-1",
+                        "toolName": "castor_read_file",
+                        "content": [{"type": "text", "text": "failing fixture\n"}],
+                        "isError": False,
+                    }
+                ],
+            },
+        }
+
+    def test_first_response_is_a_real_read_request(self):
+        response = self.mock.reply(
+            {"request": {"schema_version": 1}, "interaction_id": "i-1"}, "fixing", 0
         )
+        body = json.loads(bytes(response["content"]))
+        self.assertEqual(
+            body["content"],
+            [
+                {
+                    "type": "toolCall",
+                    "id": "read-1",
+                    "name": "castor_read_file",
+                    "arguments": {"path": "defect.txt"},
+                }
+            ],
+        )
+        self.assertEqual(body["stopReason"], "toolUse")
+
+    def test_edit_requires_successful_read_observation_of_target_content(self):
+        for content, is_error in (("wrong file\n", False), ("failing fixture\n", True)):
+            request = self.read_observation_request()
+            result = request["request"]["messages"][0]
+            result["content"][0]["text"] = content
+            result["isError"] = is_error
+            with self.assertRaises(ValueError):
+                self.mock.reply(request, "fixing", 1)
+        with self.assertRaises(ValueError):
+            self.mock.reply(
+                {
+                    "request": {"schema_version": 1, "messages": []},
+                    "interaction_id": "i-2",
+                },
+                "fixing",
+                1,
+            )
+
+    def test_terminal_edit_does_not_require_a_third_model_request(self):
+        response = self.mock.reply(self.read_observation_request(), "fixing", 1)
+        self.assertEqual(
+            json.loads(bytes(response["content"]))["content"][0]["name"],
+            "castor_edit_file",
+        )
+        with self.assertRaises(ValueError):
+            self.mock.reply(self.read_observation_request(), "fixing", 2)
+
+    def test_nonfixing_is_a_real_wrong_edit_with_content_digest(self):
+        reply = self.mock.reply(self.read_observation_request(), "nonfixing", 1)
         content = bytes(reply["content"])
         self.assertEqual(
             reply["observation_digest"], "sha256:" + hashlib.sha256(content).hexdigest()
@@ -84,7 +145,7 @@ class TrustedSlotUnits(unittest.TestCase):
             edit["arguments"]["edits"],
             [{"oldText": "failing fixture", "newText": "still failing fixture"}],
         )
-        self.assertEqual(reply["interaction_id"], "i-1")
+        self.assertEqual(reply["interaction_id"], "i-2")
 
     def test_cli_rejects_nonfinite_deadlines_before_any_docker_operation(self):
         launcher = Path(__file__).resolve().parents[1] / "scripts/run_trusted_slot.py"

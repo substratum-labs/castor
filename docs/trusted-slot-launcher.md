@@ -6,8 +6,12 @@ entrypoint, not a Python product runtime dependency. Existing native/macOS CLI
 semantics, Rust Core, Pi extension, and protected `IsolatedVerifier` are unchanged.
 
 The deterministic model fixture supports `defect.txt` containing `failing fixture`.
-`fixing` requests a genuine Pi edit to `fixed fixture`; `nonfixing` requests a valid
-edit to `still failing fixture`; `timeout` stalls the native model interaction.
+`fixing` and `nonfixing` first request a real `castor_read_file` of `defect.txt`.
+The next request must contain its successful `failing fixture` read observation
+before an edit is emitted: `fixed fixture` or `still failing fixture`, respectively.
+The native extension ends locally after the terminal edit, so completed runs use
+two model interactions, one patch action, and one settlement. `timeout` stalls the
+first native model interaction.
 The model service uses a framed Linux Unix socket inside the controller. There is
 no HTTP provider client, Ollama call, macOS socket bridge, or host oracle fallback.
 Only the actual native `IsolatedVerifier` executes the target verification command.
@@ -91,7 +95,14 @@ can therefore require operator recovery using the recorded exact CIDs/owner toke
 ```sh
 python3 -m unittest discover -s tests -p test_trusted_slot_units.py -v
 python3 tests/test_trusted_launcher.py -v
+# Alternatively, opt in to physical pytest execution:
+CASTOR_TRUSTED_LAUNCHER_PHYSICAL=1 pytest tests/test_trusted_launcher.py -v
 ```
+
+Ordinary `pytest tests/` does not collect the physical class. This is collection
+isolation, not a skip: direct execution and explicit opt-in still fail on missing
+prerequisites. Collection regression tests exercise default discovery, opt-in
+discovery, and strict direct failure with Docker absent.
 
 The physical suite has no dependency on the internal coordination repository.
 `CASTOR_ROOT` can select another authorized source worktree; `LINUX_BIN_DIR`

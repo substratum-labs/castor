@@ -31,6 +31,10 @@ VERIFIER = (
     "78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea"
 )
 WORKLOAD_TIMEOUT, CLEANUP_TIMEOUT = 120, 60
+RUN_PHYSICAL = (
+    os.environ.get("CASTOR_TRUSTED_LAUNCHER_PHYSICAL") == "1" or __name__ == "__main__"
+)
+__test__ = RUN_PHYSICAL  # pytest discovery only; explicit unittest stays strict.
 
 
 def require_launcher():
@@ -636,7 +640,81 @@ class TestLauncherHarness(unittest.TestCase):
         self.assertTrue(ends, "native Pi completion log required")
         self.assertEqual(ends[-1]["stopReason"], "stop")
         self.assertFalse(ends[-1].get("errorMessage"))
+        self.assert_read_then_edit(run, events)
         self.assertEqual((self.project / "defect.txt").read_text(), "failing fixture\n")
+
+    def assert_read_then_edit(self, run, events):
+        read_start = next(
+            i
+            for i, event in enumerate(events)
+            if event.get("type") == "tool_execution_start"
+            and event.get("toolName") == "castor_read_file"
+            and event.get("toolCallId") == "read-1"
+        )
+        read_end = next(
+            i
+            for i, event in enumerate(events)
+            if event.get("type") == "tool_execution_end"
+            and event.get("toolName") == "castor_read_file"
+            and event.get("toolCallId") == "read-1"
+        )
+        edit_start = next(
+            i
+            for i, event in enumerate(events)
+            if event.get("type") == "tool_execution_start"
+            and event.get("toolName") == "castor_edit_file"
+            and event.get("toolCallId") == "edit-1"
+        )
+        self.assertLess(read_start, read_end)
+        self.assertLess(read_end, edit_start)
+        self.assertEqual(events[read_start]["args"], {"path": "defect.txt"})
+        self.assertIs(events[read_end]["isError"], False)
+        observed = events[read_end]["result"]
+        self.assertEqual(observed["details"]["path"], "defect.txt")
+        self.assertEqual(
+            observed["content"], [{"type": "text", "text": "failing fixture\n"}]
+        )
+        self.assertEqual(events[edit_start]["args"]["path"], "defect.txt")
+        evidence = self.evidence(run)
+        calls = [
+            json.loads(line)
+            for line in (evidence / "mock-calls.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(
+            [(call["ordinal"], "request" in call) for call in calls],
+            [(0, True), (0, False), (1, True), (1, False)],
+        )
+        for ordinal, expected_name in enumerate(
+            ("castor_read_file", "castor_edit_file")
+        ):
+            request, response = (
+                calls[ordinal * 2]["request"],
+                calls[ordinal * 2 + 1]["response"],
+            )
+            self.assertEqual(response["interaction_id"], request["interaction_id"])
+            content = bytes(response["content"])
+            self.assertEqual(
+                response["observation_digest"],
+                "sha256:" + hashlib.sha256(content).hexdigest(),
+            )
+            tool = json.loads(content)["content"][0]
+            self.assertEqual(tool["name"], expected_name)
+            self.assertEqual(tool["arguments"]["path"], "defect.txt")
+        results = [
+            message
+            for message in calls[2]["request"]["request"]["messages"]
+            if message.get("role") == "toolResult"
+            and message.get("toolCallId") == "read-1"
+        ]
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["toolName"], "castor_read_file")
+        self.assertIs(results[0]["isError"], False)
+        self.assertEqual(results[0]["content"], observed["content"])
+        summary = self.load(evidence, "mock-summary.json")
+        self.assertEqual(summary["local_requests"], 2)
+        self.assertEqual(summary["provider_calls"], 0)
+        self.assertEqual(summary["transport"], "AF_UNIX")
+        self.assertIsNone(summary["error"])
 
     def assert_mapping(self, run, candidate):
         mapping = self.load(self.evidence(run), "mount-map.json")
@@ -945,6 +1023,9 @@ class TestLauncherHarness(unittest.TestCase):
                 except Exception as error:
                     errors.append(f"helper: {error}")
         self.assertFalse(errors, "\n".join(errors))
+
+
+TestLauncherHarness.__test__ = RUN_PHYSICAL
 
 
 if __name__ == "__main__":

@@ -35,28 +35,52 @@ def read_frame(stream):
 def reply(request, mode, ordinal):
     if request["request"]["schema_version"] != 1 or mode not in ("fixing", "nonfixing"):
         raise ValueError("unsupported fixture request")
-    if ordinal != 0:
+    if ordinal == 0:
+        tool = {
+            "type": "toolCall",
+            "id": "read-1",
+            "name": "castor_read_file",
+            "arguments": {"path": "defect.txt"},
+        }
+    elif ordinal == 1:
+        observations = [
+            message
+            for message in request["request"].get("messages", [])
+            if message.get("role") == "toolResult"
+            and message.get("toolCallId") == "read-1"
+            and message.get("toolName") == "castor_read_file"
+        ]
+        if (
+            len(observations) != 1
+            or observations[0].get("isError") is not False
+            or observations[0].get("content")
+            != [{"type": "text", "text": "failing fixture\n"}]
+        ):
+            raise ValueError(
+                "edit requires the successful native defect.txt read observation"
+            )
+        tool = {
+            "type": "toolCall",
+            "id": "edit-1",
+            "name": "castor_edit_file",
+            "arguments": {
+                "path": "defect.txt",
+                "edits": [
+                    {
+                        "oldText": "failing fixture",
+                        "newText": "fixed fixture"
+                        if mode == "fixing"
+                        else "still failing fixture",
+                    }
+                ],
+            },
+        }
+    else:
+        # The pinned native extension synthesizes stop locally after terminal edit.
         raise ValueError("terminal edit unexpectedly requested another interaction")
     content = json.dumps(
         {
-            "content": [
-                {
-                    "type": "toolCall",
-                    "id": "edit-1",
-                    "name": "castor_edit_file",
-                    "arguments": {
-                        "path": "defect.txt",
-                        "edits": [
-                            {
-                                "oldText": "failing fixture",
-                                "newText": "fixed fixture"
-                                if mode == "fixing"
-                                else "still failing fixture",
-                            }
-                        ],
-                    },
-                }
-            ],
+            "content": [tool],
             "stopReason": "toolUse",
             "usage": {"input": 12, "output": 8},
         },
