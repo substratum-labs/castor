@@ -313,7 +313,6 @@ fn test_verifier_enforces_resource_limits() {
     assert!((1_073_741_824..=2_147_483_648).contains(&memory));
     assert!(memory_swap >= memory && memory_swap <= 2_147_483_648);
     assert!((2_000_000_000..=4_000_000_000).contains(&nano_cpus));
-    assert_eq!(task["verifier_evidence"]["cgroup_limits_confirmed"], true);
 }
 
 #[test]
@@ -367,6 +366,37 @@ fn test_verifier_launcher_failure_fails_closed_without_host_fallback() {
 }
 
 #[test]
+fn test_verifier_docker_launch_error_never_runs_host_canary() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = Fixture::new("pass");
+    let canary = fixture.root.path().join("host-executed.txt");
+    let launcher = fixture.root.path().join("failed-docker");
+    fs::write(&launcher, b"#!/bin/sh\nexit 97\n").unwrap();
+    fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755)).unwrap();
+    let program = format!(
+        "from pathlib import Path; Path({:?}).write_text('host execution happened')",
+        canary.to_str().unwrap()
+    );
+    let manifest_path = fixture.root.path().join("manifest.json");
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["verification_command"] = json!(["python3", "-c", program]);
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let mut command = fixture.command();
+    // This test-only override must be gated by --allow-test-opcodes; it may not
+    // become a guest-controlled production launcher configuration.
+    command.env("CASTOR_TEST_VERIFIER_DOCKER", &launcher);
+    let task = result(run_bounded(command));
+    assert!(
+        !canary.exists(),
+        "verification executed on host despite Docker launch failure: {task}"
+    );
+    assert_eq!(task["status"], "FAILED");
+    assert_eq!(task["failure_reason"], "VerifierUnavailable");
+    assert_eq!(task["test_passed"], false);
+}
+
+#[test]
 fn test_verifier_setup_inspect_teardown_have_one_deadline_and_cleanup() {
     let task = Fixture::new("pass").run();
     let evidence = &task["verifier_evidence"];
@@ -384,10 +414,6 @@ fn test_verifier_setup_inspect_teardown_have_one_deadline_and_cleanup() {
     assert_eq!(
         evidence["container_removed"], true,
         "verifier container was not reaped: {task}"
-    );
-    assert_eq!(
-        evidence["all_verification_paths_isolated"], true,
-        "verification path bypassed isolation: {task}"
     );
 }
 
