@@ -5,6 +5,8 @@ use super::invalid;
 use super::io::create_root_dir;
 use super::io::open_child_dir;
 use super::io::open_root_dir;
+#[cfg(target_os = "linux")]
+use super::io::read_bounded;
 use super::receipt::PackReceipt;
 use super::spec::{derive_task_identity, parse_and_validate_spec_at};
 use sha2::{Digest, Sha256};
@@ -43,9 +45,26 @@ impl StagingDir {
             let c = CString::new(name.as_bytes()).map_err(|_| invalid("invalid staging name"))?;
             let rc = unsafe { libc::mkdirat(parent.as_raw_fd(), c.as_ptr(), 0o700) };
             if rc == 0 {
-                let dir = open_child_dir(parent, std::ffi::OsStr::new(&name))?;
+                let dir = match open_child_dir(parent, std::ffi::OsStr::new(&name)) {
+                    Ok(dir) => dir,
+                    Err(error) => {
+                        unsafe {
+                            libc::unlinkat(parent.as_raw_fd(), c.as_ptr(), libc::AT_REMOVEDIR);
+                        }
+                        return Err(error);
+                    }
+                };
+                let parent = match parent.try_clone() {
+                    Ok(parent) => parent,
+                    Err(error) => {
+                        unsafe {
+                            libc::unlinkat(parent.as_raw_fd(), c.as_ptr(), libc::AT_REMOVEDIR);
+                        }
+                        return Err(error);
+                    }
+                };
                 return Ok(Self {
-                    parent: parent.try_clone()?,
+                    parent,
                     dir,
                     name,
                     published: false,
@@ -87,6 +106,19 @@ impl Drop for StagingDir {
     fn drop(&mut self) {
         if self.published {
             return;
+        }
+        if let Ok(bundle) = open_child_dir(&self.dir, std::ffi::OsStr::new("bundle")) {
+            for name in ["manifest.json", "pack-receipt.json", "workspace.tar"] {
+                if let Ok(c) = CString::new(name) {
+                    unsafe {
+                        libc::unlinkat(bundle.as_raw_fd(), c.as_ptr(), 0);
+                    }
+                }
+            }
+            let c = CString::new("bundle").unwrap();
+            unsafe {
+                libc::unlinkat(self.dir.as_raw_fd(), c.as_ptr(), libc::AT_REMOVEDIR);
+            }
         }
         for name in ["manifest.json", "pack-receipt.json", "workspace.tar"] {
             if let Ok(c) = CString::new(name) {
@@ -300,6 +332,15 @@ pub fn pack_project(
     spec_path: &Path,
     out_dir: &Path,
 ) -> io::Result<PackReceipt> {
+    pack_project_with_parent(project_path, spec_path, out_dir, None)
+}
+
+fn pack_project_with_parent(
+    project_path: &Path,
+    spec_path: &Path,
+    out_dir: &Path,
+    parent_override: Option<&File>,
+) -> io::Result<PackReceipt> {
     let deadline = Instant::now() + Duration::from_secs(60);
     let project_fd = open_root_dir(project_path)?;
     let project = fs::canonicalize(project_path)?;
@@ -331,8 +372,16 @@ pub fn pack_project(
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    let parent_fd = open_root_dir(parent)?;
-    let parent_path = fs::canonicalize(parent)?;
+    let parent_fd = if let Some(fd) = parent_override {
+        fd.try_clone()?
+    } else {
+        open_root_dir(parent)?
+    };
+    let parent_path = if parent_override.is_some() {
+        parent.to_path_buf()
+    } else {
+        fs::canonicalize(parent)?
+    };
     let output = parent_path.join(
         out_dir
             .file_name()
@@ -418,32 +467,35 @@ pub fn run_project(project_path: &Path, spec_path: &Path) -> io::Result<PathBuf>
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".castor/state")))
             .ok_or_else(|| invalid("missing HOME or CASTOR_STATE_ROOT"))?;
-        create_root_dir(&state_root.join("pack"))?;
+        let pack_fd = create_root_dir(&state_root.join("pack"))?;
         let verifier = image_id(VERIFIER_PIN, Instant::now() + Duration::from_secs(60))?;
         if !verifier.starts_with("sha256:") {
             return Err(invalid("invalid verifier image"));
         }
         let pack_root = state_root.join("pack");
-        let stage_root = tempfile::Builder::new()
-            .prefix(".run-pack-")
-            .tempdir_in(&pack_root)?;
-        let provisional = stage_root.path().join("bundle");
-        let receipt = pack_project(project_path, spec_path, &provisional)?;
+        let stage_root = StagingDir::create(&pack_fd, ".run-pack-")?;
+        let provisional = pack_root.join(&stage_root.name).join("bundle");
+        let receipt =
+            pack_project_with_parent(project_path, spec_path, &provisional, Some(&stage_root.dir))?;
         let final_out = pack_root.join(&receipt.task_id);
-        let parent_fd = open_root_dir(&pack_root)?;
+        let bundle_fd = open_child_dir(&stage_root.dir, std::ffi::OsStr::new("bundle"))?;
         let files = ["manifest.json", "workspace.tar", "pack-receipt.json"];
         let expected = files
             .iter()
-            .map(|name| Ok(((*name).to_owned(), fs::read(provisional.join(name))?)))
+            .map(|name| {
+                Ok((
+                    (*name).to_owned(),
+                    read_bounded(&bundle_fd, Path::new(name), 300 * 1024 * 1024)?.0,
+                ))
+            })
             .collect::<io::Result<Vec<_>>>()?;
         if !existing_output(
-            &parent_fd,
+            &pack_fd,
             &final_out,
             &expected,
             Instant::now() + Duration::from_secs(60),
         )? {
-            let stage_fd = open_root_dir(stage_root.path())?;
-            exclusive_rename(&stage_fd, &provisional, &parent_fd, &final_out)?;
+            exclusive_rename(&stage_root.dir, &provisional, &pack_fd, &final_out)?;
         }
         Ok(final_out.join("manifest.json"))
     }
