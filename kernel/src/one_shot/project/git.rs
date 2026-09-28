@@ -6,12 +6,12 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 const META_CAP: usize = 16 * 1024 * 1024;
 const BLOB_CAP: usize = 32 * 1024 * 1024;
@@ -62,52 +62,126 @@ pub(super) fn invoke(
         .stderr(Stdio::piped())
         .process_group(0)
         .spawn()?;
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let out_thread = thread::spawn(move || capped_read(stdout, out_cap));
-    let err_thread = thread::spawn(move || capped_read(stderr, err_cap));
-    if let Some(input) = input {
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(input)?;
+    let result = (|| {
+        let mut stdout = child.stdout.take();
+        let mut stderr = child.stderr.take();
+        let mut stdin = child.stdin.take();
+        for fd in [
+            stdout.as_ref().map(AsRawFd::as_raw_fd),
+            stderr.as_ref().map(AsRawFd::as_raw_fd),
+            stdin.as_ref().map(AsRawFd::as_raw_fd),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+            {
+                return Err(io::Error::last_os_error());
+            }
         }
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let mut written = 0;
+        let mut status = None;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Git operation deadline",
+                ));
+            }
+            if status.is_none() {
+                status = child.try_wait()?;
+            }
+            if stdin.is_some() && written == input.unwrap_or_default().len() {
+                stdin = None;
+            }
+            if let Some(status) =
+                status.filter(|_| stdout.is_none() && stderr.is_none() && stdin.is_none())
+            {
+                return if status.success() {
+                    Ok(out)
+                } else {
+                    Err(invalid(format!(
+                        "Git plumbing failed: {}",
+                        String::from_utf8_lossy(&err)
+                    )))
+                };
+            }
+            let mut fds = Vec::new();
+            if let Some(pipe) = &stdout {
+                fds.push(libc::pollfd {
+                    fd: pipe.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                });
+            }
+            if let Some(pipe) = &stderr {
+                fds.push(libc::pollfd {
+                    fd: pipe.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                });
+            }
+            if let Some(pipe) = &stdin {
+                fds.push(libc::pollfd {
+                    fd: pipe.as_raw_fd(),
+                    events: libc::POLLOUT,
+                    revents: 0,
+                });
+            }
+            let timeout = remaining.as_millis().clamp(1, 50) as i32;
+            let rc = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout) };
+            if rc < 0 {
+                let error = io::Error::last_os_error();
+                if error.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(error);
+            }
+            if let Some(pipe) = stdout.as_mut() {
+                let mut buf = [0u8; 8192];
+                match pipe.read(&mut buf) {
+                    Ok(0) => stdout = None,
+                    Ok(n) => {
+                        out.extend_from_slice(&buf[..n]);
+                        if out.len() > out_cap {
+                            return Err(invalid("Git output cap exceeded"));
+                        }
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => (),
+                    Err(e) => return Err(e),
+                }
+            }
+            if let Some(pipe) = stderr.as_mut() {
+                let mut buf = [0u8; 8192];
+                match pipe.read(&mut buf) {
+                    Ok(0) => stderr = None,
+                    Ok(n) => {
+                        err.extend_from_slice(&buf[..n]);
+                        if err.len() > err_cap {
+                            return Err(invalid("Git output cap exceeded"));
+                        }
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => (),
+                    Err(e) => return Err(e),
+                }
+            }
+            if let Some(pipe) = stdin.as_mut() {
+                match pipe.write(&input.unwrap_or_default()[written..]) {
+                    Ok(n) => written += n,
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => (),
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+    })();
+    if result.is_err() {
+        kill_group(&mut child);
     }
-    let mut status = None;
-    loop {
-        if Instant::now() >= deadline {
-            kill_group(&mut child);
-            status = None;
-            break;
-        }
-        if status.is_none() {
-            status = child.try_wait()?;
-        }
-        if status.is_some() && out_thread.is_finished() && err_thread.is_finished() {
-            break;
-        }
-        if status.is_none() && out_thread.is_finished() && err_thread.is_finished() {
-            // A cap error closes the pipes; never wait unbounded for descendants.
-            kill_group(&mut child);
-            break;
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
-    let out = out_thread
-        .join()
-        .map_err(|_| io::Error::other("Git stdout reader panicked"))??;
-    let err = err_thread
-        .join()
-        .map_err(|_| io::Error::other("Git stderr reader panicked"))??;
-    match status {
-        Some(s) if s.success() => Ok(out),
-        None => Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            "Git operation deadline",
-        )),
-        _ => Err(invalid(format!(
-            "Git plumbing failed: {}",
-            String::from_utf8_lossy(&err)
-        ))),
-    }
+    result
 }
 
 fn git_command(root: &Path, git_dir: &Path) -> Command {
@@ -414,4 +488,90 @@ pub fn blob(meta: &CleanTreeMetadata, oid: &str, deadline: Instant) -> io::Resul
         return Err(invalid("blob size mismatch or cap exceeded"));
     }
     Ok(out[end + 1..end + 1 + size].to_vec())
+}
+
+#[cfg(test)]
+mod invoke_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn shell(script: &str) -> Command {
+        let mut cmd = Command::new("/bin/sh");
+        cmd.args(["-c", script]);
+        cmd
+    }
+
+    #[test]
+    fn oversized_stdout_returns_while_stderr_stays_open() {
+        let start = Instant::now();
+        let result = invoke(
+            shell("head -c 8192 /dev/zero; sleep 5"),
+            None,
+            16,
+            16,
+            start + Duration::from_secs(2),
+        );
+        assert!(result.is_err());
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "cap failure must stop the process group promptly"
+        );
+    }
+
+    #[test]
+    fn child_closes_stdio_and_hangs_until_deadline() {
+        let start = Instant::now();
+        let result = invoke(
+            shell("exec 0<&- 1>&- 2>&-; sleep 5"),
+            None,
+            16,
+            16,
+            start + Duration::from_millis(100),
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn child_exit_with_descendant_pipe_holder_is_bounded() {
+        let start = Instant::now();
+        let result = invoke(
+            shell("sleep 5 & exit 0"),
+            None,
+            16,
+            16,
+            start + Duration::from_millis(100),
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn deadline_precedes_late_output_failure() {
+        let start = Instant::now();
+        let result = invoke(
+            shell("sleep 5; head -c 8192 /dev/zero"),
+            None,
+            16,
+            16,
+            start + Duration::from_millis(100),
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn closed_stdin_returns_without_waiting_for_hung_child() {
+        let start = Instant::now();
+        let input = vec![b'x'; 1024 * 1024];
+        let result = invoke(
+            shell("exec 0<&-; sleep 5"),
+            Some(&input),
+            16,
+            16,
+            start + Duration::from_secs(2),
+        );
+        assert!(result.is_err());
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
 }

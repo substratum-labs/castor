@@ -2,6 +2,7 @@ use super::invalid;
 use super::io::{open_root_dir, read_bounded};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use std::fs::File;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
@@ -36,7 +37,11 @@ pub fn parse_and_validate_spec(path: &Path) -> io::Result<TaskSpec> {
         .file_name()
         .ok_or_else(|| invalid("invalid task spec path"))?;
     let root = open_root_dir(parent)?;
-    let (bytes, _) = read_bounded(&root, Path::new(name), 1024 * 1024)?;
+    parse_and_validate_spec_at(&root, Path::new(name))
+}
+
+pub fn parse_and_validate_spec_at(root: &File, name: &Path) -> io::Result<TaskSpec> {
+    let (bytes, _) = read_bounded(root, name, 1024 * 1024)?;
     let spec: TaskSpec = serde_json::from_slice(&bytes).map_err(|e| invalid(e.to_string()))?;
     if spec.schema_version != 1
         || spec.task_prompt.is_empty()

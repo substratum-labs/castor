@@ -1,11 +1,11 @@
 use super::git::{blob, CleanTreeMetadata};
 use super::invalid;
-use super::io::{open_root_dir, read_bounded};
+use super::io::{directory_names, open_child_dir, read_bounded};
 use super::receipt::{ArchivedEntry, ExcludedEntry};
 use super::spec::TaskSpec;
 use sha2::{Digest, Sha256};
-use std::fs::{self, File};
-use std::io::{self, Write};
+use std::fs::File;
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::Instant;
 
@@ -53,8 +53,15 @@ struct Member {
     origin: &'static str,
 }
 
+pub struct TarBundle {
+    pub digest: String,
+    pub bytes: Vec<u8>,
+    pub archived: Vec<ArchivedEntry>,
+    pub excluded: Vec<ExcludedEntry>,
+}
+
 fn collect_assets(
-    root: &Path,
+    dir: &File,
     relative: &Path,
     spec: &TaskSpec,
     members: &mut Vec<Member>,
@@ -64,24 +71,15 @@ fn collect_assets(
     if Instant::now() >= deadline {
         return Err(io::Error::new(io::ErrorKind::TimedOut, "pack deadline"));
     }
-    let full = root.join(relative);
-    for dirent in fs::read_dir(full)? {
-        let dirent = dirent?;
-        let name = dirent.file_name();
-        let rel = relative.join(name);
+    for name in directory_names(dir)? {
+        let rel = relative.join(&name);
         let path = rel
             .to_str()
             .ok_or_else(|| invalid("non-UTF-8 asset path"))?;
-        let meta = fs::symlink_metadata(root.join(&rel))?;
-        if meta.file_type().is_symlink() {
-            return Err(invalid("asset symlink"));
-        }
-        if meta.is_dir() {
-            open_root_dir(&root.join(&rel))?;
-            collect_assets(root, &rel, spec, members, excluded_entries, deadline)?;
-        } else if meta.is_file() {
-            let root_fd = open_root_dir(root)?;
-            let (bytes, mode) = read_bounded(&root_fd, &rel, BLOB_CAP)?;
+        if let Ok(child) = open_child_dir(dir, &name) {
+            collect_assets(&child, &rel, spec, members, excluded_entries, deadline)?;
+        } else {
+            let (bytes, mode) = read_bounded(dir, Path::new(&name), BLOB_CAP)?;
             if mode & u32::from(libc::S_IXUSR) != 0 {
                 return Err(invalid("executable verification asset"));
             }
@@ -99,8 +97,6 @@ fn collect_assets(
                     origin: "asset",
                 });
             }
-        } else {
-            return Err(invalid("special verification asset"));
         }
     }
     Ok(())
@@ -110,10 +106,10 @@ pub fn build_deterministic_tar(
     project_fd: &File,
     tree: &CleanTreeMetadata,
     spec: &TaskSpec,
-    spec_dir: &Path,
-    out_tar_path: &Path,
+    spec_dir: &File,
+    out_tar_file: File,
     deadline: Instant,
-) -> io::Result<(String, Vec<ArchivedEntry>, Vec<ExcludedEntry>)> {
+) -> io::Result<TarBundle> {
     let mut members = Vec::new();
     let mut excluded_entries = Vec::new();
     for tracked in &tree.tracked_files {
@@ -155,10 +151,15 @@ pub fn build_deterministic_tar(
         }
     }
     if let Some(assets) = &spec.verification_assets {
-        let assets_root = spec_dir.join(assets);
-        open_root_dir(&assets_root)?;
+        let mut assets_fd = spec_dir.try_clone()?;
+        for part in assets.components() {
+            let std::path::Component::Normal(name) = part else {
+                return Err(invalid("invalid verification asset path"));
+            };
+            assets_fd = open_child_dir(&assets_fd, name)?;
+        }
         collect_assets(
-            &assets_root,
+            &assets_fd,
             Path::new(""),
             spec,
             &mut members,
@@ -173,8 +174,7 @@ pub fn build_deterministic_tar(
     }
     let mut total = 0usize;
     let mut entries = Vec::new();
-    let file = File::create(out_tar_path)?;
-    let mut tar = tar::Builder::new(file);
+    let mut tar = tar::Builder::new(out_tar_file);
     for member in members {
         if Instant::now() >= deadline {
             return Err(io::Error::new(io::ErrorKind::TimedOut, "pack deadline"));
@@ -209,6 +209,15 @@ pub fn build_deterministic_tar(
     if Instant::now() >= deadline {
         return Err(io::Error::new(io::ErrorKind::TimedOut, "pack deadline"));
     }
-    let digest = format!("{:x}", Sha256::digest(fs::read(out_tar_path)?));
-    Ok((digest, entries, excluded_entries))
+    file.seek(SeekFrom::Start(0))?;
+    let mut bytes = Vec::new();
+    file.take((TOTAL_CAP + FILE_CAP * 1024 + 4096) as u64)
+        .read_to_end(&mut bytes)?;
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    Ok(TarBundle {
+        digest,
+        bytes,
+        archived: entries,
+        excluded: excluded_entries,
+    })
 }

@@ -102,6 +102,45 @@ pub fn open_safe_source_file(root_fd: &File, relative_path: &Path) -> io::Result
     Err(invalid("empty relative path"))
 }
 
+pub fn open_child_dir(parent: &File, name: &OsStr) -> io::Result<File> {
+    openat(
+        parent,
+        name,
+        libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+    )
+}
+
+pub fn directory_names(dir: &File) -> io::Result<Vec<std::ffi::OsString>> {
+    let copy = unsafe { libc::dup(dir.as_raw_fd()) };
+    if copy < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let stream = unsafe { libc::fdopendir(copy) };
+    if stream.is_null() {
+        unsafe {
+            libc::close(copy);
+        }
+        return Err(io::Error::last_os_error());
+    }
+    let mut names = Vec::new();
+    loop {
+        let entry = unsafe { libc::readdir(stream) };
+        if entry.is_null() {
+            break;
+        }
+        let bytes = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+        if bytes != b"." && bytes != b".." {
+            use std::os::unix::ffi::OsStringExt;
+            names.push(std::ffi::OsString::from_vec(bytes.to_vec()));
+        }
+    }
+    unsafe {
+        libc::closedir(stream);
+    }
+    names.sort();
+    Ok(names)
+}
+
 pub fn read_bounded(root: &File, path: &Path, cap: usize) -> io::Result<(Vec<u8>, u32)> {
     let file = open_safe_source_file(root, path)?;
     let mode = file.metadata()?.mode();

@@ -3,22 +3,105 @@ use super::git::{inspect_clean_git_tree, invoke};
 use super::invalid;
 #[cfg(target_os = "linux")]
 use super::io::create_root_dir;
+use super::io::open_child_dir;
 use super::io::open_root_dir;
 use super::receipt::PackReceipt;
-use super::spec::{derive_task_identity, parse_and_validate_spec};
+use super::spec::{derive_task_identity, parse_and_validate_spec_at};
 use sha2::{Digest, Sha256};
 use std::ffi::CString;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::os::fd::AsRawFd;
+use std::os::fd::FromRawFd;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 pub const VERIFIER_PIN: &str =
     "python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea";
 const CARRIER_TAG: &str = "substratum/castor-pi-carrier:v1";
+static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+struct StagingDir {
+    parent: File,
+    dir: File,
+    name: String,
+    published: bool,
+}
+
+impl StagingDir {
+    fn create(parent: &File, prefix: &str) -> io::Result<Self> {
+        for _ in 0..32 {
+            let name = format!(
+                "{prefix}{}-{}",
+                std::process::id(),
+                STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            );
+            let c = CString::new(name.as_bytes()).map_err(|_| invalid("invalid staging name"))?;
+            let rc = unsafe { libc::mkdirat(parent.as_raw_fd(), c.as_ptr(), 0o700) };
+            if rc == 0 {
+                let dir = open_child_dir(parent, std::ffi::OsStr::new(&name))?;
+                return Ok(Self {
+                    parent: parent.try_clone()?,
+                    dir,
+                    name,
+                    published: false,
+                });
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::AlreadyExists {
+                return Err(error);
+            }
+        }
+        Err(invalid("unable to create unique staging directory"))
+    }
+
+    fn file(&self, name: &str) -> io::Result<File> {
+        let c = CString::new(name).map_err(|_| invalid("invalid bundle filename"))?;
+        let fd = unsafe {
+            libc::openat(
+                self.dir.as_raw_fd(),
+                c.as_ptr(),
+                libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+
+    fn write(&self, name: &str, bytes: &[u8]) -> io::Result<()> {
+        use std::io::Write;
+        let mut file = self.file(name)?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    }
+}
+
+impl Drop for StagingDir {
+    fn drop(&mut self) {
+        if self.published {
+            return;
+        }
+        for name in ["manifest.json", "pack-receipt.json", "workspace.tar"] {
+            if let Ok(c) = CString::new(name) {
+                unsafe {
+                    libc::unlinkat(self.dir.as_raw_fd(), c.as_ptr(), 0);
+                }
+            }
+        }
+        if let Ok(c) = CString::new(self.name.as_bytes()) {
+            unsafe {
+                libc::unlinkat(self.parent.as_raw_fd(), c.as_ptr(), libc::AT_REMOVEDIR);
+            }
+        }
+    }
+}
 
 fn image_id(reference: &str, deadline: Instant) -> io::Result<String> {
     let mut cmd = Command::new("docker");
@@ -64,7 +147,11 @@ fn existing_output(
     parent_fd: &File,
     out: &Path,
     expected: &[(String, Vec<u8>)],
+    deadline: Instant,
 ) -> io::Result<bool> {
+    if Instant::now() >= deadline {
+        return Err(io::Error::new(io::ErrorKind::TimedOut, "pack deadline"));
+    }
     let name = out
         .file_name()
         .ok_or_else(|| invalid("invalid output directory"))?;
@@ -113,6 +200,12 @@ fn existing_output(
     }
     let mut names = Vec::new();
     loop {
+        if Instant::now() >= deadline {
+            unsafe {
+                libc::closedir(stream);
+            }
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "pack deadline"));
+        }
         let entry = unsafe { libc::readdir(stream) };
         if entry.is_null() {
             break;
@@ -136,6 +229,9 @@ fn existing_output(
         return Err(invalid("existing output is not the exact pack bundle"));
     }
     for (name, bytes) in expected {
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "pack deadline"));
+        }
         let c = CString::new(name.as_bytes()).unwrap();
         let fd = unsafe {
             libc::openat(
@@ -215,8 +311,22 @@ pub fn pack_project(
     if same_or_inside(&project, out_dir)? {
         return Err(invalid("output path cannot reside inside input project"));
     }
-    let spec = parse_and_validate_spec(spec_path)?;
+    let spec_dir = spec_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let spec_fd = open_root_dir(spec_dir)?;
+    let spec_name = spec_path
+        .file_name()
+        .ok_or_else(|| invalid("invalid task spec path"))?;
+    let spec = parse_and_validate_spec_at(&spec_fd, Path::new(spec_name))?;
     let tree = inspect_clean_git_tree(&project, deadline)?;
+    let inspected_fd = open_root_dir(&tree.root)?;
+    if project_fd.metadata()?.ino() != inspected_fd.metadata()?.ino()
+        || project_fd.metadata()?.dev() != inspected_fd.metadata()?.dev()
+    {
+        return Err(invalid("project root changed during inspection"));
+    }
     let parent = out_dir
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -236,16 +346,13 @@ pub fn pack_project(
         "{}.tmp-pack-",
         output.file_name().unwrap().to_string_lossy()
     );
-    let staging = tempfile::Builder::new()
-        .prefix(&prefix)
-        .tempdir_in(&parent_path)?;
-    let tar_path = staging.path().join("workspace.tar");
-    let spec_dir = spec_path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let (snapshot, archived_entries, excluded_entries) =
-        build_deterministic_tar(&project_fd, &tree, &spec, spec_dir, &tar_path, deadline)?;
+    let mut staging = StagingDir::create(&parent_fd, &prefix)?;
+    let tar_file = staging.file("workspace.tar")?;
+    let bundle = build_deterministic_tar(&project_fd, &tree, &spec, &spec_fd, tar_file, deadline)?;
+    let snapshot = bundle.digest;
+    let tar_bytes = bundle.bytes;
+    let archived_entries = bundle.archived;
+    let excluded_entries = bundle.excluded;
     if Instant::now() >= deadline {
         return Err(io::Error::new(io::ErrorKind::TimedOut, "pack deadline"));
     }
@@ -276,9 +383,8 @@ pub fn pack_project(
     };
     let manifest_bytes = serde_json::to_vec(&manifest).map_err(io::Error::other)?;
     let receipt_bytes = serde_json::to_vec(&receipt).map_err(io::Error::other)?;
-    fs::write(staging.path().join("manifest.json"), &manifest_bytes)?;
-    fs::write(staging.path().join("pack-receipt.json"), &receipt_bytes)?;
-    let tar_bytes = fs::read(&tar_path)?;
+    staging.write("manifest.json", &manifest_bytes)?;
+    staging.write("pack-receipt.json", &receipt_bytes)?;
     if Instant::now() >= deadline {
         return Err(io::Error::new(io::ErrorKind::TimedOut, "pack deadline"));
     }
@@ -290,8 +396,12 @@ pub fn pack_project(
         ("workspace.tar".into(), tar_bytes),
         ("pack-receipt.json".into(), receipt_bytes),
     ];
-    if !existing_output(&parent_fd, &output, &expected)? {
-        exclusive_rename(&parent_fd, staging.path(), &parent_fd, &output)?;
+    if !existing_output(&parent_fd, &output, &expected, deadline)? {
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "pack deadline"));
+        }
+        exclusive_rename(&parent_fd, Path::new(&staging.name), &parent_fd, &output)?;
+        staging.published = true;
     }
     Ok(receipt)
 }
@@ -326,7 +436,12 @@ pub fn run_project(project_path: &Path, spec_path: &Path) -> io::Result<PathBuf>
             .iter()
             .map(|name| Ok(((*name).to_owned(), fs::read(provisional.join(name))?)))
             .collect::<io::Result<Vec<_>>>()?;
-        if !existing_output(&parent_fd, &final_out, &expected)? {
+        if !existing_output(
+            &parent_fd,
+            &final_out,
+            &expected,
+            Instant::now() + Duration::from_secs(60),
+        )? {
             let stage_fd = open_root_dir(stage_root.path())?;
             exclusive_rename(&stage_fd, &provisional, &parent_fd, &final_out)?;
         }
