@@ -241,6 +241,12 @@ fn test_hostile_verifier_candidate_remains_immutable() {
 }
 
 #[test]
+fn relative_source_read_uses_candidate_bytes_in_private_workspace() {
+    let fixture = Fixture::new("import pathlib,sys; p=pathlib.Path('defect.txt'); sys.exit(0 if p.read_text() == 'candidate bytes\\n' and p.resolve() == pathlib.Path('/workspace/defect.txt') else 47)");
+    assert_verifier_accepted_isolation_probe(&fixture.run());
+}
+
+#[test]
 fn test_host_staged_candidate_bytes_remain_unchanged() {
     // The verifier may write /workspace. The actual staged source on the host
     // must remain unchanged while that scratch write is made.
