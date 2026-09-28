@@ -1,0 +1,8 @@
+{
+  "transport": "AF_UNIX",
+  "socket": "/run/c-d04ceb278fee/model.sock",
+  "mode": "bits_fixture",
+  "local_requests": 2,
+  "provider_calls": 0,
+  "error": null
+}

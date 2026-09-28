@@ -12,8 +12,10 @@ before an edit is emitted: `fixed fixture` or `still failing fixture`, respectiv
 The native extension ends locally after the terminal edit, so completed runs use
 two model interactions, one patch action, and one settlement. `timeout` stalls the
 first native model interaction.
-The model service uses a framed Linux Unix socket inside the controller. There is
-no HTTP provider client, Ollama call, macOS socket bridge, or host oracle fallback.
+The mock model service uses a framed Linux Unix socket inside the controller.
+T-372 adds a separately gated real-model mode: the same-kernel controller UDS
+bridges through durable state files to a trusted-host HTTP pump. Pi and verifier
+still have no network. See [T-372 preparation](../experiments/t372/README.md).
 Only the actual native `IsolatedVerifier` executes the target verification command.
 
 ## Invocation
@@ -31,6 +33,13 @@ python3 scripts/run_trusted_slot.py \
   --mock-mode fixing --linux-bin-dir /absolute/linux/debug \
   --trusted-controller-image sha256:39fad3ec792c6d55d6049f010520ebdc662c92c9eb8f6b74872b7842e073ba80
 ```
+
+The T-372 fixture also accepts `--mock-mode bits_fixture` for a genuine Bits
+read/edit/protected-pytest positive control. It has zero provider calls. The
+separate `--model-mode ollama` path requires `--protocol-file` and
+`--release-file`; no release file is included in the source tree, and a frozen
+input/protocol/runtime gate runs before any inference. The proposed run is
+awaiting Yong's model/budget selection and root release.
 
 Optional flags: `--docker-bin` (resolved absolute host executable),
 `--workload-timeout` (120 seconds), and `--cleanup-timeout` (60 seconds).

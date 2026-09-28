@@ -88,6 +88,7 @@ class Slot:
         self.scripts = Path(__file__).resolve().parent
         self.work_deadline = started + args.workload_timeout
         self.dk.deadline = self.work_deadline
+        self.host_exchange = None
 
     def event(self, identifier, event, **fields):
         append_json(
@@ -174,6 +175,10 @@ class Slot:
                 raise DockerError("management helper remained after removal")
 
     def preflight(self):
+        if getattr(self.args, "model_mode", "mock") == "ollama":
+            from .real_model import validate_model_pin
+
+            write_json(self.evidence / "ollama-pin.json", validate_model_pin())
         if self.args.trusted_controller_image != CONTROLLER:
             raise ValueError("trusted controller must match the accepted fixed pin")
         for reference, expected in (
@@ -268,9 +273,12 @@ class Slot:
             self.args.idempotency_key,
         )
         write_json(self.evidence / "task-spec.json", spec)
-        write_json(
-            self.evidence / "controller-config.json", {"mock_mode": self.args.mock_mode}
-        )
+        live = getattr(self.args, "model_mode", "mock") == "ollama"
+        write_json(self.evidence / "controller-config.json", {"model_mode": "ollama" if live else "mock", "mock_mode": self.args.mock_mode})
+        if live:
+            from .real_model import HostExchange
+
+            self.host_exchange = HostExchange(self.evidence, max(0.001, self.work_deadline - time.monotonic()))
         arguments = [
             "--network",
             "none",
@@ -354,6 +362,8 @@ class Slot:
 
     def run_workload(self):
         while time.monotonic() < self.work_deadline:
+            if self.host_exchange:
+                self.host_exchange.poll()
             self.discover()
             item = self.dk.inspect(self.controller)
             if item is None:

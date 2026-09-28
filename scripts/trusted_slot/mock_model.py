@@ -33,8 +33,22 @@ def read_frame(stream):
 
 
 def reply(request, mode, ordinal):
-    if request["request"]["schema_version"] != 1 or mode not in ("fixing", "nonfixing"):
+    if request["request"]["schema_version"] != 1 or mode not in ("fixing", "nonfixing", "bits_fixture"):
         raise ValueError("unsupported fixture request")
+    if mode == "bits_fixture":
+        old = "        if type(k) is int:\n            if k >= self.len:\n                raise IndexError(k)"
+        new = "        if type(k) is int:\n            if k < 0:\n                k += self.len\n            if k < 0 or k >= self.len:\n                raise IndexError(k)"
+        if ordinal == 0:
+            tool = {"type": "toolCall", "id": "read-1", "name": "castor_read_file", "arguments": {"path": "boltons/mathutils.py"}}
+        elif ordinal == 1:
+            observations = [message for message in request["request"].get("messages", []) if message.get("role") == "toolResult" and message.get("toolCallId") == "read-1" and message.get("toolName") == "castor_read_file"]
+            if len(observations) != 1 or observations[0].get("isError") is not False or len(observations[0].get("content", [])) != 1 or old not in observations[0]["content"][0].get("text", ""):
+                raise ValueError("Bits edit requires actual source read observation")
+            tool = {"type": "toolCall", "id": "edit-1", "name": "castor_edit_file", "arguments": {"path": "boltons/mathutils.py", "edits": [{"oldText": old, "newText": new}]}}
+        else:
+            raise ValueError("terminal Bits edit unexpectedly requested another interaction")
+        content = json.dumps({"content": [tool], "stopReason": "toolUse", "usage": {"input": 12, "output": 8}}, separators=(",", ":")).encode()
+        return {"interaction_id": request["interaction_id"], "observation_region_id": f"region://observation/{ordinal}", "observation_digest": "sha256:" + hashlib.sha256(content).hexdigest(), "content": list(content)}
     if ordinal == 0:
         tool = {
             "type": "toolCall",

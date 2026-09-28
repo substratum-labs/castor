@@ -1,0 +1,40 @@
+{
+  "status": "PREPARATION_ONLY_AWAITING_YONG_MODEL_BUDGET_SELECTION_AND_ROOT_RELEASE",
+  "task_id": "task-t372-bits-r1",
+  "upstream_repository": "https://github.com/mahmoud/boltons",
+  "upstream_pr": "https://github.com/mahmoud/boltons/pull/450",
+  "original_fix_commit": "d0e36b4db07e5062b35ca664e0516ae0e4890b8b",
+  "pre_fix_parent": "580a9c2d12755d472e534ca3e277e8f7e3ada49e",
+  "merge_commit": "5eb6cc045560abf320712f262346ae95fb66d448",
+  "license": "BSD-3-Clause",
+  "license_sha256": "c301912653a8d8c99eab6212aa3aea8d164ea249d8ad53c941e0558a0a5ac1e3",
+  "target_tree": "c20df619d8514b7b5c55af93bb3da7eab9251735",
+  "source_sha256": "3d81dc8b44136299857373a8f53d50dbf0be7aabfa34e7bcfee7c6b41b3b3236",
+  "tests_sha256": "9331906c1e944368f677e06731bda4fb114a50d8eb1df992fe87767e644ea94b",
+  "reference_source_sha256": "0aeac3312b66b3919ec93f35e9785c62f3d79bf6db82d60f3d30ae5",
+  "spec_sha256": "5286af03a4c75140822e642d39ff6e17c50348f44bd92cb550aa3b2b141022f3",
+  "model": "qwen3.5:9b",
+  "model_digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+  "ollama_version": "0.34.1",
+  "think": false,
+  "temperature": 0.2,
+  "seed": 17,
+  "num_ctx": 32768,
+  "max_unique_http_calls": 3,
+  "max_output_tokens_per_call": 512,
+  "workload_timeout_seconds": 300,
+  "cleanup_timeout_seconds": 60,
+  "native_binaries_sha256": {
+    "castor": "f2217c98e2c92b697b940d69f42a6244197c6fd40d58186ba30a7bb42f09a273",
+    "castord": "b4051d05982623feb5cfd6e1c1c428f55aab4c7131f2813c7e35f9febb919d04"
+  },
+  "controller_image": "sha256:39fad3ec792c6d55d6049f010520ebdc662c92c9eb8f6b74872b7842e073ba80",
+  "pi_image": "sha256:b4f363b3436653157b87428ec6d4936b9efa26c184a77d346345071d02edddb7",
+  "verifier_image": "sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea",
+  "wheel_sha256": {
+    "pytest-8.3.5-py3-none-any.whl": "c69214aa47deac29fad6c2a4f590b9c4a9fdb16a403176fe154b79c0b4d4d820",
+    "iniconfig-2.0.0-py3-none-any.whl": "b6a85871a79d2e3b22d2d1b94ac2824226a63c6b741c88f7ae975f18b6778374",
+    "packaging-24.2-py3-none-any.whl": "09abb1bccd265c01f4a3aa3f7a7db064b36514d2cba19a2f694fe6150451a759",
+    "pluggy-1.5.0-py3-none-any.whl": "44e1ad92c8ca002de6377e165f3e0f1be63266ab4d554740532335b9d75ea669"
+  }
+}
