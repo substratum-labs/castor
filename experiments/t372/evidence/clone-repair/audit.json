@@ -1,0 +1,23 @@
+{
+  "scope": "Read-only CRC, Region content digests and journal Region references; not independent semantic replay",
+  "state_root": "/private/tmp/t372-pinned-bridge",
+  "journal_sha256": "f06285b2d834d86380a43f18a3a009f2b8ebe0a4c85056f21365550acf33fc15",
+  "crc_valid_frames": 14,
+  "verified_regions": 8,
+  "entry_kinds": {
+    "LeaseGranted": 3,
+    "InteractionRequested": 2,
+    "InteractionBound": 2,
+    "TurnCommitted": 1,
+    "ActionRegistered": 1,
+    "AttemptArmed": 1,
+    "DispatchAttempt": 1,
+    "AdapterReservation": 1,
+    "AdapterSubmissionRecorded": 1,
+    "AttemptSettled": 1
+  },
+  "provider_calls": 0,
+  "post_run_containers": [
+    "ca9543359045 epic_agnesi (pre-existing; preserved)"
+  ]
+}

@@ -1,3 +1,23 @@
+# T-372 packaging repaired; new bridge preflight passed
+
+2026-09-28: Yong reopened the stopped preparation. The clone128 blocker is fixed
+and the actual Pi/FileBridge/loopback-HTTP/protected-verifier path now succeeds.
+This is a deterministic, zero-model preflight: **not a live model result**.
+
+See [repair report](CLONE_REPAIR.md) and [bounded evidence](evidence/clone-repair/).
+Both the cached partial repository and fresh public HTTPS source reproduce the
+frozen target tree. Offline controller pack succeeds; protected pytest reports
+12 passed; task SUCCEEDED; 2 stub POSTs; 0 provider calls; cleanup CLEAN.
+23 bridge/recovery tests and 4 Git/preparation tests pass, with lint/format clean.
+Read-only audit verified 14 journal CRCs, 8 Region hashes and their references.
+
+Remaining gates: finish/freeze current input and runtime protocol hashes,
+independent R2 bridge/gate acceptance, then release and audit the already
+budget-approved real trial. No acceptance receipt or live release is supplied.
+The earlier stop and R1 reviews below remain historical evidence.
+
+---
+
 # T-372 stopped preparation — demo not delivered
 
 Status: CHANGES_REQUESTED / stopped before live release. Yong accepted one local Qwen3.5:9b trial (<=3 calls, <=512 output tokens/call, 300s, no retries), but no live inference has occurred.

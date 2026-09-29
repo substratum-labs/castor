@@ -1,0 +1,9 @@
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+Cloning into '/private/tmp/t372-clone-diagnosis-8u8z432z/target'...
+warning: templates not found in /dev/null
+remote: fatal: unable to read 2112a5f915ab93fa5abb784a4bb1fd3485823328        
+error: git upload-pack: git-pack-objects died with error.
+fatal: git upload-pack: aborting due to possible repository corruption on the remote side.
+remote: aborting due to possible repository corruption on the remote side.
+fatal: early EOF
+fatal: fetch-pack: invalid index-pack output

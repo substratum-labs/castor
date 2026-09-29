@@ -1,5 +1,5 @@
 {
-  "status": "STOPPED_PREPARATION_NOT_ACCEPTED_NO_LIVE_RELEASE",
+  "status": "PREPARATION_RESUMED_BRIDGE_PREFLIGHT_PASSED_NOT_ACCEPTED_NO_LIVE_RELEASE",
   "task_id": "task-t372-bits-r1",
   "upstream_repository": "https://github.com/mahmoud/boltons",
   "upstream_pr": "https://github.com/mahmoud/boltons/pull/450",

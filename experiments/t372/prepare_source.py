@@ -33,15 +33,26 @@ WHEELS = {
 def run(*args, cwd=None):
     if args[0] != "git":
         raise ValueError("only fixed Git is allowed")
-    return subprocess.run(
+    result = subprocess.run(
         ["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", *args[1:]],
-        cwd=cwd, env=git_environment(), check=True, capture_output=True, text=True, timeout=120,
-    ).stdout.strip()
+        cwd=cwd, env=git_environment(), capture_output=True, text=True, timeout=120,
+    )
+    if result.returncode:
+        raise RuntimeError(f"Git exited {result.returncode}: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def fetch_commit(repo, project, commit, depth):
+    # Fetch only the required closure. A local clone can copy incomplete promisor
+    # packs without their config, while a full fetch needs unrelated old blobs.
+    # Fetch creates independent objects: no hardlinks, alternates or host gitdir.
+    run("git", "init", str(project))
+    run("git", "fetch", "--no-tags", f"--depth={depth}", str(repo), commit, cwd=project)
 
 
 def checkout_without_filters(repo, project, commit):
     # Controller receives only /project, so Git metadata must be self-contained.
-    run("git", "clone", "--no-checkout", "--no-local", str(repo), str(project))
+    fetch_commit(repo, project, commit, depth=1)
     run("git", "update-ref", "--no-deref", "HEAD", commit, cwd=project)
     run("git", "read-tree", commit, cwd=project)
     archive = subprocess.run(
@@ -95,8 +106,7 @@ def main():
     repo = root / "upstream"
     if not (args.remote.startswith("https://") or Path(args.remote).is_absolute()):
         raise ValueError("remote must be HTTPS or an absolute local repository")
-    run("git", "clone", "--no-checkout", args.remote, str(repo))
-    run("git", "fetch", "origin", FIX, cwd=repo)
+    fetch_commit(args.remote, repo, FIX, depth=2)
     if run("git", "rev-parse", FIX + "^", cwd=repo) != PARENT:
         raise ValueError("original fixing parent mismatch")
     changed = run("git", "diff-tree", "--no-commit-id", "--name-only", "-r", FIX, cwd=repo).splitlines()

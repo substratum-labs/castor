@@ -1,0 +1,43 @@
+{
+  "transport": "TEST_ONLY_FAKE_FILE_BRIDGE",
+  "provider_calls": 0,
+  "model": "qwen3.5:9b",
+  "digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+  "max_calls": 3,
+  "reservations": [
+    {
+      "ordinal": 1,
+      "interaction_id": "interaction-1-1",
+      "request_sha256": "daaa157d7ce10e86ea92e1a05e09f901667dea385ef1f77b003e15182ffea1d5",
+      "status": "COMPLETED",
+      "reserved_unix_ns": 1790663556954659000,
+      "input_tokens": 12,
+      "output_tokens": 8,
+      "measurement": "COMPLETE",
+      "response_file": "response-e14f52873f5640169adb5051b95ad13a.json",
+      "http_status": 200,
+      "total_duration_ns": null,
+      "load_duration_ns": null,
+      "prompt_eval_duration_ns": null,
+      "eval_duration_ns": null,
+      "elapsed_seconds": 0.02046337502542883
+    },
+    {
+      "ordinal": 2,
+      "interaction_id": "interaction-1-2",
+      "request_sha256": "aac699c143e9e1d2b962ba50b5310c17140e48841f21bd5da2a9de66ea19e0fe",
+      "status": "COMPLETED",
+      "reserved_unix_ns": 1790663557076596000,
+      "input_tokens": 12,
+      "output_tokens": 8,
+      "measurement": "COMPLETE",
+      "response_file": "response-0d8dbea260d6467a8abbe35e4ad31748.json",
+      "http_status": 200,
+      "total_duration_ns": null,
+      "load_duration_ns": null,
+      "prompt_eval_duration_ns": null,
+      "eval_duration_ns": null,
+      "elapsed_seconds": 0.00737466593272984
+    }
+  ]
+}
