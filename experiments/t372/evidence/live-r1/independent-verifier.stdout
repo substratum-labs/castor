@@ -1,0 +1,35 @@
+Processing ./tests/t372_wheels/iniconfig-2.0.0-py3-none-any.whl
+Processing ./tests/t372_wheels/packaging-24.2-py3-none-any.whl
+Processing ./tests/t372_wheels/pluggy-1.5.0-py3-none-any.whl
+Processing ./tests/t372_wheels/pytest-8.3.5-py3-none-any.whl
+Installing collected packages: pytest, pluggy, packaging, iniconfig
+Successfully installed iniconfig-2.0.0 packaging-24.2 pluggy-1.5.0 pytest-8.3.5
+..........F.                                                             [100%]
+=================================== FAILURES ===================================
+__________________________________ test_bits ___________________________________
+
+    def test_bits():
+        def chk(a, b):
+            assert a == b, a
+        chk(Bits('10')[:1], Bits('1'))
+        chk(Bits('10')[1:], Bits('0'))
+        chk(Bits('10')[0], True)
+        chk(Bits('10')[1], False)
+        chk(Bits('0000100')[4], True)
+        chk(Bits('10')[-1], False)
+>       chk(Bits('10')[-2], True)
+
+tests/test_mathutils.py:87: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+a = False, b = True
+
+    def chk(a, b):
+>       assert a == b, a
+E       AssertionError: False
+E       assert False == True
+
+tests/test_mathutils.py:80: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_mathutils.py::test_bits - AssertionError: False
+1 failed, 11 passed in 0.02s

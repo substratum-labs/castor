@@ -1,0 +1,7 @@
+{"cid": "c7b877beb21c33088c9286b801d9f6c603d53105dcd57b19d45d8c464a9b7f7a", "event": "create", "elapsed_seconds": 3.7243027499644086}
+{"cid": "c7b877beb21c33088c9286b801d9f6c603d53105dcd57b19d45d8c464a9b7f7a", "event": "start", "elapsed_seconds": 3.80660374998115}
+{"cid": "1b379a416c32e18f020bd4819bdfa00a316e082e8abbb80730131c5d84df3afc", "event": "observe_running", "elapsed_seconds": 6.341152000008151}
+{"cid": "c7b877beb21c33088c9286b801d9f6c603d53105dcd57b19d45d8c464a9b7f7a", "event": "wait", "elapsed_seconds": 21.899126957985573}
+{"cid": "c7b877beb21c33088c9286b801d9f6c603d53105dcd57b19d45d8c464a9b7f7a", "event": "inspect", "elapsed_seconds": 21.913973208051175}
+{"cid": "c7b877beb21c33088c9286b801d9f6c603d53105dcd57b19d45d8c464a9b7f7a", "event": "archive", "elapsed_seconds": 21.928789375000633}
+{"cid": "c7b877beb21c33088c9286b801d9f6c603d53105dcd57b19d45d8c464a9b7f7a", "event": "remove", "elapsed_seconds": 22.06594966701232}

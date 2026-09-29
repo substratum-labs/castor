@@ -1,4 +1,4 @@
-> **PREPARATION RESUMED / NOT LIVE-READY:** [Clone repair](CLONE_REPAIR.md) and the new zero-model FileBridge preflight pass. Read [READINESS.md](READINESS.md) for current gates; historical R1 failures are retained. Current live gate requires --source-manifest and --acceptance-file; no acceptance/release is supplied.
+> **REAL TRIAL r1 FAILED / DEMO NOT DELIVERED:** R2 accepted the bridge/gate, then3 real Qwen calls failed during file discovery; no patch, cleanup CLEAN. See [live report](LIVE_TRIAL_R1_REPORT.md). Original trial is consumed. [Next task spec](proposed-task-spec-r2.json) is a proposal requiring a new trial decision; historical launch examples below must not be used to rerun r1.
 
 # T-372 Bits preparation and review packet
 

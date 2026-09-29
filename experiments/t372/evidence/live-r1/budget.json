@@ -1,0 +1,60 @@
+{
+  "transport": "OLLAMA_HTTP",
+  "provider_calls": null,
+  "model": "qwen3.5:9b",
+  "digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+  "max_calls": 3,
+  "reservations": [
+    {
+      "ordinal": 1,
+      "interaction_id": "interaction-1-1",
+      "request_sha256": "f6765c6318cc0456f22a363caa8562371959187ec86e3e20c879f6c80125865b",
+      "status": "COMPLETED",
+      "reserved_unix_ns": 1790668759586614000,
+      "input_tokens": 862,
+      "output_tokens": 65,
+      "measurement": "COMPLETE",
+      "response_file": "response-30b55a9266d44e4c9b22495035fec030.json",
+      "http_status": 200,
+      "total_duration_ns": 10196932917,
+      "load_duration_ns": 5634930542,
+      "prompt_eval_duration_ns": 2641350000,
+      "eval_duration_ns": 1887871000,
+      "elapsed_seconds": 10.242228499962948
+    },
+    {
+      "ordinal": 2,
+      "interaction_id": "interaction-1-2",
+      "request_sha256": "088f36c7a58673d02a015f6d23b7c1400e3a9fd9616916d55d75295e1233da3f",
+      "status": "COMPLETED",
+      "reserved_unix_ns": 1790668769880324000,
+      "input_tokens": 945,
+      "output_tokens": 40,
+      "measurement": "COMPLETE",
+      "response_file": "response-c6a66315bd7048029d2eb82be4609459.json",
+      "http_status": 200,
+      "total_duration_ns": 1812580000,
+      "load_duration_ns": 5155209,
+      "prompt_eval_duration_ns": 657932000,
+      "eval_duration_ns": 1133073000,
+      "elapsed_seconds": 1.8434263750677928
+    },
+    {
+      "ordinal": 3,
+      "interaction_id": "interaction-1-3",
+      "request_sha256": "8c88947a37ee357aa44a0b33dab9bc7db7c734c2343e5ad8511ef58ff95c494b",
+      "status": "COMPLETED",
+      "reserved_unix_ns": 1790668771774898000,
+      "input_tokens": 1017,
+      "output_tokens": 40,
+      "measurement": "COMPLETE",
+      "response_file": "response-25061436f1874de6ae1ced616a95b9a2.json",
+      "http_status": 200,
+      "total_duration_ns": 1570750666,
+      "load_duration_ns": 2110500,
+      "prompt_eval_duration_ns": 399152000,
+      "eval_duration_ns": 1156778000,
+      "elapsed_seconds": 1.5938965000677854
+    }
+  ]
+}

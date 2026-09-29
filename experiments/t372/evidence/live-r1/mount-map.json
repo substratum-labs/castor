@@ -1,0 +1,7 @@
+{
+  "docker_root": "/var/lib/docker",
+  "scratch": "/run/c-83553b0d7d89",
+  "state_host": "/private/tmp/t372-bits-live-r1",
+  "state_source": "/host_mnt/private/tmp/t372-bits-live-r1",
+  "state_destination": "/state"
+}

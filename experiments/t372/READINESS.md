@@ -1,3 +1,23 @@
+# T-372 real trial r1 failed — no repair delivered
+
+2026-09-29: both physical R2 scopes ACCEPTED the bridge/gate. The one approved
+real Qwen trial ran and FAILED / MODEL_INTERACTION_ERROR. It made3 actual POSTs,
+2824 input tokens and145 output tokens; all calls completed but each requested a
+wrong file/directory path. No source was read and no patch/turn/effect committed.
+The fourth unique interaction was denied by budget; cleanup CLEAN.
+
+See [live failure report](LIVE_TRIAL_R1_REPORT.md) and
+[evidence/live-r1](evidence/live-r1/SHA256.json). Independent protected replay of
+the unchanged authoritative input still has1fail/11pass. No second trial ran.
+The [path-context-only proposal](proposed-task-spec-r2.json) is not released.
+T-372 remains CHANGES_REQUESTED pending a new trial decision. Old T-365 outcomes
+are unchanged. The immutable protocol's status describes its pre-release freeze;
+actual review/release/outcome records provide the later state.
+
+---
+
+Historical preparation checkpoints and failed records follow:
+
 # T-372 packaging repaired; new bridge preflight passed
 
 2026-09-28: Yong reopened the stopped preparation. The clone128 blocker is fixed
