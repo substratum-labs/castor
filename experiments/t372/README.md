@@ -1,11 +1,12 @@
-> **REAL TRIAL r1 FAILED / DEMO NOT DELIVERED:** R2 accepted the bridge/gate, then3 real Qwen calls failed during file discovery; no patch, cleanup CLEAN. See [live report](LIVE_TRIAL_R1_REPORT.md). Original trial is consumed. [Next task spec](proposed-task-spec-r2.json) is a proposal requiring a new trial decision; historical launch examples below must not be used to rerun r1.
+# T-372 actual real-model repair demo
 
-# T-372 Bits preparation and review packet
+R2 succeeded with two real Qwen calls, 12 original protected tests and 12 independent
+replay tests passing, cleanup CLEAN. See [report](LIVE_TRIAL_R2_REPORT.md) and
+[walkthrough](DEMO_WALKTHROUGH.md). R1 remains a preserved failed trial. Both live
+releases are consumed; no automatic rerun. Final outcome review pending.
 
-This is **preparation only**. No Ollama chat/generate call or registered live
-attempt has run. Yong has approved the model/budget; independent technical review
-and a root-authored release file are still required. The source branch is for a
-draft PR; do not merge or interpret the deterministic fixture as a live success.
+The following preparation and r1 launch notes are historical checkpoints.
+Their pending/release wording does not describe the current r2 result.
 
 ## Authentic task pin
 
@@ -114,7 +115,7 @@ files match `main`. The binary build's historical source provenance is not
 cryptographically proven by the available build metadata, so independent
 review should check that limitation before release.
 
-## Proposed live protocol and gate
+## Historical r1 protocol and gate (consumed)
 
 [`proposed-protocol.json`](proposed-protocol.json) is the frozen proposal for
 **one** registered `task-t372-bits-r1` attempt: local Ollama `qwen3.5:9b`

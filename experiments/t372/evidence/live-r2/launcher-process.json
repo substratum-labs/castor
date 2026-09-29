@@ -1,0 +1,8 @@
+{
+  "pid": 26825,
+  "status": "EXITED",
+  "exit_code": 0,
+  "elapsed_seconds": 42.41084812488407,
+  "single_trial": true,
+  "automatic_retry": false
+}

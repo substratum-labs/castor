@@ -1,0 +1,8 @@
+{"cid": "81d67ab1d2b34eab8947f3afccae3312b7633dabbfc99b6aeba6e38a8cdd315a", "event": "create", "elapsed_seconds": 2.1860919159371406}
+{"cid": "81d67ab1d2b34eab8947f3afccae3312b7633dabbfc99b6aeba6e38a8cdd315a", "event": "start", "elapsed_seconds": 2.2926153750158846}
+{"cid": "03cdd7ac340eb9f3023af126ae66ce0f77547f7751f6d8e0f2d131ede7981f02", "event": "observe_running", "elapsed_seconds": 4.58828791603446}
+{"cid": "7181cd80129067c8b5769e3f92149318a5c361e4f98895eed88b0c16cf87b9c9", "event": "observe_running", "elapsed_seconds": 38.80569824995473}
+{"cid": "81d67ab1d2b34eab8947f3afccae3312b7633dabbfc99b6aeba6e38a8cdd315a", "event": "wait", "elapsed_seconds": 41.138646125094965}
+{"cid": "81d67ab1d2b34eab8947f3afccae3312b7633dabbfc99b6aeba6e38a8cdd315a", "event": "inspect", "elapsed_seconds": 41.15377099998295}
+{"cid": "81d67ab1d2b34eab8947f3afccae3312b7633dabbfc99b6aeba6e38a8cdd315a", "event": "archive", "elapsed_seconds": 41.1700771660544}
+{"cid": "81d67ab1d2b34eab8947f3afccae3312b7633dabbfc99b6aeba6e38a8cdd315a", "event": "remove", "elapsed_seconds": 41.30000754096545}

@@ -1,0 +1,8 @@
+[package]
+name = "t372-independent-oracle"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+castor-kernel = { path = "/Users/yong/projects/substratum/castor/.worktrees/t372-bits-demo/kernel" }
+serde_json = "1"

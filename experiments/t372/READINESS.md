@@ -1,3 +1,13 @@
+# Current: r2 real-model repair succeeded, review pending
+
+See [r2 report](LIVE_TRIAL_R2_REPORT.md). Two actual calls, 12 protected and
+12 independent original tests pass, cleanup CLEAN. Path context supplied; generic
+discovery remains unimplemented. Both releases consumed; no new inference.
+
+---
+
+Historical checkpoints below; their status applies only at their recorded time.
+
 # T-372 real trial r1 failed — no repair delivered
 
 2026-09-29: both physical R2 scopes ACCEPTED the bridge/gate. The one approved

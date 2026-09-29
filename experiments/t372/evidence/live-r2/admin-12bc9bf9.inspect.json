@@ -1,0 +1,247 @@
+{
+  "Id": "70c4a12cc62154a005a5b5f633bb902cca0ee7c7ffcc6663bd5b4fcd86a47675",
+  "Created": "2026-09-29T15:20:03.037021215Z",
+  "Path": "python3",
+  "Args": [
+    "/opt/t371/engine.py",
+    "{\"operation\": \"canonical\", \"paths\": [\"/host_mnt/private/tmp/t372-bits-live-r2\"]}"
+  ],
+  "State": {
+    "Status": "exited",
+    "Running": false,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 0,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-09-29T15:20:03.103637965Z",
+    "FinishedAt": "2026-09-29T15:20:03.216314132Z"
+  },
+  "Image": "sha256:39fad3ec792c6d55d6049f010520ebdc662c92c9eb8f6b74872b7842e073ba80",
+  "ResolvConfPath": "/var/lib/docker/containers/70c4a12cc62154a005a5b5f633bb902cca0ee7c7ffcc6663bd5b4fcd86a47675/resolv.conf",
+  "HostnamePath": "/var/lib/docker/containers/70c4a12cc62154a005a5b5f633bb902cca0ee7c7ffcc6663bd5b4fcd86a47675/hostname",
+  "HostsPath": "/var/lib/docker/containers/70c4a12cc62154a005a5b5f633bb902cca0ee7c7ffcc6663bd5b4fcd86a47675/hosts",
+  "LogPath": "/var/lib/docker/containers/70c4a12cc62154a005a5b5f633bb902cca0ee7c7ffcc6663bd5b4fcd86a47675/70c4a12cc62154a005a5b5f633bb902cca0ee7c7ffcc6663bd5b4fcd86a47675-json.log",
+  "Name": "/gifted_pare",
+  "RestartCount": 0,
+  "Driver": "overlayfs",
+  "Platform": "linux",
+  "MountLabel": "",
+  "ProcessLabel": "",
+  "AppArmorProfile": "",
+  "ExecIDs": null,
+  "HostConfig": {
+    "Binds": null,
+    "ContainerIDFile": "/private/tmp/t372-bits-live-r2/launcher/admin-12bc9bf9.cid",
+    "LogConfig": {
+      "Type": "json-file",
+      "Config": {}
+    },
+    "NetworkMode": "none",
+    "PortBindings": {},
+    "RestartPolicy": {
+      "Name": "no",
+      "MaximumRetryCount": 0
+    },
+    "AutoRemove": false,
+    "VolumeDriver": "",
+    "VolumesFrom": null,
+    "ConsoleSize": [
+      0,
+      0
+    ],
+    "CapAdd": [
+      "CAP_SYS_CHROOT"
+    ],
+    "CapDrop": [
+      "ALL"
+    ],
+    "CgroupnsMode": "private",
+    "Dns": null,
+    "DnsOptions": [],
+    "DnsSearch": [],
+    "ExtraHosts": null,
+    "GroupAdd": null,
+    "IpcMode": "private",
+    "Cgroup": "",
+    "Links": null,
+    "OomScoreAdj": 0,
+    "PidMode": "",
+    "Privileged": false,
+    "PublishAllPorts": false,
+    "ReadonlyRootfs": true,
+    "SecurityOpt": null,
+    "UTSMode": "",
+    "UsernsMode": "",
+    "ShmSize": 67108864,
+    "Runtime": "runc",
+    "Isolation": "",
+    "CpuShares": 0,
+    "Memory": 0,
+    "NanoCpus": 0,
+    "CgroupParent": "",
+    "BlkioWeight": 0,
+    "BlkioWeightDevice": [],
+    "BlkioDeviceReadBps": [],
+    "BlkioDeviceWriteBps": [],
+    "BlkioDeviceReadIOps": [],
+    "BlkioDeviceWriteIOps": [],
+    "CpuPeriod": 0,
+    "CpuQuota": 0,
+    "CpuRealtimePeriod": 0,
+    "CpuRealtimeRuntime": 0,
+    "CpusetCpus": "",
+    "CpusetMems": "",
+    "Devices": [],
+    "DeviceCgroupRules": null,
+    "DeviceRequests": null,
+    "MemoryReservation": 0,
+    "MemorySwap": 0,
+    "MemorySwappiness": null,
+    "OomKillDisable": null,
+    "PidsLimit": null,
+    "Ulimits": [],
+    "CpuCount": 0,
+    "CpuPercent": 0,
+    "IOMaximumIOps": 0,
+    "IOMaximumBandwidth": 0,
+    "Mounts": [
+      {
+        "Type": "bind",
+        "Source": "/",
+        "Target": "/engine",
+        "ReadOnly": true
+      },
+      {
+        "Type": "bind",
+        "Source": "/host_mnt/Users/yong/projects/substratum/castor/.worktrees/t372-bits-demo/scripts/trusted_slot",
+        "Target": "/opt/t371",
+        "ReadOnly": true
+      },
+      {
+        "Type": "bind",
+        "Source": "/host_mnt/private/tmp/t372-bits-live-r2",
+        "Target": "/state"
+      }
+    ],
+    "MaskedPaths": [
+      "/proc/acpi",
+      "/proc/asound",
+      "/proc/interrupts",
+      "/proc/kcore",
+      "/proc/keys",
+      "/proc/latency_stats",
+      "/proc/sched_debug",
+      "/proc/scsi",
+      "/proc/timer_list",
+      "/proc/timer_stats",
+      "/sys/devices/virtual/powercap",
+      "/sys/firmware"
+    ],
+    "ReadonlyPaths": [
+      "/proc/bus",
+      "/proc/fs",
+      "/proc/irq",
+      "/proc/sys",
+      "/proc/sysrq-trigger"
+    ]
+  },
+  "Storage": {
+    "RootFS": {
+      "Snapshot": {
+        "Name": "overlayfs"
+      }
+    }
+  },
+  "Mounts": [
+    {
+      "Type": "bind",
+      "Source": "/",
+      "Destination": "/engine",
+      "Mode": "",
+      "RW": false,
+      "Propagation": "rslave"
+    },
+    {
+      "Type": "bind",
+      "Source": "/host_mnt/Users/yong/projects/substratum/castor/.worktrees/t372-bits-demo/scripts/trusted_slot",
+      "Destination": "/opt/t371",
+      "Mode": "",
+      "RW": false,
+      "Propagation": "rprivate"
+    },
+    {
+      "Type": "bind",
+      "Source": "/host_mnt/private/tmp/t372-bits-live-r2",
+      "Destination": "/state",
+      "Mode": "",
+      "RW": true,
+      "Propagation": "rprivate"
+    }
+  ],
+  "Config": {
+    "Hostname": "70c4a12cc621",
+    "Domainname": "",
+    "User": "",
+    "AttachStdin": false,
+    "AttachStdout": true,
+    "AttachStderr": true,
+    "Tty": false,
+    "OpenStdin": false,
+    "StdinOnce": false,
+    "Env": [
+      "PYTHONDONTWRITEBYTECODE=1",
+      "PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "LANG=C.UTF-8",
+      "GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305",
+      "PYTHON_VERSION=3.12.14",
+      "PYTHON_SHA256=5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a"
+    ],
+    "Cmd": [
+      "python3",
+      "/opt/t371/engine.py",
+      "{\"operation\": \"canonical\", \"paths\": [\"/host_mnt/private/tmp/t372-bits-live-r2\"]}"
+    ],
+    "Image": "sha256:39fad3ec792c6d55d6049f010520ebdc662c92c9eb8f6b74872b7842e073ba80",
+    "Volumes": null,
+    "WorkingDir": "",
+    "Entrypoint": null,
+    "Labels": {},
+    "StopTimeout": 1
+  },
+  "NetworkSettings": {
+    "SandboxID": "",
+    "SandboxKey": "",
+    "Ports": {},
+    "Networks": {
+      "none": {
+        "IPAMConfig": null,
+        "Links": null,
+        "Aliases": null,
+        "DriverOpts": null,
+        "GwPriority": 0,
+        "NetworkID": "028dad20278534f6fcf1b4920df16e94dcb2b7871eb7a1660eff0c53db839cda",
+        "EndpointID": "",
+        "Gateway": "",
+        "IPAddress": "",
+        "MacAddress": "",
+        "IPPrefixLen": 0,
+        "IPv6Gateway": "",
+        "GlobalIPv6Address": "",
+        "GlobalIPv6PrefixLen": 0,
+        "DNSNames": null
+      }
+    }
+  },
+  "ImageManifestDescriptor": {
+    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+    "digest": "sha256:817e159c9ecde2c093f8150f79e1992509f64bb8a19963d78a540dd7fff13b9f",
+    "size": 1827,
+    "platform": {
+      "architecture": "arm64",
+      "os": "linux"
+    }
+  }
+}

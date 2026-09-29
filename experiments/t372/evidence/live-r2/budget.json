@@ -1,0 +1,43 @@
+{
+  "transport": "OLLAMA_HTTP",
+  "provider_calls": null,
+  "model": "qwen3.5:9b",
+  "digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+  "max_calls": 3,
+  "reservations": [
+    {
+      "ordinal": 1,
+      "interaction_id": "interaction-1-1",
+      "request_sha256": "a2161cff960aa01cc95cba0f3a6ff878a757c6406e4457b09f18997b6ad76781",
+      "status": "COMPLETED",
+      "reserved_unix_ns": 1790695206672083000,
+      "input_tokens": 944,
+      "output_tokens": 64,
+      "measurement": "COMPLETE",
+      "response_file": "response-d21b0dbc7bf54321be38ae77ec269639.json",
+      "http_status": 200,
+      "total_duration_ns": 10094308958,
+      "load_duration_ns": 5386567667,
+      "prompt_eval_duration_ns": 2887612000,
+      "eval_duration_ns": 1798034000,
+      "elapsed_seconds": 10.12828804180026
+    },
+    {
+      "ordinal": 2,
+      "interaction_id": "interaction-1-2",
+      "request_sha256": "26fbb1e88d184b1a191e1fb2f5aca71d68c99ecce6dfcc658c2b4c7edf6caec8",
+      "status": "COMPLETED",
+      "reserved_unix_ns": 1790695216902726000,
+      "input_tokens": 4567,
+      "output_tokens": 413,
+      "measurement": "COMPLETE",
+      "response_file": "response-cd37799858d94c0596e44610fa6fd918.json",
+      "http_status": 200,
+      "total_duration_ns": 23100645500,
+      "load_duration_ns": 4521959,
+      "prompt_eval_duration_ns": 10818423000,
+      "eval_duration_ns": 12255028000,
+      "elapsed_seconds": 23.137461124919355
+    }
+  ]
+}
