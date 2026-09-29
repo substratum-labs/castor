@@ -589,6 +589,46 @@ class BridgeTests(unittest.TestCase):
             patch.object(run_trusted_slot, "REFERENCE_SHA256", reference_pin),
         ):
             self.assertEqual(run_trusted_slot.parse_args().model_mode, "ollama")
+        # Even a newly matching approval/release hash cannot authorize altered
+        # execution inputs, runtime bytes, images or budgets.
+        original_protocol = protocol_file.read_bytes()
+        original_acceptance = acceptance_file.read_bytes()
+        original_release = release_file.read_bytes()
+        altered_pins = {
+            "controller_image": "sha256:" + "0" * 64,
+            "pi_image": "sha256:" + "0" * 64,
+            "verifier_image": "sha256:" + "0" * 64,
+            "wheel_sha256": {"pytest.whl": "0" * 64},
+            "runtime_source_sha256": {"foreign.py": "0" * 64},
+            "native_binaries_sha256": {"castor": "0" * 64},
+            "reference_source_sha256": "0" * 55,
+            "max_unique_http_calls": 4,
+            "max_output_tokens_per_call": 513,
+        }
+        for key, altered in altered_pins.items():
+            with self.subTest(pin=key):
+                changed = json.loads(original_protocol)
+                changed[key] = altered
+                protocol_file.write_text(json.dumps(changed))
+                for file, content in (
+                    (acceptance_file, original_acceptance),
+                    (release_file, original_release),
+                ):
+                    receipt = json.loads(content)
+                    receipt["protocol_sha256"] = hash_file(protocol_file)
+                    file.write_text(json.dumps(receipt))
+                with (
+                    patch.object(sys, "argv", arguments),
+                    patch.object(run_trusted_slot, "RUNTIME_FILES", ()),
+                    patch.object(run_trusted_slot, "REFERENCE_SHA256", reference_pin),
+                    self.assertRaises(SystemExit),
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
+                    run_trusted_slot.parse_args()
+        protocol_file.write_bytes(original_protocol)
+        acceptance_file.write_bytes(original_acceptance)
+        release_file.write_bytes(original_release)
+
         with (
             patch.object(
                 sys, "argv", arguments[:-3] + ["299", "--cleanup-timeout", "60"]
