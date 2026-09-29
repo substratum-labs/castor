@@ -1,0 +1,49 @@
+{
+  "partial_cache": {
+    "path": "/private/tmp/t372-boltons-upstream",
+    "local_config": [
+      "core.repositoryformatversion=1",
+      "core.filemode=true",
+      "core.bare=false",
+      "core.logallrefupdates=true",
+      "core.ignorecase=true",
+      "core.precomposeunicode=true",
+      "remote.origin.url=https://github.com/mahmoud/boltons.git",
+      "remote.origin.fetch=+refs/heads/*:refs/remotes/origin/*",
+      "remote.origin.promisor=true",
+      "remote.origin.partialclonefilter=blob:none",
+      "branch.master.remote=origin",
+      "branch.master.merge=refs/heads/master"
+    ],
+    "promisor_pack_count": 5,
+    "object_probe_exit": 128,
+    "connectivity_exit": 0,
+    "connectivity_stdout_excerpt": []
+  },
+  "old_local_clone": {
+    "path": "/private/tmp/t372-standalone-input/upstream",
+    "local_config": [
+      "core.repositoryformatversion=0",
+      "core.filemode=true",
+      "core.bare=false",
+      "core.logallrefupdates=true",
+      "core.ignorecase=true",
+      "core.precomposeunicode=true",
+      "remote.origin.url=/private/tmp/t372-boltons-upstream",
+      "remote.origin.fetch=+refs/heads/*:refs/remotes/origin/*",
+      "branch.master.remote=origin",
+      "branch.master.merge=refs/heads/master"
+    ],
+    "promisor_pack_count": 5,
+    "object_probe_exit": 128,
+    "connectivity_exit": 2,
+    "connectivity_stdout_excerpt": [
+      "broken link from    tree 6dc3fc7f4294ac38f0824b07ac5d3aa2f3e226e8",
+      "              to    blob 604a8e875c5725a0e6cd6cfe04d0a71d46c085d8",
+      "broken link from    tree 6dc3fc7f4294ac38f0824b07ac5d3aa2f3e226e8",
+      "              to    blob 58451c1861c9af03fdbd6463a4a50834a7bd4a7e",
+      "broken link from    tree 6dc3fc7f4294ac38f0824b07ac5d3aa2f3e226e8",
+      "              to    blob 1c798c82788ab4a2ee0f781f91c373731276d1a1"
+    ]
+  }
+}

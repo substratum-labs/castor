@@ -73,3 +73,26 @@ Raw state: `/private/tmp/t372-pinned-bridge` (fresh task ID
 Finish current protocol/runtime pins and independent R2 bridge/gate acceptance,
 then release the already approved single bounded real-model trial and audit its
 result. This repair does not grant live release or claim a model repair success.
+
+## Narrow physical review and factual correction
+
+Physical Grok R1 returned REVISE, claiming both fetch hops and the regression
+must fail for non-tip SHA wants. That blocker is contradicted by local execution,
+the fresh HTTPS run, and all seven CI jobs at source842320a
+([run36531944759](https://github.com/substratum-labs/castor/actions/runs/36531944759)).
+A fresh diagnostic fetch from the staging repository with **no advertised refs**
+and **neither uploadpack allow-SHA option configured** exited0. Packet trace
+confirms protocol v2. See review-counterprobe.json and the unmodified R1 verdict.
+Git's [v2 parse_want implementation](https://github.com/git/git/blob/master/upload-pack.c)
+checks object existence without the v0/v1 ref-tip gate. No permission-relaxing
+configuration was added. This correction does not imply independent acceptance.
+
+The review's local packObjectsHook warning is also inapplicable: Git only honors
+that key in protected configuration, as specified by
+[git-config](https://git-scm.com/docs/git-config#Documentation/git-config.txt-uploadpackpackObjectsHook),
+and the helper scrubs global/system/inherited command configuration. Remaining
+nonblocking comments concern unchanged archive semantics, incomplete stderr
+coverage outside the helper, broader protocol pinning, and portability checks.
+Reference untracked verifier inputs are intentional; target alone is committed
+and packed. Source deletion/fsck demonstrates self-containment, not nlink proof.
+No generic support for arbitrary remote servers or old Git protocols is claimed.

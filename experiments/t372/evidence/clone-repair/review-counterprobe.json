@@ -1,0 +1,14 @@
+{
+  "git_version": "git version 2.54.0 (Apple Git-157)",
+  "source": "/private/tmp/t372-pinned-input/upstream",
+  "source_show_ref_exit": 1,
+  "allowAnySHA1InWant_configured": false,
+  "allowReachableSHA1InWant_configured": false,
+  "fetch_exit": 0,
+  "packet_trace_excerpt": [
+    "upload-pack> version 2",
+    "fetch< version 2",
+    "fetch> want 580a9c2d12755d472e534ca3e277e8f7e3ada49e",
+    "upload-pack< want 580a9c2d12755d472e534ca3e277e8f7e3ada49e"
+  ]
+}
