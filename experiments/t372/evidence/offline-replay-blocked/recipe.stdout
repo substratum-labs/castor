@@ -1,0 +1,37 @@
+Collecting pytest==8.3.5
+  Using cached pytest-8.3.5-py3-none-any.whl.metadata (7.6 kB)
+Collecting iniconfig==2.0.0
+  Using cached iniconfig-2.0.0-py3-none-any.whl.metadata (2.6 kB)
+Collecting packaging==24.2
+  Using cached packaging-24.2-py3-none-any.whl.metadata (3.2 kB)
+Collecting pluggy==1.5.0
+  Using cached pluggy-1.5.0-py3-none-any.whl.metadata (4.8 kB)
+Using cached pytest-8.3.5-py3-none-any.whl (343 kB)
+Using cached iniconfig-2.0.0-py3-none-any.whl (5.9 kB)
+Using cached packaging-24.2-py3-none-any.whl (65 kB)
+Using cached pluggy-1.5.0-py3-none-any.whl (20 kB)
+Saved /private/tmp/t372-demo-wheels/pytest-8.3.5-py3-none-any.whl
+Saved /private/tmp/t372-demo-wheels/iniconfig-2.0.0-py3-none-any.whl
+Saved /private/tmp/t372-demo-wheels/packaging-24.2-py3-none-any.whl
+Saved /private/tmp/t372-demo-wheels/pluggy-1.5.0-py3-none-any.whl
+Successfully downloaded pytest iniconfig packaging pluggy
+{
+  "upstream": "https://github.com/mahmoud/boltons",
+  "fix": "d0e36b4db07e5062b35ca664e0516ae0e4890b8b",
+  "pre_fix_parent": "580a9c2d12755d472e534ca3e277e8f7e3ada49e",
+  "target_tree": "c20df619d8514b7b5c55af93bb3da7eab9251735",
+  "target_commit": "84614557b89239da4730ca451defe393b9f9de8c",
+  "source_sha256": "3d81dc8b44136299857373a8f53d50dbf0be7aabfa34e7bcfee7c6b41b3b3236",
+  "original_regression_tests_sha256": "9331906c1e944368f677e06731bda4fb114a50d8eb1df992fe87767e644ea94b",
+  "reference_source_sha256": "0aeac3312b66b3919ec93f35e9785c62f3d79bf6db82d60f3b5a3140b3d30ae5",
+  "license_sha256": "c301912653a8d8c99eab6212aa3aea8d164ea249d8ad53c941e0558a0a5ac1e3",
+  "wheel_sha256": {
+    "pytest-8.3.5-py3-none-any.whl": "c69214aa47deac29fad6c2a4f590b9c4a9fdb16a403176fe154b79c0b4d4d820",
+    "iniconfig-2.0.0-py3-none-any.whl": "b6a85871a79d2e3b22d2d1b94ac2824226a63c6b741c88f7ae975f18b6778374",
+    "packaging-24.2-py3-none-any.whl": "09abb1bccd265c01f4a3aa3f7a7db064b36514d2cba19a2f694fe6150451a759",
+    "pluggy-1.5.0-py3-none-any.whl": "44e1ad92c8ca002de6377e165f3e0f1be63266ab4d554740532335b9d75ea669"
+  },
+  "target": "/private/tmp/t372-demo-replay/target",
+  "reference": "/private/tmp/t372-demo-replay/reference"
+}
+{"code":1,"evidence":{"captured_logs":{"stderr_bytes":0,"stderr_truncated":false,"stdout_bytes":0,"stdout_truncated":false},"container_removed":false,"deadline_ms":60000,"inspect_ms":0,"setup_ms":0,"teardown_ms":0,"terminal_exit_code":null,"terminal_oom_killed":null,"terminal_running":null},"reason":"VerifierUnavailable","workspace":"/private/tmp/t372-demo-candidate"}

@@ -3,7 +3,8 @@
 R2 succeeded with two real Qwen calls, 12 original protected tests and 12 independent
 replay tests passing, cleanup CLEAN. See [report](LIVE_TRIAL_R2_REPORT.md) and
 [walkthrough](DEMO_WALKTHROUGH.md). R1 remains a preserved failed trial. Both live
-releases are consumed; no automatic rerun. Final outcome review pending.
+releases are consumed; no automatic rerun. Physical outcome audit ACCEPT; awaiting Yong review. Offline recipe currently
+blocked by local image-reference resolution; see the r2 report.
 
 The following preparation and r1 launch notes are historical checkpoints.
 Their pending/release wording does not describe the current r2 result.

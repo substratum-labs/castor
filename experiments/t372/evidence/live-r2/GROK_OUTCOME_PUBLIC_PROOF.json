@@ -1,0 +1,17 @@
+{
+  "https://raw.githubusercontent.com/substratum-labs/castor/b8df18fad8e459370859e9cebe32ea815453b8bd/experiments/t372/LIVE_TRIAL_R2_REPORT.md": "6433ccccd87b338ab4aebbe74894c61594e2d90ea117de58b3ba9fde073bb586",
+  "https://raw.githubusercontent.com/substratum-labs/castor/b8df18fad8e459370859e9cebe32ea815453b8bd/experiments/t372/DEMO_WALKTHROUGH.md": "9f2d52c2882c076c9370f35ed522cc23cda80668d1762a0a377fa73ad9b42c0d",
+  "https://raw.githubusercontent.com/substratum-labs/castor/b8df18fad8e459370859e9cebe32ea815453b8bd/experiments/t372/evidence/live-r2/audit.json": "1965dcc29b9120704f17ee0f229196355240175956fbe8795029de98217bfa17",
+  "https://raw.githubusercontent.com/substratum-labs/castor/b8df18fad8e459370859e9cebe32ea815453b8bd/experiments/t372/evidence/live-r2/budget.json": "ce384055c7f6ebfc6f45deac7e3a41f1ab361ee8b2a025682ceabdd09d6fdd96",
+  "https://raw.githubusercontent.com/substratum-labs/castor/b8df18fad8e459370859e9cebe32ea815453b8bd/experiments/t372/evidence/live-r2/task-result.json": "37df4226e162013048be5401dde374298232d433e6495fadfbceb740b64b2767",
+  "https://raw.githubusercontent.com/substratum-labs/castor/b8df18fad8e459370859e9cebe32ea815453b8bd/experiments/t372/evidence/live-r2/actual.patch": "e35f63502842921053786af1b4298f63e77f2348ba3586d79cba05294734820e",
+  "https://raw.githubusercontent.com/substratum-labs/castor/b8df18fad8e459370859e9cebe32ea815453b8bd/experiments/t372/evidence/live-r2/independent-result.json": "bb4de18c48cdef93807690bd36f379c56ee9e272f39d982bd1d1adb47f676866",
+  "https://raw.githubusercontent.com/substratum-labs/castor/b8df18fad8e459370859e9cebe32ea815453b8bd/experiments/t372/evidence/live-r2/independent-verifier.stdout": "be97ffe946c285996b52b5549fc6f9d27bbd5cecc75ee0e59c4fdadb48ca746f",
+  "https://raw.githubusercontent.com/substratum-labs/castor/b8df18fad8e459370859e9cebe32ea815453b8bd/experiments/t372/evidence/live-r2/verifier_stdout.log": "06cf61056437640b55a9c932eb7e73b261aceb23b2a2e5886220d4317c1a1574",
+  "https://raw.githubusercontent.com/substratum-labs/castor/b8df18fad8e459370859e9cebe32ea815453b8bd/experiments/t372/evidence/live-r2/cleanup.json": "8b92cb5278a3b281a666fd09ad221940977117d983bde648525c68e4f8594ce6",
+  "https://raw.githubusercontent.com/substratum-labs/castor/b8df18fad8e459370859e9cebe32ea815453b8bd/experiments/t372/evidence/live-r2/candidate-proof.json": "bab19b3b8a8ff5cd8bc33a5d9569b234d6ce9b09f803067be36175bc3856d5e3",
+  "https://raw.githubusercontent.com/substratum-labs/castor/b8df18fad8e459370859e9cebe32ea815453b8bd/experiments/t372/evidence/live-r2/launcher-process.json": "37941210cca170aeb73248f49a9478f51d972554efdfb52e32e8dd11d1e37f42",
+  "https://raw.githubusercontent.com/substratum-labs/castor/b8df18fad8e459370859e9cebe32ea815453b8bd/experiments/t372/evidence/live-r2/bridge/http-response-1.json": "52c281481c084bef2617c5d2e5c41dc5d942dac81779cda3daaa6818afd556f8",
+  "https://raw.githubusercontent.com/substratum-labs/castor/b8df18fad8e459370859e9cebe32ea815453b8bd/experiments/t372/evidence/live-r2/bridge/http-response-2.json": "b6d72e696a69886294f0c21d19a61d14e80664491d66b53967b847bc636d5515",
+  "https://raw.githubusercontent.com/substratum-labs/castor/b8df18fad8e459370859e9cebe32ea815453b8bd/experiments/t372/evidence/live-r2/GROK_DELTA_REVIEW.md": "b88ad91af7503c5081f582912e72293480a556924da9c4c268568b38bde3f6b3"
+}

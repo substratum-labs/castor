@@ -1,4 +1,4 @@
-# Current: r2 real-model repair succeeded, review pending
+# Current: r2 real-model repair succeeded, accepted physical outcome audit; Yong review pending
 
 See [r2 report](LIVE_TRIAL_R2_REPORT.md). Two actual calls, 12 protected and
 12 independent original tests pass, cleanup CLEAN. Path context supplied; generic

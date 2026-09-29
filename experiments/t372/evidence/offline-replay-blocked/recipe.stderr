@@ -1,0 +1,60 @@
+    Updating crates.io index
+    Updating git repository `https://github.com/substratum-labs/roche.git`
+     Locking 116 packages to latest compatible versions
+      Adding generic-array v0.14.7 (available: v0.14.9)
+      Adding verus_builtin v0.0.0-2026-05-17-0151 (available: v0.0.0-2026-09-16-0054)
+      Adding verus_builtin_macros v0.0.0-2026-07-12-0122 (available: v0.0.0-2026-09-20-0158)
+      Adding verus_prettyplease v0.0.0-2026-05-31-0205 (available: v0.0.0-2026-09-06-0133)
+      Adding verus_state_machines_macros v0.0.0-2026-06-14-0213 (available: v0.0.0-2026-09-06-0133)
+      Adding verus_syn v0.0.0-2026-05-31-0205 (available: v0.0.0-2026-09-06-0133)
+      Adding vstd v0.0.0-2026-07-12-0122 (available: v0.0.0-2026-09-20-0158)
+ Downloading crates ...
+  Downloaded bitflags v2.13.2
+  Downloaded cfg-if v1.0.5
+  Downloaded thiserror v2.0.21
+  Downloaded smallvec v1.16.2
+  Downloaded crc32fast v1.5.2
+  Downloaded thiserror-impl v2.0.21
+  Downloaded unicode-ident v1.0.26
+  Downloaded uuid v1.26.1
+  Downloaded hyper-util v0.1.21
+  Downloaded syn v3.0.6
+  Downloaded rustix v1.1.5
+   Compiling unicode-ident v1.0.26
+   Compiling cfg-if v1.0.5
+   Compiling bitflags v2.13.2
+   Compiling rustix v1.1.5
+   Compiling crc32fast v1.5.2
+   Compiling smallvec v1.16.2
+   Compiling thiserror v2.0.21
+   Compiling getrandom v0.4.3
+   Compiling filetime v0.2.29
+   Compiling sha2 v0.10.9
+   Compiling proc-macro2 v1.0.107
+   Compiling uuid v1.26.1
+   Compiling nix v0.29.0
+   Compiling quote v1.0.47
+   Compiling syn v3.0.6
+   Compiling verus_syn v0.0.0-2026-05-31-0205
+   Compiling syn v2.0.119
+   Compiling flate2 v1.1.10
+   Compiling xattr v1.6.1
+   Compiling tempfile v3.27.0
+   Compiling tokio-macros v2.7.2
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.21
+   Compiling tar v0.4.46
+   Compiling synstructure v0.13.2
+   Compiling tokio v1.53.1
+   Compiling verus_prettyplease v0.0.0-2026-05-31-0205
+   Compiling verus_state_machines_macros v0.0.0-2026-06-14-0213
+   Compiling serde v1.0.229
+   Compiling verus_builtin_macros v0.0.0-2026-07-12-0122
+   Compiling hyper v1.11.1
+   Compiling hyper-util v0.1.21
+   Compiling vstd v0.0.0-2026-07-12-0122
+   Compiling roche-core v0.6.0 (https://github.com/substratum-labs/roche.git?rev=039d9125c5acec38751c3a6434446f4a21e68afc#039d9125)
+   Compiling castor-kernel v0.1.0 (/Users/yong/projects/substratum/castor/.worktrees/t372-bits-demo/kernel)
+   Compiling t372-independent-oracle v0.1.0 (/private/tmp/t372-demo-observer)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.49s
+     Running `/private/tmp/t372-cargo-target/debug/t372-independent-oracle /private/tmp/t372-demo-candidate /private/tmp/t372-demo-verifier-evidence`

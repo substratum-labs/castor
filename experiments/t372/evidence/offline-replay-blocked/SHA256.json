@@ -1,0 +1,9 @@
+{
+  "STATUS.md": "7e40ecf684d5df7bba0447d7fcfb446ca654950bde00f269489aa506b6020b69",
+  "recipe-tested.sh": "57f89ff9a6eb164cc9bb7fc5ed3a21034a5ebe13162b86430e4dbea5938c2f0f",
+  "recipe.stderr": "aadeb8d524b0a2317d48744d664786cb3361256f495c3608858e15bc8e9706a9",
+  "recipe.stdout": "2eaa565a2d3c68622944362131eac36a9d542fab8e1a49fcc1ce08cb80e0c036",
+  "verifier-1.json": "ce53889a690abd7e721e471e39230a536450b235e7fe86ac1b2bad85a34ddd77",
+  "verifier-2.json": "ce53889a690abd7e721e471e39230a536450b235e7fe86ac1b2bad85a34ddd77",
+  "verifier-3.json": "ce53889a690abd7e721e471e39230a536450b235e7fe86ac1b2bad85a34ddd77"
+}

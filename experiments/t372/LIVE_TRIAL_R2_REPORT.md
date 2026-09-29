@@ -1,6 +1,6 @@
 # T-372 real-model trial r2: repair delivered for review
 
-Status: successful bounded demo; final outcome review pending. 2026-09-29.
+Status: successful bounded demo; actual physical final outcome audit ACCEPT; awaiting Yong review. 2026-09-29.
 
 Yong approved one additional trial after r1 failed on file discovery. The only
 agent-context change names `boltons/mathutils.py` and `tests/test_mathutils.py`,
@@ -61,3 +61,17 @@ Retained Linux binary hashes identify bytes, not cryptographic build provenance.
 The trusted Python launcher remains management/test apparatus; Rust Core is
 native authority. This demo does not prove a wholly Python-free distribution.
 Both trial releases are consumed; no further live inference is authorized.
+
+## Later offline-recipe environment blocker
+
+The accepted native run and original independent replay above completed before
+a new concrete fresh-source replay recipe was tested. Fresh public source and
+wheels reproduce the pinned target and the observer compiles, but three verifier
+invocations stop at VerifierUnavailable with zero test output/zero container
+setup. Docker inspect by image ID finds the pinned image; inspect by its tag or
+repository digest reports No such image, despite listing those references in
+metadata. Root cause is not confirmed. No image/profile/code substitution was
+made; further verification stopped under the three-strike rule. These later
+setup failures do not invalidate earlier recorded candidate tests, and the
+recipe is currently environment-blocked, not verified end to end.
+See [blocked replay evidence](evidence/offline-replay-blocked/STATUS.md).
