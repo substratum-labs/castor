@@ -1,0 +1,460 @@
+
+running 22 tests
+test one_shot::actuator::tests::second_rename_section_cannot_escape_single_file_scope ... ok
+test one_shot::project::archive::tests::asset_directory_scan_checks_deadline_before_reading_names ... ok
+test one_shot::project::engine::tests::staging_uses_private_unpredictable_name_and_cleans_its_directory ... ok
+test one_shot::supervisor::pi_output_tests::assistant_error_after_tool_use_is_not_a_successful_task ... ok
+test one_shot::supervisor::pi_output_tests::final_assistant_stop_is_required ... ok
+test one_shot::supervisor::pi_output_tests::one_settlement_cannot_hide_a_different_unsettled_attempt ... ok
+test one_shot::project::engine::tests::staging_cleanup_does_not_remove_replaced_directory ... ok
+test one_shot::verifier::tests::incomplete_or_inconsistent_terminal_evidence_never_succeeds ... ok
+test one_shot::verifier::tests::prestart_profile_rejects_missing_or_wrong_authority_fields ... ok
+test sandbox::tests::profile_is_networkless_and_mounts_only_the_readonly_ipc_socket ... ok
+test one_shot::project::archive::tests::nested_assets_cannot_spend_prelisted_sibling_entry_budget ... ok
+test one_shot::project::archive::tests::asset_collection_enforces_small_byte_member_and_depth_budgets ... ok
+test sandbox::tests::profile_rejects_socket_under_a_storage_root ... ok
+test one_shot::project::git::pinned_metadata_tests::metadata_read_stays_on_pinned_parent_after_path_replacement ... ok
+test one_shot::project::git::invoke_tests::closed_stdin_returns_without_waiting_for_hung_child ... ok
+test one_shot::project::git::invoke_tests::oversized_stdout_returns_while_stderr_stays_open ... ok
+test one_shot::actuator::tests::nested_workspace_edit_changes_only_its_bound_target ... ok
+test one_shot::project::git::invoke_tests::child_exit_with_descendant_pipe_holder_is_bounded ... ok
+test one_shot::project::git::invoke_tests::child_closes_stdio_and_hangs_until_deadline ... ok
+test one_shot::project::git::invoke_tests::deadline_precedes_late_output_failure ... ok
+test one_shot::supervisor::pi_output_tests::product_task_verification_uses_isolated_docker ... ok
+test one_shot::verifier::tests::fake_docker_backend_rejects_prestart_and_terminal_faults ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 11 tests
+test legacy_unbound_history_replays_but_cannot_authorize_attempt ... ok
+test durable_store_requires_every_binding_region_and_digest_in_the_commit_proof ... ok
+test replayed_duplicate_binding_ids_are_unusable_instead_of_last_wins ... ok
+test replayed_cross_turn_binding_conflict_is_unusable_instead_of_overwritten ... ok
+test whitespace_only_actuator_identity_is_rejected_without_journal_mutation ... ok
+test registration_capability_object_must_equal_committed_actuator ... ok
+test registration_must_match_committed_actuator_and_action_cannot_rebind ... ok
+test committed_binding_survives_replay_and_arms_exact_payload ... ok
+test committed_action_accepts_identical_republication_but_rejects_actuator_only_rebind ... ok
+test manifest_and_binding_ids_must_be_identical_and_unique ... ok
+test binding_requires_persisted_matching_payload_and_nonempty_actuator ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.21s
+
+
+running 9 tests
+test unknown_delivery_fault_point_is_rejected_when_test_hooks_are_enabled ... ok
+test all_configured_socket_paths_must_be_distinct ... ok
+test actuator_socket_requires_strict_nonempty_trust_configuration ... ok
+test actuator_socket_rejects_a_peer_uid_not_named_by_trust ... ok
+test terminal_attempt_cannot_be_reacquired ... ok
+test duplicate_unsettled_acquisition_returns_same_binding_and_bytes ... ok
+test matching_actuator_acquires_exact_bound_payload_after_durable_delivery ... ok
+test replayed_reservation_without_submission_is_ambiguous_and_returns_no_payload ... ok
+test mismatched_or_unknown_acquisition_returns_no_payload_and_writes_nothing ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.95s
+
+
+running 7 tests
+test current_bound_interaction_returns_only_its_verified_payload ... ok
+test digest_mismatch_and_late_report_fail_before_any_payload_can_be_consumed ... ok
+test identical_lost_response_retry_returns_same_payload_without_another_append ... ok
+test different_lease_or_closed_turn_cannot_reconsume_a_binding ... ok
+test recovery_rejects_historical_binding_but_allows_latest_binding_with_fresh_lease ... ok
+test a_later_interaction_cannot_reauthorize_an_already_consumed_binding ... ok
+test unknown_or_not_yet_bound_interaction_returns_no_payload_and_writes_nothing ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+
+
+running 10 tests
+test d1_core_store_enforces_one_live_writer_per_root ... ok
+test conditional_append_refines_entry_persisted_for_current_authority ... ok
+test persisted_fence_rejects_stale_authority_without_erasing_original_entry ... ok
+test uncertain_journal_write_poisoning_requires_reopen_before_more_transitions ... ok
+test same_entry_retry_and_read_refine_lost_ack_recovery ... ok
+test conflicting_region_digest_refines_immutable_identity_rejection ... ok
+test equal_region_replay_refines_idempotent_region_success ... ok
+test region_persistence_refines_region_persisted_at_d1_across_reopen ... ok
+test region_backed_append_proof_refines_region_before_entry_ordering ... ok
+test unpersisted_region_refines_append_rejection_without_partial_entry ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+
+running 9 tests
+test test_c02_lost_ack_retry_idempotency ... ok
+test test_c02_no_direct_agent_durable_or_effect_authority ... ok
+test test_c02_at_most_one_current_lease ... ok
+test test_c02_tuple_tampering_rejection ... ok
+test test_c02_stale_carrier_replay_without_rebind_fails ... ok
+test test_c02_normal_bound_lease_to_advance ... ok
+test test_c02_fence_prevents_recovery_of_a_superseded_lease_entry ... ok
+test test_c02_durable_fence_vs_stale_advance ... ok
+test test_c02_fence_prevents_recovery_of_a_superseded_turn_entry ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+
+running 11 tests
+test test_c03_request_interaction_revokes_lease_and_awaits ... ok
+test test_c03_unpersisted_region_binding_rejected ... ok
+test test_c03_lost_ack_request_interaction_is_idempotent ... ok
+test test_c03_result_digest_mismatch_is_rejected_before_region_persistence ... ok
+test test_c03_duplicate_outcome_report_idempotence ... ok
+test test_c03_stale_lease_consumption_rejected ... ok
+test test_c03_turn_aborted_or_fenced_while_interaction_in_flight ... ok
+test test_c03_conflicting_report_does_not_unbind_existing_bound_region ... ok
+test test_c03_late_report_on_closed_turn_rejected ... ok
+test test_c03_normal_request_region_bind_flow ... ok
+test test_c03_fresh_lease_epoch_cannot_be_reused_after_a_later_interaction ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+
+running 12 tests
+test test_c05_crash_after_arm_reconstructs_unknown_not_retryable ... ok
+test test_c05_lost_ack_arm_does_not_mint_attempt_2 ... ok
+test test_c05_duplicate_certificate_idempotence ... ok
+test test_c05_capability_revoked_admission_rejected ... ok
+test test_c05_normal_admission_arm_dispatch_settle_flow ... ok
+test test_c05_confirmed_without_dispatch_identity_rejected ... ok
+test test_c05_roche_unknown_blocks_new_arm_not_existing ... ok
+test test_c05_settlement_unpersisted_evidence_region_rejected ... ok
+test test_c05_unknown_blocks_overlapping_action_admission ... ok
+test test_c05_stale_generation_or_fenced_admission_rejected ... ok
+test test_c05_valid_not_applied_then_confirmed_is_quarantined_dispute ... ok
+test test_c05_weak_not_applied_rejected_preserves_unknown ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 23 tests
+test test_cap_derivation_rights_amplification_rejected ... ok
+test test_cap_derivation_non_delegable_rejected ... ok
+test test_cap_derivation_constraint_relaxation_rejected ... ok
+test test_cap_derive_cannot_omit_parent_exact_match_constraint ... ok
+test test_cap_duplicate_derive_idempotence ... ok
+test test_cap_derive_after_ancestor_revoke_rejected ... ok
+test test_cap_object_mismatch_rejected ... ok
+test test_cap_missing_required_right_rejected ... ok
+test test_cap_max_turns_is_exhausted_by_commit_and_blocks_next_admission ... ok
+test test_cap_exact_match_constraint_is_enforced_at_exercise ... ok
+test test_cap_numeric_constraint_exceeded_rejected ... ok
+test test_cap_revocation_authorization_requires_revoke_right_and_target_coverage ... ok
+test test_cap_subject_mismatch_rejected ... ok
+test test_cap_scope_prefix_traversal_rejected ... ok
+test test_cap_revocation_before_commit_blocks_turn_commit ... ok
+test test_cap_unregistered_id_admit_rejected ... ok
+test test_cap_revocation_before_arm_blocks_attempt_armed ... ok
+test test_cap_stale_generation_cannot_exercise_valid_grant ... ok
+test test_cap_revocation_after_arm_does_not_unarm ... ok
+test test_cap_unknown_id_register_rejected_fail_closed ... ok
+test test_cap_unminted_id_at_arming_rejected_fail_closed ... ok
+test test_cap_swapped_id_at_arming_rejected_after_crash_recovery ... ok
+test test_cap_cascading_provenance_tree_revocation ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.68s
+
+
+running 2 tests
+test castord_check_on_missing_state_does_not_create_it ... ok
+test castord_reopens_core_and_adapter_without_a_second_provider_submission ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+
+running 12 tests
+test test_r11_reconstructed_partial_settlement_dispute_and_alias_lock ... ok
+test test_r6_next_turn_probe_allowed_mutation_locked ... ok
+test test_r1_guest_certificate_denied_without_journal_mutation ... ok
+test test_r7_revoked_capability_after_snapshot_rejected ... ok
+test test_r4_duplicate_confirmed_ack_no_append_no_rearm ... ok
+test test_r5_atomic_cancel_tombstone_rejects_delayed_arrivals ... ok
+test test_r12_closed_turn_drops_late_probe_requires_fresh_lease ... ok
+test test_r3_not_found_preserves_ambiguity_then_late_dispatch ... ok
+test test_r10_budget_survives_restart_escalation_requires_hitl ... ok
+test test_r9_sigkill_arm_dispatch_evidence_and_torn_fsync ... ok
+test test_r2_reject_mismatched_binding_or_issuer ... ok
+test test_r8_closed_query_descriptor_validation ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.94s
+
+
+running 20 tests
+test test_d13_complete_tail_frame_bad_crc_fails_closed ... ok
+test test_d18_action_registered_capability_binding_survives_restart ... ok
+test test_d12_leftover_snapshot_tempfile_ignored ... ok
+test test_d14_lost_ack_complete_frame_recovered_h04 ... ok
+test test_d19_unpointed_snapshot_blob_ignored ... ok
+test test_d1_incomplete_tail_frame_auto_truncated ... ok
+test test_d17_snapshot_then_cap_revocation_blocks_exercise ... ok
+test test_d16_snapshot_then_fence_preserves_new_generation ... ok
+test test_d11_corrupted_snapshot_falls_back_to_genesis_replay ... ok
+test test_d10_snapshot_plus_tail_replay_reconstructs_state ... ok
+test test_d5_committed_turn_permanence_inherited_sentinel ... ok
+test test_d2_mid_file_corruption_fails_closed ... ok
+test test_d3_missing_region_fails_closed ... ok
+test test_d8_revocation_permanence_inherited_sentinel ... ok
+test test_d6_armed_unknown_and_scope_mutex_permanence ... ok
+test test_d9_fence_generation_permanence_inherited_sentinel ... ok
+test test_d15_fresh_lease_acquired_after_restart_for_open_turn ... ok
+test test_d4_crash_advances_core_epoch_staling_pre_crash_lease ... ok
+test test_d7_provider_dedup_resets_ram_counter_and_duplicate_delivery ... ok
+test test_d20_snapshot_plus_tail_projection_equivalence_to_genesis ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s
+
+
+running 5 tests
+test legacy_registration_without_canonical_scope_cannot_use_guest_scope ... ok
+test identical_receipt_under_another_region_is_idempotent ... ok
+test legacy_guest_settlement_keeps_scope_locked_after_replay_and_snapshot ... ok
+test canonical_scope_survives_genesis_and_snapshot_replay ... ok
+test physical_peer_credentials_and_canonical_registration ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+
+running 32 tests
+test test_comp_arm_attempt_before_turn_commit_rejected ... ok
+test test_comp_commit_turn_while_awaiting_interaction_rejected ... ok
+test test_comp_armed_unknown_blocks_overlapping_action_scope_admission ... ok
+test test_c2_conflicting_delivery_is_ambiguous_without_submission ... ok
+test test_c2_failed_admission_cannot_replace_authoritative_projection ... ok
+test test_c2_successor_cannot_reuse_closed_turn_interaction_identity ... ok
+test test_c2_orphan_snapshot_after_crash_does_not_poison_admission ... ok
+test test_c2_snapshot_is_core_persisted_bound_and_immutable ... ok
+test test_c2_probe_budget_survives_snapshot_tail_and_exhaustion ... ok
+test test_comp_confirmed_settlement_requires_exact_dispatch_identity ... ok
+test test_comp_crash_after_arm_reopens_storage_reconstructs_unknown_and_rejects_retry ... ok
+test test_comp_admission_rejected_when_generation_fenced_or_capability_revoked ... ok
+test test_comp_duplicate_deliver_armed_attempt_calls_provider_only_once ... ok
+test test_comp_crash_after_dispatch_before_reservation_retries_bound_delivery ... ok
+test test_comp_crash_after_quarantine_keeps_different_action_locked_on_same_scope ... ok
+test test_comp_fence_prevents_stale_carrier_commit_and_action_publication ... ok
+test test_comp_late_interaction_after_turn_close_does_not_bind_successor_turn ... ok
+test test_comp_normal_governed_turn_e2e_flow ... ok
+test test_comp_observation_consumed_only_under_strictly_monotonic_fresh_lease ... ok
+test test_c2_registered_operation_survives_snapshot_and_rejects_rebinding ... ok
+test test_c2_effect_transition_during_turn_preserves_fresh_commit_and_fence ... ok
+test test_comp_operator_resolution_persists_and_releases_quarantined_scope ... ok
+test test_comp_pre_dispatch_not_applied_with_verifiable_non_execution_settles_and_unlocks_scope ... ok
+test test_comp_recovery_stales_pre_crash_lease_and_allows_fresh_lease_for_turn_commit ... ok
+test test_comp_turn_commit_requires_durably_bound_interaction ... ok
+test test_comp_turn_commit_rejects_sha256_digest_mismatches ... ok
+test test_comp_quarantined_dispute_blocks_different_action_on_same_scope ... ok
+test test_comp_scenario_12_crash_after_submission_resets_count_and_blocks_retry ... ok
+test test_comp_unpersisted_observation_region_blocks_interaction_binding ... ok
+test test_comp_unpersisted_successor_or_action_region_blocks_turn_commit ... ok
+test test_comp_unpersisted_evidence_region_blocks_settlement ... ok
+test test_comp_weak_timeout_rejected_and_preserves_armed_unknown_blocking_mutex ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.55s
+
+
+running 29 tests
+test consume_interaction_rejects_arbitrary_region_selector_at_gateway_boundary ... ok
+test opcode_isolation_without_test_flag ... ok
+test scenario_01_end_to_end_governed_turn_over_socket ... ok
+test scenario_03_pre_commit_action_registration_is_rejected ... ok
+test agent_observe_projection_is_read_only_and_tracks_host_projection_updates ... ok
+test scenario_04_pre_commit_admission_certificate_is_rejected ... ok
+test malformed_action_binding_is_rejected_at_gateway_boundary ... ok
+test scenario_02_reference_runtime_receives_castor_ipc_socket ... ok
+test model_request_region_is_readable_only_by_trusted_control ... ok
+test agent_channel_cannot_bind_its_own_model_observation ... ok
+test scenario_06_deliver_without_record_is_rejected_without_provider_submission ... ok
+test scenario_05_uncommitted_action_id_admission_is_rejected ... ok
+test scenario_07_duplicate_deliver_is_deduplicated_over_socket ... ok
+test scenario_08_missing_adapter_dedup_after_dispatch_is_ambiguous ... ok
+test scenario_09_stale_lease_epoch_is_rejected ... ok
+test scenario_10_commit_while_awaiting_interaction_is_rejected ... ok
+test scenario_11_stale_generation_admission_is_rejected_after_fence ... ok
+test scenario_12_scope_mutex_rejects_overlapping_admission ... ok
+test scenario_13_ensure_region_digest_mismatch_is_rejected ... ok
+test scenario_14_second_daemon_is_excluded_by_storage_writer_lock ... ok
+test scenario_15_live_socket_collision_never_unlinks_active_socket ... ok
+test scenario_16_framing_bounds_fail_closed ... ok
+test scenario_17_lost_ack_after_commit_does_not_mint_a_second_turn ... ok
+test scenario_18_supervisor_persists_fence_before_child_termination_and_reap ... ok
+test scenario_19_dual_socket_uses_closed_channel_allowlists ... ok
+test scenario_20_actuator_socket_is_closed_and_returns_only_bound_payload ... ok
+test scenario_22_delivery_fault_environment_is_inert_without_test_flag ... ok
+test trusted_workspace_scope_policy_allows_only_workspace_actions ... ok
+test scenario_21_delivery_fault_points_select_the_durable_journal_seam ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.62s
+
+
+running 15 tests
+test hostile_trace_lost_acknowledgement_recovers_same_entry_from_disk ... ok
+test hostile_trace_adapter_cannot_initialize_after_core_dispatch_exists ... ok
+test hostile_trace_adapter_lineage_cannot_be_reinitialized_after_store_loss ... ok
+test hostile_trace_truncated_adapter_journal_fails_closed ... ok
+test hostile_trace_provider_panic_after_reservation_recovers_without_resubmit ... ok
+test hostile_trace_tampered_command_is_rejected_before_provider_io ... ok
+test hostile_trace_non_action_region_digest_cannot_authorize_provider_io ... ok
+test hostile_trace_crash_after_possible_submit_never_calls_provider_twice ... ok
+test hostile_trace_normal_delivery_uses_real_proofs_and_one_provider_submission ... ok
+test hostile_trace_deleted_adapter_journal_fails_closed_on_recovery ... ok
+test hostile_trace_duplicate_delivery_reuses_durable_dedup_record ... ok
+test hostile_trace_two_live_adapter_instances_cannot_share_one_root ... ok
+test hostile_trace_consistent_adapter_genesis_rollback_is_blocked_by_core_anchor ... ok
+test hostile_trace_conflicting_observations_are_both_retained_across_reopen ... ok
+test hostile_trace_same_attempt_number_for_two_agents_does_not_collide ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.85s
+
+
+running 14 tests
+test test_verifier_docker_launch_error_never_runs_host_canary ... ok
+test test_verifier_launcher_failure_fails_closed_without_host_fallback ... ok
+test test_hostile_verifier_rejects_host_secret_access ... ok
+test test_verifier_enforces_resource_limits ... ok
+test test_hostile_verifier_rejects_socket_access ... ok
+test test_hostile_verifier_failure_fails_closed ... ok
+test test_hostile_verifier_rejects_network_access ... ok
+test test_verifier_enforces_log_stream_cap ... ok
+test relative_source_read_uses_candidate_bytes_in_private_workspace ... ok
+test test_hostile_verifier_candidate_remains_immutable ... ok
+test test_verifier_oom_or_crash_fails_closed ... ok
+test test_verifier_setup_inspect_teardown_have_one_deadline_and_cleanup ... ok
+test test_host_staged_candidate_bytes_remain_unchanged ... ok
+test test_hostile_verifier_timeout_kills_and_fails_closed ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.32s
+
+
+running 3 tests
+test live_microbenchmarks ... ignored, physical latency benchmark; run explicitly to refresh results artifacts
+test percentile_summary_contract ... ok
+test comparative_arm_json_contract ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 31 tests
+test derived_task_image_still_rejects_a_second_sandbox_mount ... ok
+test corrupt_snapshot_fails_before_image_build_without_fabricated_result_fields ... ok
+test image_build_failure_returns_truthful_failed_result ... ok
+test missing_snapshot_archive_fails_before_image_build ... ok
+test mock_agent_commits_workspace_edit ... ignored, spawned only as an untrusted child by post-arm crash contracts
+test mock_agent_replays_stale_commit ... ignored, spawned only as an untrusted child by the stale-lease contract
+test mock_agent_requests_model ... ignored, spawned only as an untrusted child by the provider-failure contract
+test mock_agent_sends_unauthorized_opcode ... ignored, spawned only as an untrusted child by the hostile task contract
+test agent_crash_before_committed_action_fails_without_effects ... ok
+test delayed_agent_commit_after_fence_is_rejected_without_dispatch ... ok
+test mutable_carrier_tag_cannot_override_manifest_image_pin ... ok
+test distinct_idempotency_keys_create_distinct_tasks_in_same_board ... ok
+test hostile_agent_opcode_is_rejected_and_task_cannot_succeed ... ok
+test invalid_patch_is_certified_not_applied_before_any_workspace_write ... ok
+test missing_model_request_region_fails_before_provider_io ... ok
+test agent_crash_after_arming_preserves_unknown_dispute_result ... ok
+test model_transport_failure_fails_task_without_settled_actions ... ok
+test snapshot_locator_cannot_traverse_outside_manifest_directory ... ok
+test snapshot_locator_rejects_absolute_path_even_with_valid_archive_hash ... ok
+test reused_idempotency_key_cannot_change_task_manifest ... ok
+test snapshot_locator_rejects_symlinked_archive ... ok
+test symlink_inside_verified_archive_is_rejected_before_image_build ... ok
+test post_arm_daemon_crash_recovers_as_unknown_without_retry ... ok
+test test_agent_and_image_overrides_are_inert_without_test_flag ... ok
+test agent_success_claim_cannot_override_failing_host_verification ... ok
+test buffered_model_region_is_bound_before_guest_consumes_it ... ok
+test pi_carrier_workspace_is_physically_read_only ... ok
+test actuator_crash_after_write_must_probe_settle_and_run_isolated_test ... ok
+test pi_carrier_contains_pinned_node_and_pi_without_python ... ok
+test normal_task_requires_bound_model_settled_edit_and_isolated_test ... ok
+test duplicate_active_submission_reuses_task_without_starting_another_agent ... ok
+
+test result: ok. 27 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 2.40s
+
+
+running 1 test
+test verified_archive_builds_digest_addressed_read_only_workspace ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+
+
+running 19 tests
+test canonical_identity_includes_effective_timeout_and_full_image_pin ... ok
+test mac_project_run_rejects_before_docker_or_model_access ... ok
+test ignored_asset_prefix_collision_is_rejected ... ok
+test output_inside_project_and_hardlinked_source_fail_closed ... ok
+test dangling_common_directory_symlink_is_not_treated_as_absent ... ok
+test git_hooks_filters_and_remote_helpers_are_never_run ... ok
+test output_parent_navigation_to_sibling_is_confined ... ok
+test project_frontend_rejects_test_opcodes_and_nonnull_limits ... ok
+test asset_executable_and_traversal_fail_closed ... ok
+test oversized_git_blob_fails_with_bounded_input_read ... ok
+test pack_rejects_dirty_and_untracked_input_even_when_excluded ... ok
+test pack_rejects_symlink_and_special_file_input ... ok
+test group_or_other_execute_bits_do_not_make_nonexecutable_source_dirty ... ok
+test pack_publishes_repeatable_bundle_without_changing_source ... ok
+test pack_identity_and_archive_change_with_asset_bytes ... ok
+test primary_worktree_config_and_gitdir_parent_symlink_fail_preflight ... ok
+test exclusions_have_stable_reasons_and_do_not_skip_dirty_checks ... ok
+test pack_rejects_unsafe_output_and_only_reuses_exact_bundle ... ok
+test unsupported_git_configuration_fails_before_object_lookup ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.57s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 13 tests
+test sandbox_contract_cap_drop_all ... ok
+test sandbox_contract_non_root_uid_gid ... ok
+test test_sandbox_abstract_uds_isolated ... ok
+test test_sandbox_containment_uncertainty_fail_closed ... ok
+test test_sandbox_docker_hardening_options_are_applied ... ok
+test test_sandbox_host_filesystem_contained ... ok
+test test_sandbox_fence_before_immediate_kill ... ok
+test test_sandbox_aisa_syscall_continuity ... ok
+test test_sandbox_raw_tcp_egress_fails_closed ... ok
+test test_sandbox_mediated_provider_io ... ok
+test test_sandbox_raw_udp_egress_fails_closed ... ok
+test test_sandbox_socket_mount_readonly ... ok
+test test_sandbox_vsock_egress_fails_closed ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.52s
+
+
+running 2 tests
+test public_runtime_api_commits_an_authorized_pending_syscall ... ok
+test revocation_between_proposal_and_commit_blocks_the_syscall ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test original_bits_regression_is_red_then_green_inside_isolated_verifier ... ignored, physical oracle: invoke explicitly with T372_ORACLE_BASELINE, T372_ORACLE_REFERENCE and T372_ORACLE_STATE
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test castor_task_cli_has_no_python_runtime_link ... ok
+test castord_authority_has_no_python_runtime_link ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

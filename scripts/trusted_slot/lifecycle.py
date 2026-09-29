@@ -9,7 +9,7 @@ from pathlib import Path
 from .common import (
     CONTROLLER,
     PI,
-    VERIFIER,
+    VERIFIER_RUNTIME,
     append_json,
     below,
     child_profile,
@@ -201,7 +201,7 @@ class Slot:
             if actual != expected:
                 raise ValueError("local image pin mismatch: " + reference)
         self.verifier_id = (
-            self.dk.call("image", "inspect", "--format", "{{.Id}}", VERIFIER)
+            self.dk.call("image", "inspect", "--format", "{{.Id}}", VERIFIER_RUNTIME)
             .stdout.decode()
             .strip()
         )

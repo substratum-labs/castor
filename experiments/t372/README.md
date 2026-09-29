@@ -1,3 +1,5 @@
+> **Zero-model replay:** T-377 provides a verified fresh-input command. See [walkthrough](DEMO_WALKTHROUGH.md) and [lookup diagnosis](REPLAY_REPAIR.md). T-372 approval and PR #23 merge are complete; older pending-review wording below is historical.
+
 # T-372 actual real-model repair demo
 
 R2 succeeded with two real Qwen calls, 12 original protected tests and 12 independent

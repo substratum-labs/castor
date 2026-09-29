@@ -1,0 +1,32 @@
+{
+  "Id": {
+    "equal": true,
+    "value": "sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea"
+  },
+  "RepoDigests": {
+    "equal": true,
+    "value": [
+      "python@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea"
+    ]
+  },
+  "Os": {
+    "equal": true,
+    "value": "linux"
+  },
+  "Architecture": {
+    "equal": true,
+    "value": "arm64"
+  },
+  "RootFS": {
+    "equal": true,
+    "value": {
+      "Layers": [
+        "sha256:41d6505109809884e681a97f978542a2d4d3506af0124f18b3f3a471edfcc9b7",
+        "sha256:c26df6d1045bcd70c62e835f44e2ce60fef71630493a92f17faa184941c0af7f",
+        "sha256:1fb14899b8ee7fc3e7a87a848cb065309798a1d922935345520f4d51701287e0",
+        "sha256:de965252ed39aa516a700a7d73a3441f6aceb27dca16b329e958c447d191347b"
+      ],
+      "Type": "layers"
+    }
+  }
+}

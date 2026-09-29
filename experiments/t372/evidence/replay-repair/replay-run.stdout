@@ -1,0 +1,10 @@
+{
+  "status": "VERIFIED",
+  "provider_calls": 0,
+  "baseline": "1 failed, 11 passed",
+  "actual_candidate": "12 passed",
+  "image_id": "sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea",
+  "verifier_containers_removed": true,
+  "container_inventory_unchanged": true
+}
+Replay artifacts: /private/tmp/castor-t372-replay.SzLu0i

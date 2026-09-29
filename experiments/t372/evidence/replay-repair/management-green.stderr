@@ -1,0 +1,18 @@
+test_cli_rejects_nonfinite_deadlines_before_any_docker_operation (test_trusted_slot_units.TrustedSlotUnits.test_cli_rejects_nonfinite_deadlines_before_any_docker_operation) ... ok
+test_closed_or_oversize_frame_fails (test_trusted_slot_units.TrustedSlotUnits.test_closed_or_oversize_frame_fails) ... ok
+test_disputed_result_is_preserved_without_optional_field_invention (test_trusted_slot_units.TrustedSlotUnits.test_disputed_result_is_preserved_without_optional_field_invention) ... ok
+test_edit_requires_successful_read_observation_of_target_content (test_trusted_slot_units.TrustedSlotUnits.test_edit_requires_successful_read_observation_of_target_content) ... ok
+test_first_response_is_a_real_read_request (test_trusted_slot_units.TrustedSlotUnits.test_first_response_is_a_real_read_request) ... ok
+test_framed_mock_receives_real_socket_message (test_trusted_slot_units.TrustedSlotUnits.test_framed_mock_receives_real_socket_message) ... ok
+test_malformed_native_stdout_cannot_become_success (test_trusted_slot_units.TrustedSlotUnits.test_malformed_native_stdout_cannot_become_success) ... ok
+test_nonfixing_is_a_real_wrong_edit_with_content_digest (test_trusted_slot_units.TrustedSlotUnits.test_nonfixing_is_a_real_wrong_edit_with_content_digest) ... ok
+test_overlap_rejects_both_directions_but_not_prefix_sibling (test_trusted_slot_units.TrustedSlotUnits.test_overlap_rejects_both_directions_but_not_prefix_sibling) ... ok
+test_short_cids_and_names_cannot_be_cleanup_handles (test_trusted_slot_units.TrustedSlotUnits.test_short_cids_and_names_cannot_be_cleanup_handles) ... ok
+test_snapshot_oracle_accepts_actual_native_bare_digest_only (test_trusted_slot_units.TrustedSlotUnits.test_snapshot_oracle_accepts_actual_native_bare_digest_only) ... ok
+test_terminal_edit_does_not_require_a_third_model_request (test_trusted_slot_units.TrustedSlotUnits.test_terminal_edit_does_not_require_a_third_model_request) ... ok
+test_verifier_aliases_require_exact_image_and_private_profile (test_trusted_slot_units.TrustedSlotUnits.test_verifier_aliases_require_exact_image_and_private_profile) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.176s
+
+OK

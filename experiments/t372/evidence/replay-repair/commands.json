@@ -1,0 +1,92 @@
+{
+  "version": {
+    "argv": [
+      "/usr/local/bin/docker",
+      "version",
+      "--format",
+      "{{json .}}"
+    ],
+    "returncode": 0
+  },
+  "context": {
+    "argv": [
+      "/usr/local/bin/docker",
+      "context",
+      "show"
+    ],
+    "returncode": 0
+  },
+  "images": {
+    "argv": [
+      "/usr/local/bin/docker",
+      "image",
+      "ls",
+      "--no-trunc",
+      "--digests",
+      "--format",
+      "{{json .}}"
+    ],
+    "returncode": 0
+  },
+  "by-id": {
+    "argv": [
+      "/usr/local/bin/docker",
+      "image",
+      "inspect",
+      "sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea"
+    ],
+    "returncode": 0
+  },
+  "by-tag": {
+    "argv": [
+      "/usr/local/bin/docker",
+      "image",
+      "inspect",
+      "python:3.12-slim"
+    ],
+    "returncode": 1
+  },
+  "by-digest": {
+    "argv": [
+      "/usr/local/bin/docker",
+      "image",
+      "inspect",
+      "python@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea"
+    ],
+    "returncode": 1
+  },
+  "by-tag-digest": {
+    "argv": [
+      "/usr/local/bin/docker",
+      "image",
+      "inspect",
+      "python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea"
+    ],
+    "returncode": 1
+  },
+  "by-canonical": {
+    "argv": [
+      "/usr/local/bin/docker",
+      "image",
+      "inspect",
+      "docker.io/library/python@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea"
+    ],
+    "returncode": 0
+  },
+  "containers-before": {
+    "argv": [
+      "/usr/local/bin/docker",
+      "ps",
+      "-a",
+      "--no-trunc",
+      "--format",
+      "{{json .}}"
+    ],
+    "returncode": 0
+  },
+  "docker_executable": {
+    "path": "/usr/local/bin/docker",
+    "resolved": "/Applications/Docker.app/Contents/Resources/bin/docker",
+    "sha256": "e757e1339818faa8544025e4154b91a549fc822ab229b177ed7378c6b661c5a5"
+  }
+}

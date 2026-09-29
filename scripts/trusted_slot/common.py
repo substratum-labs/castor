@@ -11,6 +11,8 @@ VERIFIER = (
     "python:3.12-slim@sha256:"
     "78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea"
 )
+# Runtime lookup is explicit; the historical protocol/receipt pin stays stable.
+VERIFIER_RUNTIME = "docker.io/library/" + VERIFIER
 
 
 def cid(value):
@@ -104,7 +106,7 @@ def child_profile(item, scratch, verifier_image):
             mount["Destination"] == "/candidate"
             and mount["Propagation"] == "rprivate"
             and item["Image"] == verifier_image
-            and config["Image"] == VERIFIER
+            and config["Image"] in (VERIFIER, VERIFIER_RUNTIME)
             and host["Memory"] == host["MemorySwap"] == 1073741824
             and host["NanoCpus"] == 2000000000
             and host["LogConfig"]["Type"] == "none"

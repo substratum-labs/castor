@@ -1,0 +1,69 @@
+
+running 22 tests
+test one_shot::project::engine::tests::staging_cleanup_does_not_remove_replaced_directory ... FAILED
+test one_shot::project::engine::tests::staging_uses_private_unpredictable_name_and_cleans_its_directory ... FAILED
+test one_shot::project::archive::tests::asset_directory_scan_checks_deadline_before_reading_names ... FAILED
+test one_shot::supervisor::pi_output_tests::assistant_error_after_tool_use_is_not_a_successful_task ... ok
+test one_shot::project::archive::tests::asset_collection_enforces_small_byte_member_and_depth_budgets ... FAILED
+test one_shot::supervisor::pi_output_tests::final_assistant_stop_is_required ... ok
+test one_shot::supervisor::pi_output_tests::one_settlement_cannot_hide_a_different_unsettled_attempt ... ok
+test one_shot::verifier::tests::incomplete_or_inconsistent_terminal_evidence_never_succeeds ... ok
+test one_shot::actuator::tests::second_rename_section_cannot_escape_single_file_scope ... ok
+test one_shot::verifier::tests::prestart_profile_rejects_missing_or_wrong_authority_fields ... ok
+test one_shot::project::archive::tests::nested_assets_cannot_spend_prelisted_sibling_entry_budget ... FAILED
+test one_shot::project::git::pinned_metadata_tests::metadata_read_stays_on_pinned_parent_after_path_replacement ... FAILED
+test sandbox::tests::profile_is_networkless_and_mounts_only_the_readonly_ipc_socket ... ok
+test sandbox::tests::profile_rejects_socket_under_a_storage_root ... ok
+test one_shot::project::git::invoke_tests::closed_stdin_returns_without_waiting_for_hung_child ... ok
+test one_shot::project::git::invoke_tests::oversized_stdout_returns_while_stderr_stays_open ... ok
+test one_shot::actuator::tests::nested_workspace_edit_changes_only_its_bound_target ... ok
+test one_shot::project::git::invoke_tests::child_exit_with_descendant_pipe_holder_is_bounded ... ok
+test one_shot::project::git::invoke_tests::child_closes_stdio_and_hangs_until_deadline ... ok
+test one_shot::project::git::invoke_tests::deadline_precedes_late_output_failure ... ok
+test one_shot::supervisor::pi_output_tests::product_task_verification_uses_isolated_docker ... ok
+test one_shot::verifier::tests::fake_docker_backend_rejects_prestart_and_terminal_faults ... ok
+
+failures:
+
+---- one_shot::project::engine::tests::staging_cleanup_does_not_remove_replaced_directory stdout ----
+
+thread 'one_shot::project::engine::tests::staging_cleanup_does_not_remove_replaced_directory' (30280011) panicked at src/one_shot/project/engine.rs:552:49:
+called `Result::unwrap()` on an `Err` value: Os { code: 20, kind: NotADirectory, message: "Not a directory" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- one_shot::project::engine::tests::staging_uses_private_unpredictable_name_and_cleans_its_directory stdout ----
+
+thread 'one_shot::project::engine::tests::staging_uses_private_unpredictable_name_and_cleans_its_directory' (30280012) panicked at src/one_shot/project/engine.rs:534:49:
+called `Result::unwrap()` on an `Err` value: Os { code: 20, kind: NotADirectory, message: "Not a directory" }
+
+---- one_shot::project::archive::tests::asset_directory_scan_checks_deadline_before_reading_names stdout ----
+
+thread 'one_shot::project::archive::tests::asset_directory_scan_checks_deadline_before_reading_names' (30280009) panicked at src/one_shot/project/archive.rs:416:46:
+called `Result::unwrap()` on an `Err` value: Os { code: 20, kind: NotADirectory, message: "Not a directory" }
+
+---- one_shot::project::archive::tests::asset_collection_enforces_small_byte_member_and_depth_budgets stdout ----
+
+thread 'one_shot::project::archive::tests::asset_collection_enforces_small_byte_member_and_depth_budgets' (30280008) panicked at src/one_shot/project/archive.rs:343:46:
+called `Result::unwrap()` on an `Err` value: Os { code: 20, kind: NotADirectory, message: "Not a directory" }
+
+---- one_shot::project::archive::tests::nested_assets_cannot_spend_prelisted_sibling_entry_budget stdout ----
+
+thread 'one_shot::project::archive::tests::nested_assets_cannot_spend_prelisted_sibling_entry_budget' (30280010) panicked at src/one_shot/project/archive.rs:428:46:
+called `Result::unwrap()` on an `Err` value: Os { code: 20, kind: NotADirectory, message: "Not a directory" }
+
+---- one_shot::project::git::pinned_metadata_tests::metadata_read_stays_on_pinned_parent_after_path_replacement stdout ----
+
+thread 'one_shot::project::git::pinned_metadata_tests::metadata_read_stays_on_pinned_parent_after_path_replacement' (30280023) panicked at src/one_shot/project/git.rs:298:47:
+called `Result::unwrap()` on an `Err` value: Os { code: 20, kind: NotADirectory, message: "Not a directory" }
+
+
+failures:
+    one_shot::project::archive::tests::asset_collection_enforces_small_byte_member_and_depth_budgets
+    one_shot::project::archive::tests::asset_directory_scan_checks_deadline_before_reading_names
+    one_shot::project::archive::tests::nested_assets_cannot_spend_prelisted_sibling_entry_budget
+    one_shot::project::engine::tests::staging_cleanup_does_not_remove_replaced_directory
+    one_shot::project::engine::tests::staging_uses_private_unpredictable_name_and_cleans_its_directory
+    one_shot::project::git::pinned_metadata_tests::metadata_read_stays_on_pinned_parent_after_path_replacement
+
+test result: FAILED. 16 passed; 6 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.57s
+

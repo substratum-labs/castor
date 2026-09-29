@@ -1,0 +1,4 @@
+   Compiling castor-kernel v0.1.0 (/Users/yong/projects/substratum/castor/.worktrees/t377-zero-model-replay/kernel)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.68s
+     Running unittests src/lib.rs (/private/tmp/t377-cargo-target/debug/deps/castor_kernel-13b2fe834be83d82)
+error: test failed, to rerun pass `--lib`

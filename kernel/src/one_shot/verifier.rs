@@ -11,8 +11,9 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-const IMAGE: &str =
-    "python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea";
+// Resolve the pinned image without relying on Engine short-name aliases.
+pub(crate) const IMAGE: &str =
+    "docker.io/library/python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea";
 const LOG_CAP: usize = 1_048_576;
 const COPY_AND_EXEC: &str = "cp -R /candidate/. /workspace/ && chmod -R u+rwX /workspace && cd /workspace && exec /usr/bin/env -i -- PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin HOME=/workspace LANG=C.UTF-8 \"$@\"";
 
@@ -735,7 +736,10 @@ mod tests {
         let script = format!(
             r##"#!/bin/sh
 case "$1" in
-  image) printf '%s\n' '{image_id}' ;;
+  image)
+    # This engine store only indexes the fully-qualified pinned reference.
+    test "$5" = 'docker.io/library/python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea' || exit 1
+    printf '%s\n' '{image_id}' ;;
   create)
     prev=''
     for arg in "$@"; do
@@ -837,5 +841,17 @@ esac
         );
         assert!(start_marker.exists());
         assert_eq!(failed_attach.reason, "VerifierUnavailable");
+        fs::remove_file(&attach_failed).unwrap();
+        fs::remove_file(&start_marker).unwrap();
+        let complete = IsolatedVerifier::run_with_docker(
+            &manifest,
+            &candidate,
+            &root.path().join("state-4"),
+            true,
+            backend.to_str().unwrap(),
+        );
+        assert_eq!(complete.reason, "NONE");
+        assert_eq!(complete.code, 0);
+        assert!(complete.evidence.container_removed);
     }
 }

@@ -485,7 +485,12 @@ pub fn run_project(project_path: &Path, spec_path: &Path) -> io::Result<PathBuf>
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".castor/state")))
             .ok_or_else(|| invalid("missing HOME or CASTOR_STATE_ROOT"))?;
         let pack_fd = create_root_dir(&state_root.join("pack"))?;
-        let verifier = image_id(VERIFIER_PIN, Instant::now() + Duration::from_secs(60))?;
+        // Keep the logical receipt/identity pin stable; resolve the same image
+        // through its fully-qualified runtime reference.
+        let verifier = image_id(
+            crate::one_shot::verifier::IMAGE,
+            Instant::now() + Duration::from_secs(60),
+        )?;
         if !verifier.starts_with("sha256:") {
             return Err(invalid("invalid verifier image"));
         }
