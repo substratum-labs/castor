@@ -675,3 +675,74 @@ fn mac_project_run_rejects_before_docker_or_model_access() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("requires Linux"));
     assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
 }
+
+#[test]
+fn local_model_entry_rejects_missing_project_before_starting_provider() {
+    let root = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_castor"))
+        .args(["run", "--project"])
+        .arg(root.path().join("missing-project"))
+        .arg("--task-spec")
+        .arg(root.path().join("missing-spec.json"))
+        .args(["--model", "local-ollama"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("project must be a directory"),
+        "unexpected error: {stderr}"
+    );
+    assert!(fs::read_dir(root.path()).unwrap().next().is_none());
+}
+
+#[test]
+fn pack_places_only_bounded_source_paths_in_agent_context_without_touching_snapshot() {
+    let root = tempfile::tempdir().unwrap();
+    fixture(root.path());
+    let source = root.path().join("source");
+    let original = fs::read(source.join("hello.txt")).unwrap();
+    let output = root.path().join("bundle");
+    let process = pack_with_fake_carrier(root.path(), &output);
+    assert!(
+        process.status.success(),
+        "{}",
+        String::from_utf8_lossy(&process.stderr)
+    );
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(output.join("manifest.json")).unwrap()).unwrap();
+    let prompt = manifest["task_prompt"].as_str().unwrap();
+    let encoded = prompt
+        .split("<castor-file-inventory>\n")
+        .nth(1)
+        .unwrap()
+        .split("\n</castor-file-inventory>")
+        .next()
+        .unwrap();
+    let inventory: serde_json::Value = serde_json::from_str(encoded).unwrap();
+    assert_eq!(inventory["paths"], json!(["hello.txt"]));
+    assert_eq!(inventory["omitted"], 0);
+    assert_eq!(fs::read(source.join("hello.txt")).unwrap(), original);
+}
+
+#[test]
+fn local_model_preflight_failure_is_one_clean_zero_call_result() {
+    let root = tempfile::tempdir().unwrap();
+    fixture(root.path());
+    fs::write(root.path().join("spec.json"), b"{}").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_castor"))
+        .args(["run", "--project"])
+        .arg(root.path().join("source"))
+        .arg("--task-spec")
+        .arg(root.path().join("spec.json"))
+        .args(["--model", "local-ollama", "--state-root"])
+        .arg(root.path().join("state"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["launcher_status"], "PREFLIGHT_FAILED");
+    assert_eq!(result["cleanup_status"], "CLEAN");
+    assert_eq!(result["model_calls"], 0);
+    assert!(result["controller_cid"].is_null());
+}

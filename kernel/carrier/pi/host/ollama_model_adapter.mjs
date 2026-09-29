@@ -25,6 +25,65 @@ export const OLLAMA_HOST = "127.0.0.1:11434";
 export const OLLAMA_PATH = "/api/chat";
 export const OLLAMA_ENDPOINT = `http://${OLLAMA_HOST}${OLLAMA_PATH}`;
 
+export async function readBoundedJson(response, cap = 2 * 1024 * 1024) {
+  if (response.body?.getReader) {
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > cap) {
+        await reader.cancel();
+        throw new Error("provider response exceeds cap");
+      }
+      chunks.push(value);
+    }
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  }
+  // Fetch mocks in older adapter tests expose only json().
+  const value = await response.json();
+  if (Buffer.byteLength(JSON.stringify(value)) > cap) throw new Error("provider response exceeds cap");
+  return value;
+}
+
+/** Read bounded loopback metadata without performing inference. */
+export async function readLocalModelPin(fetchFn = globalThis.fetch) {
+  async function read(path) {
+    const response = await fetchFn(`http://${OLLAMA_HOST}${path}`, {
+      method: "GET", redirect: "error", signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) throw new Error(`model metadata HTTP ${response.status}`);
+    if (response.body?.getReader) {
+      const reader = response.body.getReader();
+      let bytes = 0;
+      const chunks = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.length;
+        if (bytes > 1024 * 1024) { await reader.cancel(); throw new Error("model metadata exceeds cap"); }
+        chunks.push(value);
+      }
+      return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    }
+    const value = await response.json(); // mocked fetch response in unit tests
+    if (Buffer.byteLength(JSON.stringify(value)) > 1024 * 1024) throw new Error("model metadata exceeds cap");
+    return value;
+  }
+  const tags = await read("/api/tags");
+  const matches = Array.isArray(tags.models) ? tags.models.filter((m) => m.name === REQUIRED_MODEL) : [];
+  if (matches.length !== 1 || !/^[0-9a-f]{64}$/.test(matches[0].digest)) {
+    throw new Error("local model metadata missing or ambiguous");
+  }
+  const version = (await read("/api/version")).version;
+  if (typeof version !== "string" || !version || version.length > 64) {
+    throw new Error("invalid local model version metadata");
+  }
+  return { name: REQUIRED_MODEL, digest: matches[0].digest, version };
+}
+
 function sortedValue(value) {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -153,7 +212,18 @@ export function formatToolsForOllama(tools) {
   });
 }
 
-export function transformOllamaResponse(ollamaData, interactionId) {
+export function transformOllamaResponse(ollamaData, interactionId, { strict = false } = {}) {
+  if (strict) {
+    if (ollamaData?.model !== REQUIRED_MODEL) throw new Error("model identity mismatch");
+    if (ollamaData.done !== true) throw new Error("unfinished model response");
+    if (!Number.isSafeInteger(ollamaData.prompt_eval_count) ||
+        !Number.isSafeInteger(ollamaData.eval_count) ||
+        ollamaData.prompt_eval_count < 0 ||
+        ollamaData.eval_count < 0 ||
+        ollamaData.eval_count > MAX_TOKENS_LIMIT) {
+      throw new Error("model usage missing or outside output budget");
+    }
+  }
   const message = ollamaData.message || {};
   const contentBlocks = [];
 
@@ -226,6 +296,9 @@ export class OllamaModelAdapter {
     this.server = null;
     this.socketPath = null;
     this.callCount = 0;
+    this.strictPolicy = options.strictPolicy ?? false;
+    this.expectedDigest = options.expectedDigest ?? null;
+    this.pinChecker = options.pinChecker ?? readLocalModelPin;
 
     if (
       typeof this.maxInteractions !== "number" ||
@@ -367,6 +440,12 @@ export class OllamaModelAdapter {
     this.digests.set(interactionId, expectedDigest);
 
     const executeInference = async () => {
+      if (this.expectedDigest) {
+        const pin = await this.pinChecker();
+        if (pin.digest !== this.expectedDigest || pin.name !== this.model) {
+          throw new Error("local model digest changed before provider call");
+        }
+      }
       this.callCount++;
       // (d) Set redirect: "error" so a local Ollama response cannot redirect outside loopback
       const response = await this.fetchFn(this.ollamaEndpoint, {
@@ -374,15 +453,21 @@ export class OllamaModelAdapter {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(ollamaPayload),
         redirect: "error",
+        signal: AbortSignal.timeout(120_000),
       });
 
       if (!response.ok) {
-        const errText = await response.text().catch(() => "");
-        throw new Error(`Ollama API error: status ${response.status} ${response.statusText}: ${errText}`);
+        throw new Error(`Ollama API error: status ${response.status} ${response.statusText}`);
       }
 
-      const ollamaJson = await response.json();
-      const outerResponse = transformOllamaResponse(ollamaJson, interactionId);
+      const ollamaJson = await readBoundedJson(response);
+      if (this.expectedDigest) {
+        const pin = await this.pinChecker();
+        if (pin.digest !== this.expectedDigest || pin.name !== this.model) {
+          throw new Error("local model digest changed after provider call");
+        }
+      }
+      const outerResponse = transformOllamaResponse(ollamaJson, interactionId, { strict: this.strictPolicy });
       this.cache.set(interactionId, outerResponse);
       return outerResponse;
     };
@@ -490,7 +575,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(1);
   }
 
-  const adapter = new OllamaModelAdapter();
+  const adapter = new OllamaModelAdapter({
+    strictPolicy: process.env.CASTOR_LOCAL_DEVELOPER_MODE === "1",
+    expectedDigest: process.env.CASTOR_EXPECTED_MODEL_DIGEST || null,
+  });
   adapter
     .listen(socketPath)
     .then(() => {

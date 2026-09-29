@@ -11,7 +11,29 @@ uv build --no-sources packages/castor-client
 python -m pip install packages/castor-client/dist/castor_client-0.7.0a1-py3-none-any.whl
 ```
 
-`castor run agent.py` automatic source packaging and a Python-free default Agent belong to the later product milestone. Castor A uses an already prepared Roche guest image; the sample governed Python guest is in `tests/dogfood/ring3_agent.py`.
+`castor run agent.py` remains a later product milestone. The source-checkout one-shot entry below packages a clean Git project automatically and uses the bundled Pi carrier; it does not ask for an Agent image.
+
+## One-shot developer entry (source checkout)
+
+Build the Rust CLI from this checkout. Docker Desktop on macOS or a local Linux Docker Engine, Node.js 22 or newer, the pinned Pi carrier and verifier images, and local Ollama with `qwen3.5:9b` are required. This path does not run Python for management, model transport, Agent execution, or Core authority.
+
+```bash
+cargo build --locked --release --manifest-path kernel/Cargo.toml --bin castor
+./kernel/target/release/castor run \
+  --project /absolute/path/to/clean-git-project \
+  --task-spec /absolute/path/to/task-spec.json \
+  --model local-ollama
+```
+
+The task spec is JSON, for example:
+
+```json
+{"schema_version":1,"task_prompt":"Fix the failing test in mathutils.py","verification_command":["python3","-m","unittest","discover","-s","tests"]}
+```
+
+The verification command runs inside the isolated verifier, not on the host; its runtime must be present in that pinned verifier image. The CLI builds a trusted Linux controller image from this checkout (unchanged layers are cached), captures the installed local model digest, and creates a private state directory (default `~/.castor/state`; override with `--state-root PATH`). It prints one JSON result with the native task result, model-call count, cleanup status, and evidence directory. Exit 0 means task success and clean teardown; exit 1 means a completed task failure with clean teardown; exit 2 means preflight, launch, or cleanup uncertainty. Model calls are limited to three unique interactions and 512 output tokens each, with durable reservations before transport. There is no automatic task retry.
+
+The packed task context includes a JSON-escaped list of up to 128 included source paths and an omitted count, capped at 16 KiB. It excludes untracked, excluded and verifier-only files. The list is navigation data; existing read/edit permissions remain unchanged.
 
 ## Historical Python prototype
 

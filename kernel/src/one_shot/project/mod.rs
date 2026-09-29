@@ -1,6 +1,7 @@
 pub mod archive;
 pub mod engine;
 pub mod git;
+pub mod inventory;
 pub mod io;
 pub mod receipt;
 pub mod spec;
