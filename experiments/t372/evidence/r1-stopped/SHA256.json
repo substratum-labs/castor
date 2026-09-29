@@ -1,6 +1,7 @@
 {
   "GROK_SCOPE_A_R1.md": "bf983cf059771dea65c23f3b81b098376066a470c6fab1d5561c606281ae850e",
   "GROK_SCOPE_B_R1.md": "352b194f7ef49b3c8582bf2296c0665faade71145dabe877b552d5eb0de06ecc",
+  "STOP.json": "5f518b53583cdc859aa7614a551cd9cc47a79874fa67683292e1f9ea909bf396",
   "cleanup.json": "8b92cb5278a3b281a666fd09ad221940977117d983bde648525c68e4f8594ce6",
   "native-pack.stderr": "49c54c213b8a5a870518a1db6f3ea727c4312e85d7acb84575dce1ae04b05597",
   "preflight-controller.stderr": "39a9ddb823dd3c675d9cd5d3bdae030e49a1c28a85dfd1b375e7cd58d8a5f622",
