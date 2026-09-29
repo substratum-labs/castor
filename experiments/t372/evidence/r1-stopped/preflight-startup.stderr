@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/.worktrees/t372-bits-demo/experiments/t372/preflight_file_bridge.py", line 86, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/Users/yong/projects/substratum/castor/.worktrees/t372-bits-demo/experiments/t372/preflight_file_bridge.py", line 57, in main
+    raise RuntimeError("stub startup timeout")
+RuntimeError: stub startup timeout

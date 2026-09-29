@@ -1,5 +1,5 @@
 {
-  "status": "PREPARATION_ONLY_AWAITING_YONG_MODEL_BUDGET_SELECTION_AND_ROOT_RELEASE",
+  "status": "STOPPED_PREPARATION_NOT_ACCEPTED_NO_LIVE_RELEASE",
   "task_id": "task-t372-bits-r1",
   "upstream_repository": "https://github.com/mahmoud/boltons",
   "upstream_pr": "https://github.com/mahmoud/boltons/pull/450",
@@ -11,7 +11,7 @@
   "target_tree": "c20df619d8514b7b5c55af93bb3da7eab9251735",
   "source_sha256": "3d81dc8b44136299857373a8f53d50dbf0be7aabfa34e7bcfee7c6b41b3b3236",
   "tests_sha256": "9331906c1e944368f677e06731bda4fb114a50d8eb1df992fe87767e644ea94b",
-  "reference_source_sha256": "0aeac3312b66b3919ec93f35e9785c62f3d79bf6db82d60f3d30ae5",
+  "reference_source_sha256": "0aeac3312b66b3919ec93f35e9785c62f3d79bf6db82d60f3b5a3140b3d30ae5",
   "spec_sha256": "5286af03a4c75140822e642d39ff6e17c50348f44bd92cb550aa3b2b141022f3",
   "model": "qwen3.5:9b",
   "model_digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",

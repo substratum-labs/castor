@@ -15,8 +15,8 @@ def main():
     config = json.loads(Path("/state/launcher/controller-config.json").read_text())
     evidence = Path("/state/launcher")
     model = (
-        FileBridgeModel(os.environ["CASTOR_MODEL_SOCKET"], evidence)
-        if config.get("model_mode") == "ollama"
+        FileBridgeModel(os.environ["CASTOR_MODEL_SOCKET"], evidence, config.get("deadline_seconds", 300))
+        if config.get("model_mode") in ("ollama", "file_bridge_fixture")
         else MockModel(os.environ["CASTOR_MODEL_SOCKET"], config["mock_mode"], evidence)
     )
     try:

@@ -1,3 +1,5 @@
+> **STOPPED / NOT LIVE-READY:** Read [READINESS.md](READINESS.md). R1 preparation ended at the three-failure stop rule; no live inference occurred. The old launch examples below describe the initial candidate and are not a released demo. Current live gate additionally requires --source-manifest and --acceptance-file. No acceptance/release is supplied.
+
 # T-372 Bits preparation and review packet
 
 This is **preparation only**. No Ollama chat/generate call or registered live

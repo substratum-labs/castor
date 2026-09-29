@@ -34,6 +34,7 @@ class BridgeTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.exchange = HostExchange(self.root, deadline_seconds=30)
+        self.exchange.pin_checker = lambda: {"name": "qwen3.5:9b"}
         request = {
             "schema_version": 1,
             "interaction_id": "i-1",
@@ -73,6 +74,8 @@ class BridgeTests(unittest.TestCase):
     @staticmethod
     def good(*args, **kwargs):
         return {
+            "model": "qwen3.5:9b",
+            "done": True,
             "message": {
                 "content": "",
                 "tool_calls": [
@@ -398,6 +401,37 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(response["interaction_id"], "i-1")
             self.assertEqual(call.call_count, 1)
 
+    def test_background_exchange_does_not_block_watchdog_and_is_reaped(self):
+        self.submit()
+        with patch.object(
+            self.exchange,
+            "transport",
+            side_effect=lambda *_: (time.sleep(2), self.good())[1],
+        ):
+            self.exchange.start()
+            try:
+                deadline = time.monotonic() + 1
+                while (
+                    time.monotonic() < deadline
+                    and not json.loads((self.root / "budget.json").read_text())[
+                        "reservations"
+                    ]
+                ):
+                    time.sleep(0.01)
+                self.assertTrue(
+                    json.loads((self.root / "budget.json").read_text())["reservations"]
+                )
+                self.assertLess(time.monotonic(), deadline)
+            finally:
+                self.exchange.close()
+        self.assertFalse(self.exchange.worker.is_alive())
+        self.assertEqual(
+            json.loads((self.root / "budget.json").read_text())["reservations"][0][
+                "status"
+            ],
+            "FAILED",
+        )
+
     def test_live_parse_gate_requires_exact_frozen_input_budget_and_release(self):
         import run_trusted_slot
         from trusted_slot.real_model import MODEL_DIGEST
@@ -409,6 +443,12 @@ class BridgeTests(unittest.TestCase):
         tests = project / "tests/test_mathutils.py"
         source.write_text("historical source\n")
         tests.write_text("original tests\n")
+        wheels = project / "tests/t372_wheels"
+        wheels.mkdir()
+        (wheels / "pytest.whl").write_bytes(b"wheel fixture")
+        reference = self.root / "reference"
+        (reference / "boltons").mkdir(parents=True)
+        (reference / "boltons/mathutils.py").write_text("public repair\n")
         subprocess.run(["git", "init", "-q", str(project)], check=True)
         subprocess.run(["git", "-C", str(project), "add", "."], check=True)
         subprocess.run(
@@ -456,12 +496,44 @@ class BridgeTests(unittest.TestCase):
             "tests_sha256": hash_file(tests),
             "spec_sha256": hash_file(spec),
             "target_tree": tree,
+            "reference_source_sha256": hash_file(reference / "boltons/mathutils.py"),
+            "controller_image": run_trusted_slot.CONTROLLER,
+            "pi_image": run_trusted_slot.PI,
+            "verifier_image": "sha256:"
+            + run_trusted_slot.VERIFIER.rsplit("sha256:", 1)[1],
+            "wheel_sha256": {"pytest.whl": hash_file(wheels / "pytest.whl")},
+            "runtime_source_sha256": {},
             "native_binaries_sha256": {
                 name: hash_file(binary / name) for name in ("castor", "castord")
             },
         }
         protocol_file = self.root / "protocol.json"
         protocol_file.write_text(json.dumps(protocol))
+        manifest_file = self.root / "source-manifest.json"
+        manifest_file.write_text(
+            json.dumps(
+                {
+                    "reference": str(reference),
+                    "reference_source_sha256": hash_file(
+                        reference / "boltons/mathutils.py"
+                    ),
+                    "target_tree": tree,
+                    "source_sha256": hash_file(source),
+                    "original_regression_tests_sha256": hash_file(tests),
+                    "wheel_sha256": protocol["wheel_sha256"],
+                }
+            )
+        )
+        acceptance_file = self.root / "acceptance.json"
+        acceptance_file.write_text(
+            json.dumps(
+                {
+                    "accepted": True,
+                    "scopes": ["model_bridge", "live_gate"],
+                    "protocol_sha256": hash_file(protocol_file),
+                }
+            )
+        )
         state = self.root / "state"
         release = {
             "task_id": "task-t372-bits-r1",
@@ -501,17 +573,28 @@ class BridgeTests(unittest.TestCase):
             str(protocol_file),
             "--release-file",
             str(release_file),
+            "--source-manifest",
+            str(manifest_file),
+            "--acceptance-file",
+            str(acceptance_file),
             "--workload-timeout",
             "300",
             "--cleanup-timeout",
             "60",
         ]
-        with patch.object(sys, "argv", arguments):
+        reference_pin = hash_file(reference / "boltons/mathutils.py")
+        with (
+            patch.object(sys, "argv", arguments),
+            patch.object(run_trusted_slot, "RUNTIME_FILES", ()),
+            patch.object(run_trusted_slot, "REFERENCE_SHA256", reference_pin),
+        ):
             self.assertEqual(run_trusted_slot.parse_args().model_mode, "ollama")
         with (
             patch.object(
                 sys, "argv", arguments[:-3] + ["299", "--cleanup-timeout", "60"]
             ),
+            patch.object(run_trusted_slot, "RUNTIME_FILES", ()),
+            patch.object(run_trusted_slot, "REFERENCE_SHA256", reference_pin),
             self.assertRaises(SystemExit),
             contextlib.redirect_stderr(io.StringIO()),
         ):
@@ -519,6 +602,8 @@ class BridgeTests(unittest.TestCase):
         source.write_text("changed source\n")
         with (
             patch.object(sys, "argv", arguments),
+            patch.object(run_trusted_slot, "RUNTIME_FILES", ()),
+            patch.object(run_trusted_slot, "REFERENCE_SHA256", reference_pin),
             self.assertRaises(SystemExit),
             contextlib.redirect_stderr(io.StringIO()),
         ):

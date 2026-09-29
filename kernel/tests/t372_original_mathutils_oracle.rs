@@ -6,10 +6,9 @@ use serde_json::json;
 use std::path::Path;
 
 #[test]
+#[ignore = "physical oracle: invoke explicitly with T372_ORACLE_BASELINE, T372_ORACLE_REFERENCE and T372_ORACLE_STATE"]
 fn original_bits_regression_is_red_then_green_inside_isolated_verifier() {
-    let Ok(baseline) = std::env::var("T372_ORACLE_BASELINE") else {
-        return;
-    };
+    let baseline = std::env::var("T372_ORACLE_BASELINE").expect("baseline path");
     let reference = std::env::var("T372_ORACLE_REFERENCE").expect("reference path");
     let state = std::env::var("T372_ORACLE_STATE").expect("durable state path");
     let manifest: TaskManifest = serde_json::from_value(json!({

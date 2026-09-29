@@ -1,3 +1,21 @@
+# T-372 stopped preparation — demo not delivered
+
+Status: CHANGES_REQUESTED / stopped before live release. Yong accepted one local Qwen3.5:9b trial (<=3 calls, <=512 output tokens/call, 300s, no retries), but no live inference has occurred.
+
+The original protected pytest oracle and deterministic old-MockModel Pi fixture succeeded as recorded below. Physical Grok R1 returned REVISE for both model bridge and gate; those are archived in evidence/r1-stopped. The partial R1 correction is not independently accepted and must not be merged or released.
+
+Current corrected-source checks: 23 management/exchange unit tests and 2 safe-Git tests passed. Budget reset, response completion/model identity, unsupported content, bounded UDS error response and process deadline each have witnessed failing tests followed by passing tests. Prior source 0af4350 had CI7/7; that is NOT a CI claim for this changed source.
+
+Three zero-model preparation attempts did not establish the new full bridge: (1) HTTP stub startup blocked on reverse DNS; (2) the controller could not pack a Git worktree whose gitdir was outside its /project mount; (3) standalone clone returned128, so the dependent pack check had no input directory. Third failure triggers the project stop rule. No registered live attempt, provider POST, or trial success is claimed. The R2 controller/HTTP worker and stub were removed; cleanup reported CLEAN. Failed raw records remain in scoped host evidence and bounded excerpts under evidence/r1-stopped.
+
+Remaining work after human reset: capture exact clone stderr and fix the self-contained input producer; run the actual Pi/FileBridge/HTTP-stub/protected-verifier preflight; finish input/runtime protocol hashes and independent R2 acceptance; then release exactly the authorized live trial and independently audit it. The live gate requires a separate acceptance receipt; no accepted receipt or released live token is supplied.
+
+Verified reviewer qualifications: Git aliases do not replace builtins; git status is unnecessary for our raw HEAD/index/filesystem comparison. The shared JSON writer already uses atomic rename and file/directory fsync. The bridge state mount is available only to the trusted controller, not Pi/verifier. Original first-system section mapping follows the existing Pi adapter; unsupported block types now fail rather than disappear. Reused native binaries are byte-pinned and core/carrier source unchanged; this is not cryptographic build attestation. A provider response has no weight digest field: real mode checks tags/version before and after and response model name/done, assuming the operator-controlled local provider is not adversarially retagged mid-call.
+
+---
+
+Historical initial preparation packet (superseded status, evidence retained):
+
 # T-372 preparation status for independent review
 
 **Status: source implementation and zero-model preflight ready for review; live
