@@ -1,0 +1,17 @@
+{
+  "task_id": "task-t372-bits-r2",
+  "model_digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+  "target_tree": "c20df619d8514b7b5c55af93bb3da7eab9251735",
+  "spec_sha256": "cb6834c5a88d99c3c236b12e00510d6f0160eae1f33c086ae1e77ba24618ff73",
+  "workload_timeout_seconds": 300,
+  "cleanup_timeout_seconds": 60,
+  "max_unique_http_calls": 3,
+  "max_output_tokens_per_call": 512,
+  "protocol_sha256": "fe447a4c88f250f2b1e2c1b006cf1b89776e45febe0a285a056a935bb9bb2bc9",
+  "state_root": "/private/tmp/t372-bits-live-r2",
+  "budget_approved": true,
+  "root_released": true,
+  "single_trial": true,
+  "automatic_retry": false,
+  "released_unix_ns": 1790695178984180000
+}

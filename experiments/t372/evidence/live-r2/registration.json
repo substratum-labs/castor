@@ -1,0 +1,8 @@
+{
+  "status": "REGISTERED_RELEASED_NOT_YET_EXECUTED",
+  "task_id": "task-t372-bits-r2",
+  "protocol_sha256": "fe447a4c88f250f2b1e2c1b006cf1b89776e45febe0a285a056a935bb9bb2bc9",
+  "trial_count": 1,
+  "inference_posts_at_registration": 0,
+  "automatic_retry": false
+}
