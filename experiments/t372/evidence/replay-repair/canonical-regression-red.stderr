@@ -1,0 +1,8 @@
+   Compiling castor-kernel v0.1.0 (/Users/yong/projects/substratum/castor/.worktrees/t377-zero-model-replay/kernel)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.28s
+     Running unittests src/lib.rs (/private/tmp/t377-cargo-target/debug/deps/castor_kernel-13b2fe834be83d82)
+
+thread 'one_shot::verifier::tests::fake_docker_backend_rejects_prestart_and_terminal_faults' (30261088) panicked at src/one_shot/verifier.rs:805:9:
+fake backend did not reach the terminal fault
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `--lib`

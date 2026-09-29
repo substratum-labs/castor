@@ -1,3 +1,12 @@
+# Current: T-372 merged; fresh zero-model replay repaired by T-377
+
+The archived real r2 success stands. The [current replay command](DEMO_WALKTHROUGH.md)
+rebuilds its actual patch with baseline 1 failed/11 passed and candidate 12 passed;
+both verifiers removed, zero provider calls. See [repair evidence](REPLAY_REPAIR.md).
+The records below retain their historical status and are not current gates.
+
+---
+
 # Current: r2 real-model repair succeeded, accepted physical outcome audit; Yong review pending
 
 See [r2 report](LIVE_TRIAL_R2_REPORT.md). Two actual calls, 12 protected and

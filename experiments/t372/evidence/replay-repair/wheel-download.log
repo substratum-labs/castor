@@ -1,0 +1,17 @@
+Collecting pytest==8.3.5
+  Using cached pytest-8.3.5-py3-none-any.whl.metadata (7.6 kB)
+Collecting iniconfig==2.0.0
+  Using cached iniconfig-2.0.0-py3-none-any.whl.metadata (2.6 kB)
+Collecting packaging==24.2
+  Using cached packaging-24.2-py3-none-any.whl.metadata (3.2 kB)
+Collecting pluggy==1.5.0
+  Using cached pluggy-1.5.0-py3-none-any.whl.metadata (4.8 kB)
+Using cached pytest-8.3.5-py3-none-any.whl (343 kB)
+Using cached iniconfig-2.0.0-py3-none-any.whl (5.9 kB)
+Using cached packaging-24.2-py3-none-any.whl (65 kB)
+Using cached pluggy-1.5.0-py3-none-any.whl (20 kB)
+Saved /private/tmp/castor-t372-replay.SzLu0i/wheels/pytest-8.3.5-py3-none-any.whl
+Saved /private/tmp/castor-t372-replay.SzLu0i/wheels/iniconfig-2.0.0-py3-none-any.whl
+Saved /private/tmp/castor-t372-replay.SzLu0i/wheels/packaging-24.2-py3-none-any.whl
+Saved /private/tmp/castor-t372-replay.SzLu0i/wheels/pluggy-1.5.0-py3-none-any.whl
+Successfully downloaded pytest iniconfig packaging pluggy

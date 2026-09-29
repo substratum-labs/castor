@@ -1,0 +1,7 @@
+Using CPython 3.12.13
+Creating virtual environment at: .venv
+   Building castor-kernel @ file:///Users/yong/projects/substratum/castor/.worktrees/t377-zero-model-replay
+   Building castor-client @ file:///Users/yong/projects/substratum/castor/.worktrees/t377-zero-model-replay/packages/castor-client
+      Built castor-client @ file:///Users/yong/projects/substratum/castor/.worktrees/t377-zero-model-replay/packages/castor-client
+      Built castor-kernel @ file:///Users/yong/projects/substratum/castor/.worktrees/t377-zero-model-replay
+Installed 161 packages in 296ms

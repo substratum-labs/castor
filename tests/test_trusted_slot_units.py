@@ -25,6 +25,66 @@ class TrustedSlotUnits(unittest.TestCase):
         self.common = importlib.import_module("trusted_slot.common")
         self.mock = importlib.import_module("trusted_slot.mock_model")
 
+    def test_verifier_aliases_require_exact_image_and_private_profile(self):
+        legacy = self.common.VERIFIER
+        canonical = "docker.io/library/" + legacy
+        image_id = "sha256:" + "a" * 64
+        item = {
+            "Image": image_id,
+            "Name": "/castor-verifier-owned",
+            "Config": {
+                "Image": legacy,
+                "User": "10001:10001",
+                "WorkingDir": "/workspace",
+                "Entrypoint": None,
+                "Labels": {"castor.verifier.owner": "owned"},
+                "Cmd": ["/bin/sh", "-c", "true", "castor-verifier"],
+            },
+            "Mounts": [
+                {
+                    "Type": "bind",
+                    "Source": "/run/owned/candidate",
+                    "Destination": "/candidate",
+                    "RW": False,
+                    "Propagation": "rprivate",
+                }
+            ],
+            "HostConfig": {
+                "NetworkMode": "none",
+                "ReadonlyRootfs": True,
+                "Privileged": False,
+                "CapDrop": ["ALL"],
+                "CapAdd": None,
+                "PidsLimit": 256,
+                "SecurityOpt": ["no-new-privileges"],
+                "Memory": 1073741824,
+                "MemorySwap": 1073741824,
+                "NanoCpus": 2000000000,
+                "LogConfig": {"Type": "none"},
+                "IpcMode": "private",
+                "PidMode": "",
+                "Tmpfs": {"/workspace": "x", "/root": "x", "/dev/shm": "x"},
+            },
+        }
+        for reference in (legacy, canonical):
+            item["Config"]["Image"] = reference
+            with self.subTest(reference=reference):
+                self.assertEqual(
+                    self.common.child_profile(item, "/run/owned", image_id), "verifier"
+                )
+        for reference in (
+            "example.invalid/library/" + legacy,
+            canonical + "0",
+            "python:latest",
+        ):
+            item["Config"]["Image"] = reference
+            self.assertIsNone(self.common.child_profile(item, "/run/owned", image_id))
+        item["Config"]["Image"] = canonical
+        self.assertIsNone(self.common.child_profile(item, "/run/other", image_id))
+        self.assertIsNone(
+            self.common.child_profile(item, "/run/owned", "sha256:" + "b" * 64)
+        )
+
     def test_overlap_rejects_both_directions_but_not_prefix_sibling(self):
         for path in ("/var/lib/docker", "/var/lib/docker/sub", "/var/lib", "/"):
             self.assertTrue(self.common.overlap(path, "/var/lib/docker"))

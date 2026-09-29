@@ -1,0 +1,20 @@
+{
+  "kernel": {
+    "passed": 309,
+    "failed": 0,
+    "ignored": 6
+  },
+  "python": {
+    "passed": 44,
+    "subtests_passed": 17
+  },
+  "clippy": "PASS",
+  "cargo_fmt": "PASS",
+  "baseline_unit_tests": 3,
+  "native_canonical_regression": "RED then GREEN",
+  "management_alias_regression": "RED then GREEN",
+  "replay_root": "/private/tmp/castor-t372-replay.SzLu0i",
+  "provider_calls": 0,
+  "r1_budget_sha256_unchanged": "8587ce7b63327bee3692669cea5c6a421e7657121bfad65241d0a6c6a9352a17",
+  "r2_budget_sha256_unchanged": "ce384055c7f6ebfc6f45deac7e3a41f1ab361ee8b2a025682ceabdd09d6fdd96"
+}

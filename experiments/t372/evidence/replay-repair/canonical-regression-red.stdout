@@ -1,0 +1,11 @@
+
+running 1 test
+test one_shot::verifier::tests::fake_docker_backend_rejects_prestart_and_terminal_faults ... FAILED
+
+failures:
+
+failures:
+    one_shot::verifier::tests::fake_docker_backend_rejects_prestart_and_terminal_faults
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.15s
+

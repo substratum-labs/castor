@@ -53,7 +53,11 @@ Linux `castor`/`castord` binaries, and these already-local immutable images:
 - Controller: `sha256:39fad3ec792c6d55d6049f010520ebdc662c92c9eb8f6b74872b7842e073ba80`.
 - Pi tag `substratum/castor-pi-carrier:v1` must resolve to
   `sha256:b4f363b3436653157b87428ec6d4936b9efa26c184a77d346345071d02edddb7`.
-- Native verifier: `python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea`.
+- Native verifier runtime lookup: `docker.io/library/python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea`.
+
+The historical logical verifier pin in task receipts stays unchanged. Runtime
+lookup uses its fully-qualified spelling; cleanup accepts either exact spelling
+only with matching image ID and the existing private container profile.
 
 Management creates use `--pull=never`; the native product derives its ordinary
 fixture image from the local Pi base. This launcher does not rebuild/change the
