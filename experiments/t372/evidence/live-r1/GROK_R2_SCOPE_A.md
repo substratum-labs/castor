@@ -1,0 +1,18 @@
+ACCEPT
+
+Scope A matches the approved single-demo contract. `HostExchange` creates `budget.json` with `open("x")` and fsyncs the file and directory, so any existing ledger fails closed. Each new `interaction_id` is appended and fsynced as `RESERVED` before the single POST. The same id is replayed only when the raw request digest matches and status is `COMPLETED`; a changed or incomplete duplicate raises and does not open another POST. HTTP errors, malformed 200 bodies, missing usage, `eval_count` > 512, pin failure, and a late return mark that row `FAILED` and still consume the slot. `provider_calls` is not the cap; `len(reservations)` is, and `MAX_CALLS` is 3.
+
+The exchange runs in a forked worker. The parent watchdog only calls non-blocking `is_alive()`. At the workload cap the parent stops, terminates, and reaps that worker, then rewrites leftover `RESERVED` rows to `FAILED`. `FileBridgeModel` has its own timer, shuts a socket that is still inside `read_frame`, and returns a length-prefixed `{"error": ...}` frame. `model_request` hard-codes `qwen3.5:9b`, `think: false`, temperature 0.2, seed 17, `num_ctx` 32768, and `num_predict` ≤ 512. Non-string/list content and disallowed blocks raise before transport. First-system sections, later section updates/removals, and `toolResult`/`tool` ids and names are carried into the Ollama payload.
+
+The clone-repair run is the new full-path loopback HTTP preflight: 2 stub POSTs, 0 provider calls, native exit 0, verifier 12 passes, `CLEAN` cleanup, on task `task-t372-bits-bridge-pinned`. Live identity remains `task-t372-bits-r1` at `/private/tmp/t372-bits-live-r1`. No critical or important blockers in this scope.
+
+Nonblocking limitations:
+- Trusted operator Ollama and a trusted controller/host are assumed. `/api/tags` digest, `/api/version`, and response `model`/`done` are observable metadata around one POST. Weight identity is the protocol’s stated gap. The 512 cap uses server-reported `eval_count`; the bridge does not retokenize `message.content`. The stub preflight shows the HTTP path, and a stub can satisfy those metadata checks.
+- `http-request-*.raw` is re-serialized with default `ensure_ascii=True`. The POST uses `ensure_ascii=False`. Response `.raw` is the socket body. This task’s Python source is ASCII, so those request bytes should match.
+- The UDS timer starts at controller process start, using `deadline_seconds` captured before container start, so it can sit past the host work deadline by startup delay. Provider POSTs are bounded by the host exchange deadline. Pin GETs use a fixed 5s timeout, and the POST timeout reuses `remaining` sampled before those GETs. A body that is ready only after `self.deadline` is refused, and the parent kills the worker at that deadline.
+- `close()` sets `closed` before reap and ledger repair. If reap throws, a later `close()` returns immediately and leaves `RESERVED` unchanged. The code escalates terminate then kill; the miss matters only if the worker survives kill.
+- Sections on non-system roles are shape-checked and then omitted. System-section and tool-result behavior is explicit; the 23 bridge/recovery tests passed.
+- A pin failure after the durable reservation consumes one of the three slots. Metadata GETs are not themselves inference calls. There is no bridge retry and no ledger resume. The stub settling in two calls does not show that live `qwen3.5:9b` will finish inside three.
+- Retained ELF and image digests are byte pins, not build attestation, as the frozen protocol says. The journal CRC audit is not semantic replay.
+
+This ACCEPT does not write a receipt and does not release a live attempt.

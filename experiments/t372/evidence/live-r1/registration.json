@@ -1,0 +1,10 @@
+{
+  "status": "REGISTERED_RELEASED_NOT_YET_EXECUTED",
+  "trial_count": 1,
+  "task_id": "task-t372-bits-r1",
+  "state_root": "/private/tmp/t372-bits-live-r1",
+  "protocol_sha256": "5c421d71ce311d6b38d631130dd9a1077da8eb0ab04171b7e5f225c7f538a7db",
+  "argv_sha256": "7647b164ab823b134a8573760fc35d8be157a9be668bba76d81c2063a9d89bf6",
+  "provider_calls_at_registration": 0,
+  "automatic_retry": false
+}

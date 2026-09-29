@@ -1,0 +1,60 @@
+{
+  "baseline": {
+    "code": 1,
+    "evidence": {
+      "captured_logs": {
+        "stderr_bytes": 0,
+        "stderr_truncated": false,
+        "stdout_bytes": 1421,
+        "stdout_truncated": false
+      },
+      "container_removed": true,
+      "deadline_ms": 60000,
+      "inspect_ms": 127,
+      "inspected_profile": {
+        "candidate_source": "/private/tmp/t372-live-input-r1/target",
+        "image_id": "sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea",
+        "log_driver": "none",
+        "memory_bytes": 1073741824,
+        "memory_swap_bytes": 1073741824,
+        "nano_cpus": 2000000000,
+        "pids_limit": 256
+      },
+      "setup_ms": 177,
+      "teardown_ms": 46,
+      "terminal_exit_code": 1,
+      "terminal_oom_killed": false,
+      "terminal_running": false
+    },
+    "reason": "TEST_VERIFICATION_FAILED"
+  },
+  "reference": {
+    "code": 0,
+    "evidence": {
+      "captured_logs": {
+        "stderr_bytes": 0,
+        "stderr_truncated": false,
+        "stdout_bytes": 496,
+        "stdout_truncated": false
+      },
+      "container_removed": true,
+      "deadline_ms": 60000,
+      "inspect_ms": 113,
+      "inspected_profile": {
+        "candidate_source": "/private/tmp/t372-live-input-r1/reference",
+        "image_id": "sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea",
+        "log_driver": "none",
+        "memory_bytes": 1073741824,
+        "memory_swap_bytes": 1073741824,
+        "nano_cpus": 2000000000,
+        "pids_limit": 256
+      },
+      "setup_ms": 114,
+      "teardown_ms": 45,
+      "terminal_exit_code": 0,
+      "terminal_oom_killed": false,
+      "terminal_running": false
+    },
+    "reason": "NONE"
+  }
+}
