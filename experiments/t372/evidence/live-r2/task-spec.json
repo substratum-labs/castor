@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "task_prompt": "Repair Boltons Bits negative integer indexing so it follows Python sequence behavior.\nRepository-relative implementation path: boltons/mathutils.py.\nOriginal regression tests: tests/test_mathutils.py.\nUse castor_read_file with those exact relative file paths; it reads regular files, not directories. Do not guess filenames or use absolute /workspace paths.\nInspect the implementation and original tests, then submit the smallest correct source-only change through castor_edit_file. This is one terminal edit candidate; Castor runs protected verification after the agent session ends. Keep tests, verifier script and dependency wheels unchanged.",
+  "verification_command": [
+    "sh",
+    "tests/t372_verify_original_mathutils.sh"
+  ],
+  "verification_timeout_seconds": 60,
+  "task_id": "task-t372-bits-r2",
+  "idempotency_key": "task-t372-bits-r2"
+}

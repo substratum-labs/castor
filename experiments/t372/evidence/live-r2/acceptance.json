@@ -1,0 +1,11 @@
+{
+  "accepted": true,
+  "scopes": [
+    "model_bridge",
+    "live_gate"
+  ],
+  "protocol_sha256": "fe447a4c88f250f2b1e2c1b006cf1b89776e45febe0a285a056a935bb9bb2bc9",
+  "reviewer": "Actual physical Grok focused delta review atop prior full bridge/gate ACCEPT",
+  "review_sha256": "b88ad91af7503c5081f582912e72293480a556924da9c4c268568b38bde3f6b3",
+  "review_source_commit": "e196b1c2c84b9bc200cb59f28102fd95b83f6705"
+}

@@ -1,0 +1,6 @@
+{
+  "transport": "REAL_LOOPBACK_HTTP_TO_TEST_STUB",
+  "provider_calls": 0,
+  "stub_posts": 2,
+  "native_exit": 0
+}

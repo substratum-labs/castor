@@ -1,0 +1,18 @@
+{
+  "GROK_PACKAGING_CLARIFICATION.md": "441194a72747abc89b2d5ccc9976e5aaf78c79c7afee4a29805679bc5ef3ce99",
+  "GROK_PACKAGING_R1.md": "d02bbb0259a7507da3f69fcd84f07c8842c1a76e1924e1e0e0f209a47b0de876",
+  "audit.json": "66d1c8a7ce9eaa383a5e5665fc5157abb48718683f56a04414696bfaabea7207",
+  "bridge-unit-tests.txt": "1e9556797186b01482a6a09ec83294683198b4552d4678a27946d0e714412188",
+  "budget.json": "6094fdbf6d621f37b41ba8384028e4f1ad24af3e957226e0704c1ac8d6b674cc",
+  "cleanup.json": "8b92cb5278a3b281a666fd09ad221940977117d983bde648525c68e4f8594ce6",
+  "clone-reproduction.stderr": "3eb628c690e9692b9724c74cee354b6a506f4976b137374c865c632fea1c961a",
+  "git-tests.txt": "17fe163e95c457698a997b5d42f3765328a8eedb529782b973c7dc17096bf32b",
+  "http-stub-summary.json": "df8af917920e68d4c9cc64d2ebd713556e4b693e62045e505b18d1fbb8970ff2",
+  "https-source-manifest.json": "c0012a625639651069bf98ec03039b445f04633b85ab9093f0b340d3dab57515",
+  "pack-receipt.json": "6fc1f5b19cff9bfba29674a7f4d5a2e374ec5e8f4f43b38e10c73e29fd80634b",
+  "review-counterprobe.json": "645e7c00c178dcf298bd14b349e3775d1e63d1e0729a12bafb231ad267ac897b",
+  "root-cause.json": "30a924b5b18f5099bcdd084b29b525880ddf3995477a54880ca8a126bd2936df",
+  "source-manifest.json": "eac2c8e42aab971f497d4604d07444e12378fa4472b99fe1578cd5e9871d04c6",
+  "task-result.json": "408cc1bd9afb20f18f41290117f2f78c20b295514c6b401f17837d0e02ff0cae",
+  "verifier_stdout.log": "be97ffe946c285996b52b5549fc6f9d27bbd5cecc75ee0e59c4fdadb48ca746f"
+}

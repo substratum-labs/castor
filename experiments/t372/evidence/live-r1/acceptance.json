@@ -1,0 +1,23 @@
+{
+  "accepted": true,
+  "scopes": [
+    "model_bridge",
+    "live_gate"
+  ],
+  "protocol_sha256": "5c421d71ce311d6b38d631130dd9a1077da8eb0ab04171b7e5f225c7f538a7db",
+  "reviewer": "Actual physical Grok CLI, two independent scopes",
+  "reviews": {
+    "model_bridge": {
+      "source_commit": "8e3596e547448dd7b090190989c29cc2b67dd382",
+      "verdict": "ACCEPT",
+      "physical_process_exit": 0,
+      "review_sha256": "1ee31b01320e513e39872aa198a893ac175cb70d5a4614155145d1e76a686eba"
+    },
+    "live_gate": {
+      "source_commit": "8e3596e547448dd7b090190989c29cc2b67dd382",
+      "verdict": "ACCEPT",
+      "physical_process_exit": 0,
+      "review_sha256": "0b7d0a18297c110ddc3705bc98cafd4767dc6802541f154d49c75e41e90f00a4"
+    }
+  }
+}

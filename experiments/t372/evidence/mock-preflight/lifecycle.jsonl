@@ -1,0 +1,8 @@
+{"cid": "33c76e0b790996b49e9cc0ef2805b80545354af076152110e09eb661bef7d27e", "event": "create", "elapsed_seconds": 1.9263960829703137}
+{"cid": "33c76e0b790996b49e9cc0ef2805b80545354af076152110e09eb661bef7d27e", "event": "start", "elapsed_seconds": 2.0174679580377415}
+{"cid": "c3f7440093cca8c4284a72b2e8f766f4ead1d210501eecc729e1086179a93e5c", "event": "observe_running", "elapsed_seconds": 4.8187090420397}
+{"cid": "0f2f8f5b1d65d03e25b37874bc49c14eabc63f69ffc054512b0ba0e9ea956600", "event": "observe_running", "elapsed_seconds": 5.768742042011581}
+{"cid": "33c76e0b790996b49e9cc0ef2805b80545354af076152110e09eb661bef7d27e", "event": "wait", "elapsed_seconds": 7.477222957997583}
+{"cid": "33c76e0b790996b49e9cc0ef2805b80545354af076152110e09eb661bef7d27e", "event": "inspect", "elapsed_seconds": 7.493098292034119}
+{"cid": "33c76e0b790996b49e9cc0ef2805b80545354af076152110e09eb661bef7d27e", "event": "archive", "elapsed_seconds": 7.510027375072241}
+{"cid": "33c76e0b790996b49e9cc0ef2805b80545354af076152110e09eb661bef7d27e", "event": "remove", "elapsed_seconds": 7.630854167044163}

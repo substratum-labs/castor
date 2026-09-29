@@ -1,0 +1,4 @@
+     Locking 117 packages to latest compatible versions
+   Compiling castor-kernel v0.1.0 (/Users/yong/projects/substratum/castor/.worktrees/t372-bits-demo/kernel)
+   Compiling t372-independent-oracle v0.1.0 (/private/tmp/t372-independent-oracle)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.15s

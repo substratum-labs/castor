@@ -1,0 +1,232 @@
+{
+  "1b379a416c32e18f020bd4819bdfa00a316e082e8abbb80730131c5d84df3afc": {
+    "kind": "pi",
+    "inspect": {
+      "Id": "1b379a416c32e18f020bd4819bdfa00a316e082e8abbb80730131c5d84df3afc",
+      "Created": "2026-09-29T07:59:18.923342669Z",
+      "Path": "docker-entrypoint.sh",
+      "Args": [
+        "sh",
+        "-c",
+        "cd /workspace && exec pi --extension /opt/castor/castor-pi-extension.js --no-extensions --no-builtin-tools --no-session --offline --no-context-files --no-skills --no-prompt-templates --no-themes --model castor/castor-task --mode json --print \"$CASTOR_TASK_PROMPT\" </dev/null"
+      ],
+      "State": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 1135,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-09-29T07:59:18.957886627Z",
+        "FinishedAt": "0001-01-01T00:00:00Z"
+      },
+      "Image": "sha256:264fb4d79074edbcf2ff8464eb71f9712aee0c823f0ef1e6012e7c7f38cf6238",
+      "ResolvConfPath": "/var/lib/docker/containers/1b379a416c32e18f020bd4819bdfa00a316e082e8abbb80730131c5d84df3afc/resolv.conf",
+      "HostnamePath": "/var/lib/docker/containers/1b379a416c32e18f020bd4819bdfa00a316e082e8abbb80730131c5d84df3afc/hostname",
+      "HostsPath": "/var/lib/docker/containers/1b379a416c32e18f020bd4819bdfa00a316e082e8abbb80730131c5d84df3afc/hosts",
+      "LogPath": "/var/lib/docker/containers/1b379a416c32e18f020bd4819bdfa00a316e082e8abbb80730131c5d84df3afc/1b379a416c32e18f020bd4819bdfa00a316e082e8abbb80730131c5d84df3afc-json.log",
+      "Name": "/agitated_meitner",
+      "RestartCount": 0,
+      "Driver": "overlayfs",
+      "Platform": "linux",
+      "MountLabel": "",
+      "ProcessLabel": "",
+      "AppArmorProfile": "",
+      "ExecIDs": null,
+      "HostConfig": {
+        "Binds": null,
+        "ContainerIDFile": "",
+        "LogConfig": {
+          "Type": "json-file",
+          "Config": {}
+        },
+        "NetworkMode": "none",
+        "PortBindings": {},
+        "RestartPolicy": {
+          "Name": "no",
+          "MaximumRetryCount": 0
+        },
+        "AutoRemove": false,
+        "VolumeDriver": "",
+        "VolumesFrom": null,
+        "ConsoleSize": [
+          0,
+          0
+        ],
+        "CapAdd": null,
+        "CapDrop": [
+          "ALL"
+        ],
+        "CgroupnsMode": "private",
+        "Dns": null,
+        "DnsOptions": [],
+        "DnsSearch": [],
+        "ExtraHosts": null,
+        "GroupAdd": null,
+        "IpcMode": "private",
+        "Cgroup": "",
+        "Links": null,
+        "OomScoreAdj": 0,
+        "PidMode": "",
+        "Privileged": false,
+        "PublishAllPorts": false,
+        "ReadonlyRootfs": true,
+        "SecurityOpt": [
+          "no-new-privileges"
+        ],
+        "Tmpfs": {
+          "/tmp": "rw,nosuid,nodev,size=64m,mode=1777"
+        },
+        "UTSMode": "",
+        "UsernsMode": "",
+        "ShmSize": 67108864,
+        "Runtime": "runc",
+        "Isolation": "",
+        "CpuShares": 0,
+        "Memory": 536870912,
+        "NanoCpus": 1000000000,
+        "CgroupParent": "",
+        "BlkioWeight": 0,
+        "BlkioWeightDevice": [],
+        "BlkioDeviceReadBps": [],
+        "BlkioDeviceWriteBps": [],
+        "BlkioDeviceReadIOps": [],
+        "BlkioDeviceWriteIOps": [],
+        "CpuPeriod": 0,
+        "CpuQuota": 0,
+        "CpuRealtimePeriod": 0,
+        "CpuRealtimeRuntime": 0,
+        "CpusetCpus": "",
+        "CpusetMems": "",
+        "Devices": [],
+        "DeviceCgroupRules": null,
+        "DeviceRequests": null,
+        "MemoryReservation": 0,
+        "MemorySwap": 1073741824,
+        "MemorySwappiness": null,
+        "OomKillDisable": null,
+        "PidsLimit": 256,
+        "Ulimits": null,
+        "CpuCount": 0,
+        "CpuPercent": 0,
+        "IOMaximumIOps": 0,
+        "IOMaximumBandwidth": 0,
+        "Mounts": [
+          {
+            "Type": "bind",
+            "Source": "/run/c-83553b0d7d89/castor-pi-gateway-eTME2Z/ipc.sock",
+            "Target": "/run/castor/ipc.sock",
+            "ReadOnly": true
+          }
+        ],
+        "MaskedPaths": [
+          "/proc/acpi",
+          "/proc/asound",
+          "/proc/interrupts",
+          "/proc/kcore",
+          "/proc/keys",
+          "/proc/latency_stats",
+          "/proc/sched_debug",
+          "/proc/scsi",
+          "/proc/timer_list",
+          "/proc/timer_stats",
+          "/sys/devices/virtual/powercap",
+          "/sys/firmware"
+        ],
+        "ReadonlyPaths": [
+          "/proc/bus",
+          "/proc/fs",
+          "/proc/irq",
+          "/proc/sys",
+          "/proc/sysrq-trigger"
+        ]
+      },
+      "Storage": {
+        "RootFS": {
+          "Snapshot": {
+            "Name": "overlayfs"
+          }
+        }
+      },
+      "Mounts": [
+        {
+          "Type": "bind",
+          "Source": "/run/c-83553b0d7d89/castor-pi-gateway-eTME2Z/ipc.sock",
+          "Destination": "/run/castor/ipc.sock",
+          "Mode": "",
+          "RW": false,
+          "Propagation": "rprivate"
+        }
+      ],
+      "Config": {
+        "Hostname": "1b379a416c32",
+        "Domainname": "",
+        "User": "10001:10001",
+        "AttachStdin": false,
+        "AttachStdout": false,
+        "AttachStderr": false,
+        "Tty": false,
+        "OpenStdin": false,
+        "StdinOnce": false,
+        "Env": [
+          "CASTOR_IPC_SOCKET=/run/castor/ipc.sock",
+          "CASTOR_TASK_PROMPT=Repair Boltons Bits negative integer indexing so it follows Python sequence behavior. Inspect the implementation and the repository tests, make the smallest correct source change, and let the protected verification run.",
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "NODE_VERSION=22.19.0",
+          "YARN_VERSION=1.22.22",
+          "HOME=/tmp"
+        ],
+        "Cmd": [
+          "sh",
+          "-c",
+          "cd /workspace && exec pi --extension /opt/castor/castor-pi-extension.js --no-extensions --no-builtin-tools --no-session --offline --no-context-files --no-skills --no-prompt-templates --no-themes --model castor/castor-task --mode json --print \"$CASTOR_TASK_PROMPT\" </dev/null"
+        ],
+        "Image": "sha256:264fb4d79074edbcf2ff8464eb71f9712aee0c823f0ef1e6012e7c7f38cf6238",
+        "Volumes": null,
+        "WorkingDir": "/opt/castor",
+        "Entrypoint": [
+          "docker-entrypoint.sh"
+        ],
+        "Labels": {},
+        "StopTimeout": 1
+      },
+      "NetworkSettings": {
+        "SandboxID": "ffdd74a67af2b6122a38b90e502d3ddb0f1456ec9089e49d480ee0468da511a0",
+        "SandboxKey": "/var/run/docker/netns/ffdd74a67af2",
+        "Ports": {},
+        "Networks": {
+          "none": {
+            "IPAMConfig": null,
+            "Links": null,
+            "Aliases": null,
+            "DriverOpts": null,
+            "GwPriority": 0,
+            "NetworkID": "028dad20278534f6fcf1b4920df16e94dcb2b7871eb7a1660eff0c53db839cda",
+            "EndpointID": "45824a5c20d822a330b8e09b56339d03dd25fe12356729ebe4c0248fefc86c2d",
+            "Gateway": "",
+            "IPAddress": "",
+            "MacAddress": "",
+            "IPPrefixLen": 0,
+            "IPv6Gateway": "",
+            "GlobalIPv6Address": "",
+            "GlobalIPv6PrefixLen": 0,
+            "DNSNames": null
+          }
+        }
+      },
+      "ImageManifestDescriptor": {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "digest": "sha256:d304173eb3ec9436686f80edc5cef626cc27717187ef81e900721c8b76191533",
+        "size": 2195,
+        "platform": {
+          "architecture": "arm64",
+          "os": "linux"
+        }
+      }
+    },
+    "running_recorded": true
+  }
+}

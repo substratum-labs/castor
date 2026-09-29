@@ -1,0 +1,10 @@
+{
+  "candidate": "/private/tmp/t372-live-r2-candidate",
+  "source_tree": "c20df619d8514b7b5c55af93bb3da7eab9251735",
+  "patch_sha256": "e35f63502842921053786af1b4298f63e77f2348ba3586d79cba05294734820e",
+  "changed_files": [
+    "boltons/mathutils.py"
+  ],
+  "original_tests_and_wheels_and_verifier_unchanged": true,
+  "candidate_source_sha256": "ed8760bfdcbd5d89bb3bfef821c6fac4ed32f9573de888824bd266176f41caf7"
+}

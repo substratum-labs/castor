@@ -1,0 +1,8 @@
+{
+  "pid": 94562,
+  "status": "EXITED",
+  "exit_code": 1,
+  "elapsed_seconds": 23.136228417046368,
+  "single_trial": true,
+  "automatic_retry": false
+}

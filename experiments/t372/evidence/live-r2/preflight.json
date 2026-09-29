@@ -1,0 +1,5 @@
+{
+  "docker_root": "/var/lib/docker",
+  "requested_scratch_parent": "/run",
+  "canonical_scratch_parent": "/run"
+}

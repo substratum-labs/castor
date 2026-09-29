@@ -1,0 +1,127 @@
+{
+  "status": "REAL_MODEL_REPAIR_SUCCEEDED",
+  "provider_generation_posts": 2,
+  "total_input_tokens": 5511,
+  "total_output_tokens": 477,
+  "per_call_output_tokens": [
+    64,
+    413
+  ],
+  "elapsed_seconds": 42.41084812488407,
+  "native_task_result": {
+    "task_id": "task-t372-bits-r2",
+    "status": "SUCCEEDED",
+    "failure_reason": "NONE",
+    "workspace_snapshot_sha256": "efb7d491a31e7339b054d4b4a610c4687959b243c9d5fce0d964f2652e0a79fd",
+    "committed_turns": [
+      1
+    ],
+    "settled_actions_count": 1,
+    "derived_task_image_digest": "sha256:4273c4095626196b7107bfdbb48cbfca31f7dc7ca71319f072bb0418f76fd419",
+    "final_patch_sha256": "sha256:e35f63502842921053786af1b4298f63e77f2348ba3586d79cba05294734820e",
+    "patch_diff": "--- a/boltons/mathutils.py\n+++ b/boltons/mathutils.py\n@@ -169,9 +169,11 @@\n     def __getitem__(self, k):\n         if type(k) is slice:\n             return Bits(self.as_bin()[k])\n         if type(k) is int:\n-            if k >= self.len:\n+            if k < 0:\n+                k = self.len + k\n+            if k >= self.len or k < 0:\n                 raise IndexError(k)\n             return bool((1 << (self.len - k - 1)) & self.val)\n         raise TypeError(type(k))\n \n",
+    "test_passed": true,
+    "test_exit_code": 0,
+    "verifier_evidence": {
+      "inspected_profile": {
+        "image_id": "sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea",
+        "candidate_source": "/run/c-44469488c71b/castor-task-image-UfIyBi/workspace_snapshot",
+        "log_driver": "none",
+        "pids_limit": 256,
+        "memory_bytes": 1073741824,
+        "memory_swap_bytes": 1073741824,
+        "nano_cpus": 2000000000
+      },
+      "captured_logs": {
+        "stdout_bytes": 496,
+        "stderr_bytes": 0,
+        "stdout_truncated": false,
+        "stderr_truncated": false
+      },
+      "deadline_ms": 60000,
+      "setup_ms": 61,
+      "inspect_ms": 33,
+      "teardown_ms": 20,
+      "container_removed": true,
+      "terminal_running": false,
+      "terminal_oom_killed": false,
+      "terminal_exit_code": 0
+    }
+  },
+  "native_board_matches_result": true,
+  "valid_crc_frames": 14,
+  "verified_regions": 8,
+  "entry_kinds": {
+    "LeaseGranted": 3,
+    "InteractionRequested": 2,
+    "InteractionBound": 2,
+    "TurnCommitted": 1,
+    "ActionRegistered": 1,
+    "AttemptArmed": 1,
+    "DispatchAttempt": 1,
+    "AdapterReservation": 1,
+    "AdapterSubmissionRecorded": 1,
+    "AttemptSettled": 1
+  },
+  "journal_sha256": "a26764ee8d8f41b5fbe2806bb0247df79a88df986432a859c16886837b0eef39",
+  "journal_audit_scope": "CRC, Region content/reference digests and event/result reconciliation; not semantic journal replay",
+  "candidate_proof": {
+    "candidate": "/private/tmp/t372-live-r2-candidate",
+    "source_tree": "c20df619d8514b7b5c55af93bb3da7eab9251735",
+    "patch_sha256": "e35f63502842921053786af1b4298f63e77f2348ba3586d79cba05294734820e",
+    "changed_files": [
+      "boltons/mathutils.py"
+    ],
+    "original_tests_and_wheels_and_verifier_unchanged": true,
+    "candidate_source_sha256": "ed8760bfdcbd5d89bb3bfef821c6fac4ed32f9573de888824bd266176f41caf7"
+  },
+  "independent_verifier": {
+    "code": 0,
+    "evidence": {
+      "captured_logs": {
+        "stderr_bytes": 0,
+        "stderr_truncated": false,
+        "stdout_bytes": 496,
+        "stdout_truncated": false
+      },
+      "container_removed": true,
+      "deadline_ms": 60000,
+      "inspect_ms": 116,
+      "inspected_profile": {
+        "candidate_source": "/private/tmp/t372-live-r2-candidate",
+        "image_id": "sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea",
+        "log_driver": "none",
+        "memory_bytes": 1073741824,
+        "memory_swap_bytes": 1073741824,
+        "nano_cpus": 2000000000,
+        "pids_limit": 256
+      },
+      "setup_ms": 152,
+      "teardown_ms": 51,
+      "terminal_exit_code": 0,
+      "terminal_oom_killed": false,
+      "terminal_running": false
+    },
+    "reason": "NONE",
+    "workspace": "/private/tmp/t372-live-r2-candidate"
+  },
+  "cleanup_status": "CLEAN",
+  "r1_preserved": true,
+  "api_fee_usd": 0,
+  "hardware_energy_and_review_cost": "unmeasured",
+  "automatic_retry": false,
+  "post_body_evidence": [
+    {
+      "file": "http-request-1.raw",
+      "artifact_matches_post_serializer": true,
+      "artifact_sha256": "afdce910ff53e6a4c0c8db75dba6f2bde717cbc3fa23390ebfe8ec71c3d46484",
+      "post_body_reconstructed_sha256": "afdce910ff53e6a4c0c8db75dba6f2bde717cbc3fa23390ebfe8ec71c3d46484"
+    },
+    {
+      "file": "http-request-2.raw",
+      "artifact_matches_post_serializer": true,
+      "artifact_sha256": "c8e06dc804dd79dde97f1d537f398e57c62a5a633474774dc43c856f9f490ed2",
+      "post_body_reconstructed_sha256": "c8e06dc804dd79dde97f1d537f398e57c62a5a633474774dc43c856f9f490ed2"
+    }
+  ]
+}

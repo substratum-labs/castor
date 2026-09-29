@@ -1,0 +1,21 @@
+{
+  "code": 1,
+  "evidence": {
+    "captured_logs": {
+      "stderr_bytes": 0,
+      "stderr_truncated": false,
+      "stdout_bytes": 0,
+      "stdout_truncated": false
+    },
+    "container_removed": false,
+    "deadline_ms": 60000,
+    "inspect_ms": 0,
+    "setup_ms": 0,
+    "teardown_ms": 0,
+    "terminal_exit_code": null,
+    "terminal_oom_killed": null,
+    "terminal_running": null
+  },
+  "reason": "VerifierUnavailable",
+  "workspace": "/private/tmp/t372-demo-candidate"
+}

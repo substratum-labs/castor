@@ -1,0 +1,8 @@
+{
+  "docker_root": "/var/lib/docker",
+  "scratch": "/run/c-44469488c71b",
+  "state_host": "/private/tmp/t372-bits-live-r2",
+  "state_source": "/host_mnt/private/tmp/t372-bits-live-r2",
+  "state_destination": "/state",
+  "candidate": "/run/c-44469488c71b/castor-task-image-UfIyBi/workspace_snapshot"
+}

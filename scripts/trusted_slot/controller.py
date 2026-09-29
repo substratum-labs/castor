@@ -8,12 +8,17 @@ from pathlib import Path
 
 from common import write_json
 from mock_model import MockModel
+from real_model import FileBridgeModel
 
 
 def main():
     config = json.loads(Path("/state/launcher/controller-config.json").read_text())
     evidence = Path("/state/launcher")
-    model = MockModel(os.environ["CASTOR_MODEL_SOCKET"], config["mock_mode"], evidence)
+    model = (
+        FileBridgeModel(os.environ["CASTOR_MODEL_SOCKET"], evidence, config.get("deadline_seconds", 300))
+        if config.get("model_mode") in ("ollama", "file_bridge_fixture")
+        else MockModel(os.environ["CASTOR_MODEL_SOCKET"], config["mock_mode"], evidence)
+    )
     try:
         # Native Castor alone packages the target and runs its isolated oracle.
         result = subprocess.run(

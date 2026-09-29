@@ -1,0 +1,1 @@
+{"content":[{"type":"toolCall","id":"call_yvv9w4i4","name":"castor_read_file","arguments":{"path":"boltons/mathutils.py"}},{"type":"toolCall","id":"call_knkwi3fk","name":"castor_read_file","arguments":{"path":"tests/test_mathutils.py"}}],"stopReason":"toolUse","usage":{"input":944,"output":64}}

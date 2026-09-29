@@ -1,0 +1,24 @@
+{
+  "status": "STOPPED_BEFORE_LIVE_RELEASE",
+  "provider_calls": 0,
+  "failure_count": 3,
+  "failures": [
+    {
+      "stage": "HTTP stub startup",
+      "reason": "reverse DNS startup wait exceeded five seconds"
+    },
+    {
+      "stage": "native controller pack",
+      "reason": "Git worktree metadata outside /project mount; No such file or directory",
+      "cleanup": "CLEAN"
+    },
+    {
+      "stage": "standalone input producer",
+      "reason": "git clone --no-checkout --no-local returned128; dependent pack had no source directory",
+      "clone_exit": 128,
+      "pack_exit": 125
+    }
+  ],
+  "live_trial_started": false,
+  "human_reset_required": true
+}

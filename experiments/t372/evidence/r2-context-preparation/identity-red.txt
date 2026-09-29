@@ -1,0 +1,22 @@
+======================================================================
+FAIL: test_fixture_cannot_use_either_registered_live_identity (tests.test_t372_bridge.BridgeTests.test_fixture_cannot_use_either_registered_live_identity) (task='task-t372-bits-r2', key='fixture')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/.worktrees/t372-bits-demo/tests/test_t372_bridge.py", line 452, in test_fixture_cannot_use_either_registered_live_identity
+    self.assertRaises(SystemExit),
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: SystemExit not raised
+
+======================================================================
+FAIL: test_fixture_cannot_use_either_registered_live_identity (tests.test_t372_bridge.BridgeTests.test_fixture_cannot_use_either_registered_live_identity) (task='fixture', key='task-t372-bits-r2')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yong/projects/substratum/castor/.worktrees/t372-bits-demo/tests/test_t372_bridge.py", line 452, in test_fixture_cannot_use_either_registered_live_identity
+    self.assertRaises(SystemExit),
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: SystemExit not raised
+
+----------------------------------------------------------------------
+Ran 1 test in 0.003s
+
+FAILED (failures=2)
