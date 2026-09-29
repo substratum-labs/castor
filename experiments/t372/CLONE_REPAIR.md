@@ -96,3 +96,11 @@ coverage outside the helper, broader protocol pinning, and portability checks.
 Reference untracked verifier inputs are intentional; target alone is committed
 and packed. Source deletion/fsck demonstrates self-containment, not nlink proof.
 No generic support for arbitrary remote servers or old Git protocols is claimed.
+
+Physical reviewer clarification subsequently returned **ACCEPT for this narrow
+packaging repair**, withdrew the ref-tip blocker, and confirmed the local-hook
+warning does not apply. The original nonblocking comments remain nonblocking.
+See [actual clarification](evidence/clone-repair/GROK_PACKAGING_CLARIFICATION.md).
+The reviewer process exited0 and was collected. No production code changed
+between the first verdict and acceptance. Whole-bridge R2/live release remain
+outside this acceptance.

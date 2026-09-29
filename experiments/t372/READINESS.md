@@ -10,6 +10,9 @@ frozen target tree. Offline controller pack succeeds; protected pytest reports
 12 passed; task SUCCEEDED; 2 stub POSTs; 0 provider calls; cleanup CLEAN.
 23 bridge/recovery tests and 4 Git/preparation tests pass, with lint/format clean.
 Read-only audit verified 14 journal CRCs, 8 Region hashes and their references.
+Physical Grok accepted the narrow packaging repair after withdrawing a disproved
+ref-tip blocker. This does not accept the broader pending bridge/gate R2.
+CI at code commit842320a passed all7 jobs; later evidence-only commits are distinct.
 
 Remaining gates: finish/freeze current input and runtime protocol hashes,
 independent R2 bridge/gate acceptance, then release and audit the already
