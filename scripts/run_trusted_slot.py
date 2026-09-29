@@ -15,6 +15,8 @@ from trusted_slot.real_model import MODEL_DIGEST
 from trusted_slot.safe_git import clean_tree
 from trusted_slot.common import CONTROLLER, PI, VERIFIER
 
+LIVE_TASK_ID = "task-t372-bits-r2"  # r1 is consumed; each live trial has its own release.
+
 REFERENCE_SHA256 = "0aeac3312b66b3919ec93f35e9785c62f3d79bf6db82d60f3b5a3140b3d30ae5"
 RUNTIME_FILES = ("run_trusted_slot.py",) + tuple(
     "trusted_slot/" + path.name
@@ -47,7 +49,7 @@ def parse_args():
     args = parser.parse_args()
     if args.model_mode == "mock" and not args.mock_mode:
         parser.error("mock mode requires --mock-mode")
-    if args.model_mode == "file_bridge_fixture" and (args.mock_mode or args.task_id == "task-t372-bits-r1" or args.idempotency_key == "task-t372-bits-r1"):
+    if args.model_mode == "file_bridge_fixture" and (args.mock_mode or args.task_id in ("task-t372-bits-r1", LIVE_TASK_ID) or args.idempotency_key in ("task-t372-bits-r1", LIVE_TASK_ID)):
         parser.error("fake file bridge requires separate preflight identity and no mock mode")
     if args.model_mode == "ollama":
         if args.mock_mode or not args.protocol_file or not args.release_file or not args.source_manifest or not args.acceptance_file:
@@ -84,7 +86,7 @@ def parse_args():
         }
         protocol_hash = hashlib.sha256(protocol_bytes).hexdigest()
         if not (
-            args.task_id == args.idempotency_key == "task-t372-bits-r1"
+            args.task_id == args.idempotency_key == LIVE_TASK_ID
             and args.workload_timeout == 300
             and args.cleanup_timeout == 60
             and acceptance.get("protocol_sha256") == protocol_hash

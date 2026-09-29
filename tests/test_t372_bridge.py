@@ -432,6 +432,40 @@ class BridgeTests(unittest.TestCase):
             "FAILED",
         )
 
+    def test_fixture_cannot_use_either_registered_live_identity(self):
+        import run_trusted_slot
+
+        arguments = ["launcher"]
+        for name in ("project", "task-spec", "state-root", "linux-bin-dir"):
+            arguments.extend(["--" + name, str(self.root)])
+        arguments.extend(
+            [
+                "--trusted-controller-image",
+                "pin",
+                "--model-mode",
+                "file_bridge_fixture",
+            ]
+        )
+        for identity in ("task-t372-bits-r1", "task-t372-bits-r2"):
+            for task_id, key in ((identity, "fixture"), ("fixture", identity)):
+                with (
+                    self.subTest(task=task_id, key=key),
+                    patch.object(
+                        sys,
+                        "argv",
+                        arguments
+                        + [
+                            "--task-id",
+                            task_id,
+                            "--idempotency-key",
+                            key,
+                        ],
+                    ),
+                    self.assertRaises(SystemExit),
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
+                    run_trusted_slot.parse_args()
+
     def test_live_parse_gate_requires_exact_frozen_input_budget_and_release(self):
         import run_trusted_slot
         from trusted_slot.real_model import MODEL_DIGEST
@@ -480,7 +514,7 @@ class BridgeTests(unittest.TestCase):
             return hashlib.sha256(path.read_bytes()).hexdigest()
 
         protocol = {
-            "task_id": "task-t372-bits-r1",
+            "task_id": "task-t372-bits-r2",
             "model": "qwen3.5:9b",
             "model_digest": MODEL_DIGEST,
             "ollama_version": "0.34.1",
@@ -536,7 +570,7 @@ class BridgeTests(unittest.TestCase):
         )
         state = self.root / "state"
         release = {
-            "task_id": "task-t372-bits-r1",
+            "task_id": "task-t372-bits-r2",
             "protocol_sha256": hash_file(protocol_file),
             "model_digest": MODEL_DIGEST,
             "target_tree": tree,
@@ -558,9 +592,9 @@ class BridgeTests(unittest.TestCase):
             "--task-spec",
             str(spec),
             "--task-id",
-            "task-t372-bits-r1",
+            "task-t372-bits-r2",
             "--idempotency-key",
-            "task-t372-bits-r1",
+            "task-t372-bits-r2",
             "--state-root",
             str(state),
             "--linux-bin-dir",
@@ -594,6 +628,34 @@ class BridgeTests(unittest.TestCase):
         original_protocol = protocol_file.read_bytes()
         original_acceptance = acceptance_file.read_bytes()
         original_release = release_file.read_bytes()
+        retired_protocol = json.loads(original_protocol)
+        retired_protocol["task_id"] = "task-t372-bits-r1"
+        protocol_file.write_text(json.dumps(retired_protocol))
+        for file, content in (
+            (acceptance_file, original_acceptance),
+            (release_file, original_release),
+        ):
+            receipt = json.loads(content)
+            receipt["protocol_sha256"] = hash_file(protocol_file)
+            if file == release_file:
+                receipt["task_id"] = "task-t372-bits-r1"
+            file.write_text(json.dumps(receipt))
+        retired_arguments = [
+            "task-t372-bits-r1" if value == "task-t372-bits-r2" else value
+            for value in arguments
+        ]
+        with (
+            patch.object(sys, "argv", retired_arguments),
+            patch.object(run_trusted_slot, "RUNTIME_FILES", ()),
+            patch.object(run_trusted_slot, "REFERENCE_SHA256", reference_pin),
+            self.assertRaises(SystemExit),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            run_trusted_slot.parse_args()
+        protocol_file.write_bytes(original_protocol)
+        acceptance_file.write_bytes(original_acceptance)
+        release_file.write_bytes(original_release)
+
         altered_pins = {
             "controller_image": "sha256:" + "0" * 64,
             "pi_image": "sha256:" + "0" * 64,

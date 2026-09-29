@@ -1,0 +1,73 @@
+{
+  "status": "FROZEN_R2_CONTEXT_TRIAL_PENDING_DELTA_REVIEW",
+  "task_id": "task-t372-bits-r2",
+  "upstream_repository": "https://github.com/mahmoud/boltons",
+  "upstream_pr": "https://github.com/mahmoud/boltons/pull/450",
+  "original_fix_commit": "d0e36b4db07e5062b35ca664e0516ae0e4890b8b",
+  "pre_fix_parent": "580a9c2d12755d472e534ca3e277e8f7e3ada49e",
+  "merge_commit": "5eb6cc045560abf320712f262346ae95fb66d448",
+  "license": "BSD-3-Clause",
+  "license_sha256": "c301912653a8d8c99eab6212aa3aea8d164ea249d8ad53c941e0558a0a5ac1e3",
+  "target_tree": "c20df619d8514b7b5c55af93bb3da7eab9251735",
+  "source_sha256": "3d81dc8b44136299857373a8f53d50dbf0be7aabfa34e7bcfee7c6b41b3b3236",
+  "tests_sha256": "9331906c1e944368f677e06731bda4fb114a50d8eb1df992fe87767e644ea94b",
+  "reference_source_sha256": "0aeac3312b66b3919ec93f35e9785c62f3d79bf6db82d60f3b5a3140b3d30ae5",
+  "spec_sha256": "cb6834c5a88d99c3c236b12e00510d6f0160eae1f33c086ae1e77ba24618ff73",
+  "model": "qwen3.5:9b",
+  "model_digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+  "ollama_version": "0.34.1",
+  "think": false,
+  "temperature": 0.2,
+  "seed": 17,
+  "num_ctx": 32768,
+  "max_unique_http_calls": 3,
+  "max_output_tokens_per_call": 512,
+  "workload_timeout_seconds": 300,
+  "cleanup_timeout_seconds": 60,
+  "native_binaries_sha256": {
+    "castor": "f2217c98e2c92b697b940d69f42a6244197c6fd40d58186ba30a7bb42f09a273",
+    "castord": "b4051d05982623feb5cfd6e1c1c428f55aab4c7131f2813c7e35f9febb919d04"
+  },
+  "controller_image": "sha256:39fad3ec792c6d55d6049f010520ebdc662c92c9eb8f6b74872b7842e073ba80",
+  "pi_image": "sha256:b4f363b3436653157b87428ec6d4936b9efa26c184a77d346345071d02edddb7",
+  "verifier_image": "sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea",
+  "wheel_sha256": {
+    "pytest-8.3.5-py3-none-any.whl": "c69214aa47deac29fad6c2a4f590b9c4a9fdb16a403176fe154b79c0b4d4d820",
+    "iniconfig-2.0.0-py3-none-any.whl": "b6a85871a79d2e3b22d2d1b94ac2824226a63c6b741c88f7ae975f18b6778374",
+    "packaging-24.2-py3-none-any.whl": "09abb1bccd265c01f4a3aa3f7a7db064b36514d2cba19a2f694fe6150451a759",
+    "pluggy-1.5.0-py3-none-any.whl": "44e1ad92c8ca002de6377e165f3e0f1be63266ab4d554740532335b9d75ea669"
+  },
+  "runtime_source_sha256": {
+    "run_trusted_slot.py": "f9ccb3217ea7f34105aee4c6ed850eb4b1deca20832b695560ee7f2f8fc3d290",
+    "trusted_slot/__init__.py": "d91455efdc869f6a850750289cb1f755d8e5af3965974965d86f131c0d1ce782",
+    "trusted_slot/common.py": "b356f80f79f5b102727c499b2572d3395a15e245dad876a035749ed15077f43c",
+    "trusted_slot/controller.py": "8c46fe032e308ab4c6577dc77317991035fbb5529d53914c3cf4e7056144f8b5",
+    "trusted_slot/engine.py": "36d02bcc10db93747555523f25561c66a06e971de8aa89bf84d6c56e65c8b112",
+    "trusted_slot/fake_transport.py": "0b2f444974ab99861d25b98b51f557bbbacaa152db22916bea630a23a8f7683a",
+    "trusted_slot/lifecycle.py": "fe390082f8d59f1e32abcbef2ebb2060c8731e90ab0ea81b33861fd73567abbc",
+    "trusted_slot/mock_model.py": "d596b3605cdf73c26014189026e2c912a844c28d610c5494a302cb903375568d",
+    "trusted_slot/real_model.py": "1d7be7d6152c4cf3a11edfaddb0f053237ee3e6236a8507acabfb5a8922a1d40",
+    "trusted_slot/safe_git.py": "4a73bbfb326eea76f0415f530fea0e05e5a7dc31ed74a7679aa432deb2952597"
+  },
+  "input_preparation_sha256": {
+    "prepare_source.py": "678644bbdb8ddf50e8991c0d1e8509cccbcef705bd57165a22543615ed0e32eb",
+    "verify_original_mathutils.sh": "deec8a0bcc74fc317f452cc1e02ae11d276d8b25bbdcef200f928c04f2652094",
+    "proposed-task-spec-r2.json": "cb6834c5a88d99c3c236b12e00510d6f0160eae1f33c086ae1e77ba24618ff73"
+  },
+  "source_manifest_sha256": "0cb3bbd1514898d5a9c6963e2a6e8babf69ed102a09597e313c6b46c54eb265f",
+  "source_manifest_path": "/private/tmp/t372-live-input-r2/source-manifest.json",
+  "live_state_root": "/private/tmp/t372-bits-live-r2",
+  "authorization": "Yong approved exactly one additional path-context trial on2026-09-29, same model/options and <=3 extra inference POSTs/512 output each,300s/60s; no automatic rerun.",
+  "measurement_policy": "Missing usage remains null/incomplete and consumes reserved call; HTTP/invalid output failures consume call; uncertain RESERVED never resets allowance.",
+  "binary_provenance": "Exact retained ELF byte pins; no cryptographic build attestation. Core/carrier source unchanged from prior accepted build source.",
+  "provider_trust": "Operator-controlled local Ollama: tags/version checked before and after each POST; response model/done required. No cryptographic weight identity guarantee.",
+  "prior_trial": {
+    "task_id": "task-t372-bits-r1",
+    "status": "FAILED_NO_PATCH",
+    "provider_generation_posts": 3,
+    "state_root": "/private/tmp/t372-bits-live-r1",
+    "budget_sha256": "8587ce7b63327bee3692669cea5c6a421e7657121bfad65241d0a6c6a9352a17",
+    "preserve_unchanged": true
+  },
+  "prior_review_source_commit": "8e3596e547448dd7b090190989c29cc2b67dd382"
+}
