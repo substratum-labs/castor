@@ -65,3 +65,12 @@ contract; adding a shell or loosening sandbox paths is not required by this fix.
 
 Full evidence and SHA256 inventory: [evidence/live-r1](evidence/live-r1/SHA256.json).
 Raw durable state: /private/tmp/t372-bits-live-r1. No second model trial was run.
+
+Actual physical Grok outcome audit exited0 and ACCEPTED the honest failure
+characterization, accounting and path-context proposal. It explicitly leaves
+T-372/demo unfinished and any r2 trial unrun/unapproved. Its limits: journal
+integrity counts are the owner's verified check, not semantic replay; detailed
+pytest split is in independent-verifier.stdout, while the structured result
+contains exit1/reason/profile. Raw POST bodies in bridge/http-request-*.raw and
+frozen runtime prove the configured caps; realized responses also stay below512.
+See evidence/live-r1/GROK_OUTCOME_AUDIT.md. No new live release is implied.
