@@ -17,15 +17,23 @@ use std::time::Duration;
 pub struct SocketModelService {
     stop: Arc<AtomicBool>,
     failed: Arc<AtomicBool>,
+    output_limit_exceeded: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
+}
+
+pub struct ModelServiceOutcome {
+    pub failed: bool,
+    pub output_limit_exceeded: bool,
 }
 
 impl SocketModelService {
     pub fn start(control_socket: PathBuf, model_socket: PathBuf, timeout: Duration) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let failed = Arc::new(AtomicBool::new(false));
+        let output_limit_exceeded = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
         let worker_failed = failed.clone();
+        let worker_output_limit = output_limit_exceeded.clone();
         let worker = thread::spawn(move || {
             let mut seen = HashSet::new();
             while !worker_stop.load(Ordering::SeqCst) {
@@ -60,10 +68,10 @@ impl SocketModelService {
                     if !seen.insert(id.to_owned()) {
                         continue;
                     }
-                    if report_buffered_result(&control_socket, &model_socket, request, timeout)
-                        .is_err()
-                    {
-                        worker_failed.store(true, Ordering::SeqCst);
+                    match report_buffered_result(&control_socket, &model_socket, request, timeout) {
+                        Ok(true) => worker_output_limit.store(true, Ordering::SeqCst),
+                        Ok(false) => {}
+                        Err(_) => worker_failed.store(true, Ordering::SeqCst),
                     }
                 }
                 thread::sleep(Duration::from_millis(10));
@@ -72,16 +80,25 @@ impl SocketModelService {
         Self {
             stop,
             failed,
+            output_limit_exceeded,
             worker: Some(worker),
         }
     }
 
-    pub fn finish(mut self) -> bool {
+    pub fn finish(self) -> bool {
+        let outcome = self.finish_outcome();
+        outcome.failed || outcome.output_limit_exceeded
+    }
+
+    pub fn finish_outcome(mut self) -> ModelServiceOutcome {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
-        self.failed.load(Ordering::SeqCst)
+        ModelServiceOutcome {
+            failed: self.failed.load(Ordering::SeqCst),
+            output_limit_exceeded: self.output_limit_exceeded.load(Ordering::SeqCst),
+        }
     }
 
     pub fn has_failed(&self) -> bool {
@@ -103,7 +120,7 @@ fn report_buffered_result(
     model_socket: &PathBuf,
     request: &Value,
     timeout: Duration,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     let interaction_id = required_str(request, "interaction_id")?;
     let expected_request_digest = required_str(request, "request_digest")?;
     let mut control = GatewayClient::connect(control_socket)?;
@@ -187,6 +204,15 @@ fn report_buffered_result(
                     "model result digest mismatch",
                 ));
             }
+            // Classify the trusted, digest-verified provider observation, not
+            // an Agent's claim about why it terminated. Keep the usage-bearing
+            // observation bound so diagnostics and accounting remain intact.
+            let output_limit_exceeded =
+                serde_json::from_slice::<Value>(&content)
+                    .ok()
+                    .is_some_and(|body| {
+                        body.get("stopReason").and_then(Value::as_str) == Some("length")
+                    });
             let mut control = GatewayClient::connect(control_socket)?;
             let persisted = control.request(&SyscallRequest {
                 request_id: format!("model-region-{interaction_id}"),
@@ -220,10 +246,10 @@ fn report_buffered_result(
             {
                 return Err(io::Error::other("model result was not bound"));
             }
-            Ok(())
+            Ok(output_limit_exceeded)
         })();
-        if outcome.is_ok() {
-            return Ok(());
+        if let Ok(output_limit_exceeded) = outcome {
+            return Ok(output_limit_exceeded);
         }
         if attempt < 2 {
             thread::sleep(Duration::from_millis(20));

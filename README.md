@@ -35,6 +35,8 @@ The verification command runs inside the isolated verifier, not on the host; its
 
 The packed task context includes a JSON-escaped list of up to 128 included source paths and an omitted count, capped at 16 KiB. It excludes untracked, excluded and verifier-only files. The list is navigation data; existing read/edit permissions remain unchanged.
 
+Local developer mode uses an explicit non-thinking generation profile. A truncated model response fails the task with `MODEL_OUTPUT_LIMIT_EXCEEDED`; it cannot dispatch a partial tool call or count as a successful completion. Generated-token usage remains recorded, and diagnostic counts are retained without storing the model's reasoning text. No automatic inference retry follows truncation. See the [adapter policy](kernel/carrier/pi/host/README.md).
+
 ## Historical Python prototype
 
 [![CI](https://github.com/substratum-labs/castor/actions/workflows/ci.yml/badge.svg)](https://github.com/substratum-labs/castor/actions/workflows/ci.yml)

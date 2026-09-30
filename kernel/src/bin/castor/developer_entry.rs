@@ -1083,6 +1083,16 @@ mod tests {
     #[test]
     #[ignore = "requires Docker Desktop and local pinned carrier/verifier images; fake model only"]
     fn physical_controller_exchanges_with_fake_model_and_cleans() {
+        physical_controller_case(false);
+    }
+
+    #[test]
+    #[ignore = "requires Docker Desktop and local pinned carrier/verifier images; fake model only"]
+    fn physical_truncated_model_response_reports_limit_and_cleans() {
+        physical_controller_case(true);
+    }
+
+    fn physical_controller_case(truncated: bool) {
         let root = tempfile::tempdir_in("/private/tmp").unwrap();
         let project = root.path().join("project");
         fs::create_dir(&project).unwrap();
@@ -1162,6 +1172,8 @@ mod tests {
                     }
                     let body = if calls == 0 {
                         json!({"content":[{"type":"toolCall","id":"read-1","name":"castor_read_file","arguments":{"path":"hello.txt"}}],"stopReason":"toolUse","usage":{"input":7,"output":5}})
+                    } else if calls == 1 && truncated {
+                        json!({"content":[{"type":"text","text":""}],"stopReason":"length","usage":{"input":9,"output":512}})
                     } else if calls == 1 {
                         json!({"content":[{"type":"toolCall","id":"edit-1","name":"castor_edit_file","arguments":{"path":"hello.txt","edits":[{"oldText":"hello","newText":"fixed"}]}}],"stopReason":"toolUse","usage":{"input":9,"output":8}})
                     } else {
@@ -1202,10 +1214,28 @@ mod tests {
         }
         assert_eq!(final_result["cleanup_status"], "CLEAN", "{final_result}");
         assert_eq!(final_result["model_calls"], 2, "{final_result}");
-        assert_eq!(
-            final_result["task_result"]["status"], "SUCCEEDED",
-            "{final_result}"
-        );
+        if truncated {
+            assert_eq!(
+                final_result["task_result"]["status"], "FAILED",
+                "{final_result}"
+            );
+            assert_eq!(
+                final_result["task_result"]["failure_reason"], "MODEL_OUTPUT_LIMIT_EXCEEDED",
+                "{final_result}"
+            );
+            assert_eq!(final_result["task_result"]["settled_actions_count"], 0);
+            assert!(final_result["task_result"].get("patch_diff").is_none());
+            let budget: Value =
+                serde_json::from_slice(&fs::read(slot.evidence.join("model/budget.json")).unwrap())
+                    .unwrap();
+            assert_eq!(budget["reservations"][1]["output_tokens"], 512);
+            assert_eq!(budget["reservations"][1]["status"], "COMPLETED");
+        } else {
+            assert_eq!(
+                final_result["task_result"]["status"], "SUCCEEDED",
+                "{final_result}"
+            );
+        }
         let first = fs::read_to_string(slot.evidence.join("model/request-1.raw")).unwrap();
         assert!(
             first.contains("castor-file-inventory"),

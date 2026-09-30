@@ -225,13 +225,15 @@ export function transformOllamaResponse(ollamaData, interactionId, { strict = fa
     }
   }
   const message = ollamaData.message || {};
+  const truncated = strict && ollamaData.done_reason === "length";
   const contentBlocks = [];
 
   if (message.content && typeof message.content === "string" && message.content.trim().length > 0) {
     contentBlocks.push({ type: "text", text: message.content });
   }
 
-  if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+  // Never turn a truncated provider response into an executable tool call.
+  if (!truncated && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
     for (let i = 0; i < message.tool_calls.length; i++) {
       const tc = message.tool_calls[i];
       const fn = tc.function || tc;
@@ -271,6 +273,16 @@ export function transformOllamaResponse(ollamaData, interactionId, { strict = fa
       output: Number(ollamaData.eval_count || 0),
     },
   };
+  if (strict) {
+    // Persist diagnostic counts inside the hashed observation, not raw reasoning.
+    innerResult.provider_diagnostics = {
+      done_reason: ["stop", "length"].includes(ollamaData.done_reason) ? ollamaData.done_reason : "other",
+      content_bytes: typeof message.content === "string" ? Buffer.byteLength(message.content) : 0,
+      thinking_bytes: typeof message.thinking === "string" ? Buffer.byteLength(message.thinking) : 0,
+      tool_call_count: Array.isArray(message.tool_calls) ? message.tool_calls.length : 0,
+      failure_code: truncated ? "MODEL_OUTPUT_LIMIT_EXCEEDED" : null,
+    };
+  }
 
   const innerBytes = Buffer.from(JSON.stringify(innerResult), "utf8");
   const observationDigest = computeSha256(innerBytes);
@@ -431,6 +443,12 @@ export class OllamaModelAdapter {
         num_predict: boundedTokens,
       },
     };
+    if (this.strictPolicy) {
+      // Explicit bounded developer policy, matching the T-372 non-thinking profile.
+      // Agent-supplied parameters may reduce the output cap, never alter this policy.
+      ollamaPayload.think = false;
+      Object.assign(ollamaPayload.options, {temperature: 0.2, seed: 17, num_ctx: 32768});
+    }
     const tools = formatToolsForOllama(request.tools);
     if (tools && tools.length > 0) {
       ollamaPayload.tools = tools;
