@@ -4,6 +4,7 @@
 //! storage or wire schema. A successful outcome is returned only after the
 //! corresponding file and containing directory have been synchronized.
 
+use crate::ownership_lock::{acquire_ownership_lock, OwnershipLock};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -322,7 +323,7 @@ impl AuthorityState {
 
 pub struct D1DurableStorage {
     root: PathBuf,
-    _ownership_lock: Option<File>,
+    _ownership_lock: Option<OwnershipLock>,
     regions: HashMap<String, RegionRecord>,
     entries: HashMap<(String, u64), JournalRecord>,
     authority: HashMap<String, AuthorityState>,
@@ -346,7 +347,7 @@ impl D1DurableStorage {
         Self::open_snapshot(root).map(|_| ())
     }
 
-    fn open_replayed(root: PathBuf, ownership_lock: Option<File>) -> io::Result<Self> {
+    fn open_replayed(root: PathBuf, ownership_lock: Option<OwnershipLock>) -> io::Result<Self> {
         fs::create_dir_all(root.join("regions"))?;
         sync_directory(&root)?;
 
@@ -960,18 +961,6 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 fn sync_directory(path: &Path) -> io::Result<()> {
     File::open(path)?.sync_all()
-}
-
-fn acquire_ownership_lock(root: &Path, name: &str) -> io::Result<File> {
-    let lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(root.join(name))?;
-    lock.try_lock()?;
-    sync_directory(root)?;
-    Ok(lock)
 }
 
 fn invalid_json(error: serde_json::Error) -> io::Error {
