@@ -316,6 +316,7 @@ struct Slot {
     verifier_id: String,
     allocated: bool,
     adapter: Option<Child>,
+    adapter_dir: Option<tempfile::TempDir>,
     budget: Option<BudgetLedger>,
     result: Option<Value>,
     status: String,
@@ -346,6 +347,7 @@ impl Slot {
             verifier_id,
             allocated: false,
             adapter: None,
+            adapter_dir: None,
             budget: None,
             result: None,
             status: "FAILED".into(),
@@ -515,11 +517,27 @@ impl Slot {
         Ok(())
     }
 
-    fn start_adapter(&mut self, script: &Path, pin: &Value) -> io::Result<PathBuf> {
-        let socket = self.state.join("controller/adapter.sock");
+    fn reserve_adapter_socket(&mut self) -> io::Result<PathBuf> {
+        if self.adapter_dir.is_some() {
+            return Err(invalid("host adapter socket already allocated"));
+        }
+        // Unix socket names are bounded independently of the user-selected
+        // durable state root. mkdtemp gives this local socket a private 0700
+        // parent; the directory is removed after the adapter exits.
+        let dir = tempfile::Builder::new()
+            .prefix("castor-model-")
+            .tempdir_in("/tmp")?;
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700))?;
+        let socket = dir.path().join("adapter.sock");
         if path_string(&socket)?.len() > 100 {
             return Err(invalid("host adapter socket path too long"));
         }
+        self.adapter_dir = Some(dir);
+        Ok(socket)
+    }
+
+    fn start_adapter(&mut self, script: &Path, pin: &Value) -> io::Result<PathBuf> {
+        let socket = self.reserve_adapter_socket()?;
         let stdout = File::create(self.evidence.join("adapter.stdout"))?;
         let stderr = File::create(self.evidence.join("adapter.stderr"))?;
         let digest = pin
@@ -790,6 +808,11 @@ impl Slot {
                 self.cleanup_errors.push(error.to_string());
             }
         }
+        if let Some(dir) = self.adapter_dir.take() {
+            if let Err(error) = dir.close() {
+                self.cleanup_errors.push(error.to_string());
+            }
+        }
         let cleanup = (|| -> io::Result<()> {
             if let Some(id) = self.controller.clone() {
                 let before_stop = (|| -> io::Result<()> {
@@ -1046,6 +1069,30 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     #[test]
+    fn private_adapter_socket_stays_short_with_a_long_state_root() {
+        let root = tempfile::tempdir_in("/private/tmp").unwrap();
+        let state = root.path().join("s".repeat(96));
+        fs::create_dir(&state).unwrap();
+        let mut slot =
+            Slot::new(state, "test-token".into(), "unused".into(), "unused".into()).unwrap();
+        let socket = slot.reserve_adapter_socket().unwrap();
+        assert!(path_string(&socket).unwrap().len() <= 100);
+        assert!(!socket.starts_with(&slot.state));
+        assert_eq!(
+            fs::metadata(socket.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        let private_dir = socket.parent().unwrap().to_path_buf();
+        let result = slot.finish();
+        assert_eq!(result["cleanup_status"], "CLEAN");
+        assert!(!private_dir.exists());
+    }
+
+    #[test]
     fn cid_and_private_child_bounds() {
         assert!(full_cid(&"a".repeat(64)).is_ok());
         assert!(full_cid(&"A".repeat(64)).is_err());
@@ -1078,6 +1125,28 @@ mod tests {
         slot.preflight_engine().unwrap();
         let final_result = slot.finish();
         assert_eq!(final_result["cleanup_status"], "CLEAN", "{final_result}");
+    }
+
+    #[test]
+    #[ignore = "requires local Node runtime; starts adapter socket without a model call"]
+    fn physical_long_state_root_starts_local_adapter_and_cleans() {
+        let root = tempfile::tempdir_in("/private/tmp").unwrap();
+        let state = root.path().join("s".repeat(96));
+        fs::create_dir(&state).unwrap();
+        let mut slot =
+            Slot::new(state, "test-token".into(), "unused".into(), "unused".into()).unwrap();
+        let socket = slot
+            .start_adapter(
+                &local_script("ollama_model_adapter.mjs").unwrap(),
+                &json!({"digest": "test-digest"}),
+            )
+            .unwrap();
+        assert!(socket.exists());
+        assert!(path_string(&socket).unwrap().len() <= 100);
+        let private_dir = socket.parent().unwrap().to_path_buf();
+        let result = slot.finish();
+        assert_eq!(result["cleanup_status"], "CLEAN", "{result}");
+        assert!(!private_dir.exists());
     }
 
     #[test]
@@ -1123,7 +1192,7 @@ mod tests {
         ]);
         let spec = root.path().join("task-spec.json");
         fs::write(&spec, br#"{"schema_version":1,"task_prompt":"Find the included file, read it and change hello to fixed.","verification_command":["/bin/sh","-c","test \"$(cat hello.txt)\" = \"fixed\""]}"#).unwrap();
-        let state = root.path().join("state");
+        let state = root.path().join("s".repeat(96));
         fs::create_dir(&state).unwrap();
         let docker = Docker::default();
         let image = docker
@@ -1141,9 +1210,11 @@ mod tests {
         let verifier = docker.text(&["image".into(), "inspect".into(), "--format".into(), "{{.Id}}".into(), "python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea".into()], Duration::from_secs(15)).unwrap();
         let mut slot = Slot::new(state, random_token().unwrap(), image, verifier).unwrap();
         let saw_read = Arc::new(AtomicBool::new(false));
+        let mut adapter_dir_path = None;
         let result = (|| -> io::Result<()> {
             slot.preflight_engine()?;
-            let socket = root.path().join("fake.sock");
+            let socket = slot.reserve_adapter_socket()?;
+            adapter_dir_path = socket.parent().map(Path::to_path_buf);
             let listener = UnixListener::bind(&socket)?;
             listener.set_nonblocking(true)?;
             slot.budget = Some(BudgetLedger::create(&slot.evidence.join("model"))?);
@@ -1198,6 +1269,7 @@ mod tests {
             slot.run_error = Some(error.to_string());
         }
         let final_result = slot.finish();
+        assert!(adapter_dir_path.is_some_and(|path| !path.exists()));
         assert!(
             saw_read.load(Ordering::SeqCst),
             "Pi must observe the listed source file through its existing read tool: {final_result}"
