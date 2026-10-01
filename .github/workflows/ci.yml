@@ -94,6 +94,8 @@ jobs:
           /opt/castor/src/tests/extension.test.js
           /opt/castor/src/tests/pi-cli-smoke.test.js
           /opt/castor/src/host/test_adapter.mjs
+          /opt/castor/src/host/local_policy.test.mjs
+          /opt/castor/src/host/file_exchange_bridge.test.mjs
 
       - name: Set up Python
         run: uv python install 3.11

@@ -681,7 +681,8 @@ pub fn run_product_task(
         }
         Err(_) => Some(1),
     };
-    let model_failed = model.finish();
+    let model_outcome = model.finish_outcome();
+    let model_failed = model_outcome.failed;
     let security_violation = fs::metadata(&daemon.security_audit)?.len() > 0;
     if model_failed || security_violation {
         fence_failed_interaction(&daemon.control_socket)?;
@@ -703,6 +704,14 @@ pub fn run_product_task(
             manifest.workspace_snapshot_sha256.clone(),
             image_digest,
             "MODEL_INTERACTION_ERROR",
+            None,
+        )
+    } else if model_outcome.output_limit_exceeded {
+        TaskResult::after_image(
+            manifest.task_id.clone(),
+            manifest.workspace_snapshot_sha256.clone(),
+            image_digest,
+            "MODEL_OUTPUT_LIMIT_EXCEEDED",
             None,
         )
     } else if child_exit.is_none() {

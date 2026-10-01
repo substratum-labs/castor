@@ -5,6 +5,7 @@
 //! the provider again, even when external application remains unknown.
 
 use crate::c01_storage::{CoreEntry, D1DurableStorage, PersistedEntryProof};
+use crate::ownership_lock::{acquire_ownership_lock, OwnershipLock};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -154,7 +155,7 @@ enum AdapterEvent {
 
 pub struct D1EffectAdapter<P: EffectProvider> {
     root: PathBuf,
-    _ownership_lock: File,
+    _ownership_lock: OwnershipLock,
     core_root: PathBuf,
     config: AdapterConfig,
     provider: P,
@@ -827,18 +828,6 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 fn sync_directory(path: &Path) -> io::Result<()> {
     File::open(path)?.sync_all()
-}
-
-fn acquire_ownership_lock(root: &Path, name: &str) -> io::Result<File> {
-    let lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(root.join(name))?;
-    lock.try_lock()?;
-    sync_directory(root)?;
-    Ok(lock)
 }
 
 fn invalid_json(error: serde_json::Error) -> io::Error {

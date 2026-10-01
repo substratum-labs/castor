@@ -7,6 +7,7 @@ pub mod c06_composition;
 pub mod castord;
 pub mod host;
 pub mod one_shot;
+mod ownership_lock;
 pub mod runtime;
 pub mod sandbox;
 pub mod spec;
