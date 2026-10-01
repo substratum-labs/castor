@@ -1070,7 +1070,7 @@ mod tests {
     use std::sync::Arc;
     #[test]
     fn private_adapter_socket_stays_short_with_a_long_state_root() {
-        let root = tempfile::tempdir_in("/private/tmp").unwrap();
+        let root = tempfile::tempdir().unwrap();
         let state = root.path().join("s".repeat(96));
         fs::create_dir(&state).unwrap();
         let mut slot =
@@ -1130,7 +1130,7 @@ mod tests {
     #[test]
     #[ignore = "requires local Node runtime; starts adapter socket without a model call"]
     fn physical_long_state_root_starts_local_adapter_and_cleans() {
-        let root = tempfile::tempdir_in("/private/tmp").unwrap();
+        let root = tempfile::tempdir().unwrap();
         let state = root.path().join("s".repeat(96));
         fs::create_dir(&state).unwrap();
         let mut slot =
