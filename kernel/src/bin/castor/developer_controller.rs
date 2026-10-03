@@ -75,8 +75,17 @@ fn private_scratch(parent: &Path, path: &Path, token: &str) -> io::Result<()> {
 pub fn engine_helper(raw: &str) -> io::Result<ExitCode> {
     let root = CString::new("/engine").unwrap();
     let slash = CString::new("/").unwrap();
-    if unsafe { libc::chroot(root.as_ptr()) } != 0 || unsafe { libc::chdir(slash.as_ptr()) } != 0 {
-        return Err(io::Error::last_os_error());
+    if unsafe { libc::chroot(root.as_ptr()) } != 0 {
+        return Err(io::Error::other(format!(
+            "Engine helper chroot /engine: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    if unsafe { libc::chdir(slash.as_ptr()) } != 0 {
+        return Err(io::Error::other(format!(
+            "Engine helper chdir /: {}",
+            io::Error::last_os_error()
+        )));
     }
     let request: Value =
         serde_json::from_str(raw).map_err(|_| invalid("invalid helper request"))?;
@@ -101,7 +110,8 @@ pub fn engine_helper(raw: &str) -> io::Result<ExitCode> {
                 if !Path::new(path).is_absolute() {
                     return Err(invalid("canonical path must be absolute"));
                 }
-                fs::canonicalize(path)?
+                fs::canonicalize(path)
+                    .map_err(|error| io::Error::other(format!("Engine canonical {path}: {error}")))?
                     .into_os_string()
                     .into_string()
                     .map_err(|_| invalid("non-UTF8 Engine path"))
