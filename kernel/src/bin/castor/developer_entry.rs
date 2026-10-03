@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
 use std::thread;
@@ -233,6 +233,77 @@ fn overlaps(left: &str, right: &str) -> bool {
     left == right || inside(left, right) || inside(right, left)
 }
 
+#[derive(Clone, Debug)]
+struct ControllerIdentity {
+    uid: u32,
+    gid: u32,
+    socket_gid: u32,
+}
+
+impl ControllerIdentity {
+    fn from_helper(value: &Value, host_uid: Option<u32>) -> io::Result<Self> {
+        let number = |key: &str| -> io::Result<u32> {
+            value
+                .get(key)
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or_else(|| invalid("invalid Engine identity metadata"))
+        };
+        let uid = number("state_uid")?;
+        let gid = number("state_gid")?;
+        let socket_uid = number("socket_uid")?;
+        let socket_gid = number("socket_gid")?;
+        let mode = number("socket_mode")?;
+        if host_uid.is_some_and(|host_uid| uid != host_uid) {
+            return Err(invalid("Engine state UID differs from invoking host UID; user namespace mapping is unsupported"));
+        }
+        let accessible = if uid == socket_uid {
+            mode & 0o600 == 0o600
+        } else if gid == socket_gid || mode & 0o060 == 0o060 {
+            mode & 0o060 == 0o060
+        } else {
+            false
+        };
+        if !accessible {
+            return Err(invalid(
+                "controller UID/GID cannot access Engine Docker socket",
+            ));
+        }
+        Ok(Self {
+            uid,
+            gid,
+            socket_gid,
+        })
+    }
+
+    fn user(&self) -> String {
+        format!("{}:{}", self.uid, self.gid)
+    }
+    fn socket_group(&self) -> Option<String> {
+        (self.socket_gid != self.gid).then(|| self.socket_gid.to_string())
+    }
+}
+
+fn decode_controller_result(stdout: &[u8], stderr: &[u8], inspect: &Value) -> io::Result<Value> {
+    let value: Value = serde_json::from_slice(stdout).map_err(|_| {
+        let code = inspect
+            .pointer("/State/ExitCode")
+            .and_then(Value::as_i64)
+            .map_or("unknown".to_owned(), |v| v.to_string());
+        let detail = if stderr.windows(b"Permission denied".len()).any(|w| w == b"Permission denied")
+            || stderr.windows(b"os error 13".len()).any(|w| w == b"os error 13") {
+            "permission denied; "
+        } else { "" };
+        io::Error::other(format!(
+            "controller exited {code} without a native TaskResult: {detail}see private controller.stderr evidence"
+        ))
+    })?;
+    if value.get("status").and_then(Value::as_str).is_none() {
+        return Err(invalid("native TaskResult has no status"));
+    }
+    Ok(value)
+}
+
 fn observed_child_profile(item: &Value, scratch: &str, verifier_id: &str) -> Option<&'static str> {
     let mounts = item.get("Mounts")?.as_array()?;
     if mounts.len() != 1 {
@@ -315,6 +386,7 @@ struct Slot {
     scratch: Option<String>,
     parent: Option<String>,
     state_source: Option<String>,
+    identity: Option<ControllerIdentity>,
     verifier_id: String,
     release_carrier_ref: Option<String>,
     allocated: bool,
@@ -347,6 +419,7 @@ impl Slot {
             scratch: None,
             parent: None,
             state_source: None,
+            identity: None,
             verifier_id,
             release_carrier_ref: None,
             allocated: false,
@@ -397,17 +470,21 @@ impl Slot {
     ) -> io::Result<(Value, Value)> {
         if read_private_state
             && (parent.is_some()
-                || request.get("operation").and_then(Value::as_str) != Some("canonical")
-                || request
-                    .get("paths")
-                    .and_then(Value::as_array)
-                    .is_none_or(|paths| paths.len() != 1))
+                || match request.get("operation").and_then(Value::as_str) {
+                    Some("canonical") => request
+                        .get("paths")
+                        .and_then(Value::as_array)
+                        .is_none_or(|paths| paths.len() != 1),
+                    Some("identity") => request.get("state").and_then(Value::as_str).is_none(),
+                    _ => true,
+                })
         {
             return Err(invalid(
                 "private-state search is limited to one canonical path",
             ));
         }
         let label = format!("admin-{}", &random_token()?[..8]);
+        let operation = request.get("operation").and_then(Value::as_str);
         let mut args = vec![
             "--network".into(),
             "none".into(),
@@ -418,13 +495,29 @@ impl Slot {
             "SYS_CHROOT".into(),
             "--mount".into(),
             "type=bind,src=/,dst=/engine,readonly".into(),
-            "--mount".into(),
-            format!("type=bind,src={},dst=/state", path_string(&self.state)?),
         ];
+        if operation == Some("canonical") {
+            args.extend([
+                "--mount".into(),
+                format!(
+                    "type=bind,src={},dst=/state,readonly",
+                    path_string(&self.state)?
+                ),
+            ]);
+        }
         if read_private_state {
-            // Linux Engine paths can cross a user's 0700 state directory.
-            // Only this short-lived canonicalization helper may search it.
+            // Only one-path canonicalization or identity inspection may search private state.
             args.extend(["--cap-add".into(), "DAC_READ_SEARCH".into()]);
+        }
+        match operation {
+            Some("allocate") => args.extend(["--cap-add".into(), "CHOWN".into()]),
+            Some("remove") => args.extend([
+                "--cap-add".into(),
+                "DAC_READ_SEARCH".into(),
+                "--cap-add".into(),
+                "DAC_OVERRIDE".into(),
+            ]),
+            _ => {}
         }
         if let Some(parent) = parent {
             args.extend([
@@ -518,6 +611,17 @@ impl Slot {
             .and_then(Value::as_str)
             .ok_or_else(|| invalid("invalid Engine state mapping"))?
             .to_owned();
+        let (identity_json, _) = self.helper(
+            json!({"operation":"identity","state":state_source}),
+            None,
+            true,
+        )?;
+        let host_uid = fs::metadata(&self.state)?.uid();
+        let identity = ControllerIdentity::from_helper(
+            &identity_json,
+            cfg!(target_os = "linux").then_some(host_uid),
+        )?;
+        self.identity = Some(identity.clone());
         if [scratch.as_str(), docker_root, "/run"]
             .iter()
             .any(|p| overlaps(&state_source, p))
@@ -534,11 +638,13 @@ impl Slot {
         self.state_source = Some(state_source.clone());
         write_json(
             &self.evidence.join("engine-map.json"),
-            &json!({"docker_root":docker_root,"scratch":scratch,"state_source":state_source}),
+            &json!({"docker_root":docker_root,"scratch":scratch,"state_source":state_source,
+                "state_uid":identity.uid,"state_gid":identity.gid,"socket_gid":identity.socket_gid}),
         )?;
         self.allocated = true; // uncertain helper allocation must retain rather than claim CLEAN
         let (proof, _) = self.helper(
-            json!({"operation":"allocate","parent":parent,"scratch":scratch,"token":self.token}),
+            json!({"operation":"allocate","parent":parent,"scratch":scratch,"token":self.token,
+                "uid":identity.uid,"gid":identity.gid}),
             Some(parent),
             false,
         )?;
@@ -608,12 +714,18 @@ impl Slot {
             .file_name()
             .ok_or_else(|| invalid("missing task spec name"))?;
         let mounted_spec = Path::new("/spec").join(spec_name);
+        let identity = self
+            .identity
+            .as_ref()
+            .ok_or_else(|| invalid("missing Engine controller identity"))?;
         let mut args = vec![
             "--network".into(),
             "none".into(),
             "--read-only".into(),
             "--cap-drop".into(),
             "ALL".into(),
+            "--user".into(),
+            identity.user(),
             "--tmpfs".into(),
             "/tmp:rw,nosuid,nodev,size=64m".into(),
             "--env".into(),
@@ -646,6 +758,9 @@ impl Slot {
                 path_string(spec_parent)?
             ),
         ];
+        if let Some(group) = identity.socket_group() {
+            args.extend(["--group-add".into(), group]);
+        }
         args.extend(release_pin_env_args(
             self.release_carrier_ref.as_deref(),
             self.release_carrier_ref
@@ -818,12 +933,25 @@ impl Slot {
         fs::write(self.evidence.join(format!("{name}.stdout")), &output.stdout)?;
         fs::write(self.evidence.join(format!("{name}.stderr")), &output.stderr)?;
         write_json(&self.evidence.join(format!("{name}.inspect.json")), &item)?;
-        if controller && self.status != "TIMEOUT" {
-            let result: Value = serde_json::from_slice(&output.stdout)
-                .map_err(|_| invalid("native TaskResult missing or malformed"))?;
-            if result.get("status").and_then(Value::as_str).is_none() {
-                return Err(invalid("native TaskResult has no status"));
-            }
+        let result = if controller && self.status != "TIMEOUT" {
+            Some(decode_controller_result(
+                &output.stdout,
+                &output.stderr,
+                &item,
+            ))
+        } else {
+            None
+        };
+        if let Some(Err(error)) = &result {
+            self.status = "FAILED".into();
+            self.run_error = Some(match self.run_error.take() {
+                Some(previous) => format!("{previous}; {error}"),
+                None => error.to_string(),
+            });
+        }
+        // Always attempt exact CID removal after logs and inspect have been preserved.
+        self.remove_cid(id)?;
+        if let Some(Ok(result)) = result {
             self.status = if result.get("status").and_then(Value::as_str) == Some("SUCCEEDED") {
                 "SUCCEEDED"
             } else {
@@ -833,7 +961,7 @@ impl Slot {
             write_json(&self.evidence.join("task-result.json"), &result)?;
             self.result = Some(result);
         }
-        self.remove_cid(id)
+        Ok(())
     }
 
     fn finish(&mut self) -> Value {
@@ -1184,6 +1312,33 @@ mod tests {
     use std::os::unix::net::UnixListener;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+
+    #[test]
+    fn controller_identity_uses_engine_state_owner_and_socket_group() {
+        let identity = json!({"state_uid":1001,"state_gid":1001,"socket_uid":0,"socket_gid":123,"socket_mode":0o660});
+        let profile = ControllerIdentity::from_helper(&identity, Some(1001)).unwrap();
+        assert_eq!(profile.user(), "1001:1001");
+        assert_eq!(profile.socket_group(), Some("123".to_owned()));
+        assert!(ControllerIdentity::from_helper(&identity, Some(501)).is_err());
+        assert!(ControllerIdentity::from_helper(&json!({"state_uid":1001,"state_gid":1001,"socket_uid":0,"socket_gid":123,"socket_mode":0o600}), Some(1001)).is_err());
+    }
+
+    #[test]
+    fn missing_controller_result_preserves_startup_reason() {
+        let inspect = json!({"State":{"ExitCode":2}});
+        let error = decode_controller_result(
+            b"",
+            b"castor: invalid controller mount layout: Permission denied (os error 13)\n",
+            &inspect,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("permission denied"), "{error}");
+        assert!(error.to_string().contains("exited 2"), "{error}");
+        assert!(!error.to_string().contains("controller mount layout"));
+        let private =
+            decode_controller_result(b"", b"API_KEY=private-value", &inspect).unwrap_err();
+        assert!(!private.to_string().contains("private-value"));
+    }
     #[test]
     fn installed_controller_receives_current_engine_local_ids() {
         let carrier = format!(

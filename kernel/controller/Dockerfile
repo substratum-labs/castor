@@ -8,6 +8,8 @@ RUN cargo build --locked --release --manifest-path /src/kernel/Cargo.toml --bin 
 
 FROM docker:cli@sha256:018edbc908e08fcc9dbf029c812c34251e9b4719e6f71ca0e5eae2a987d014ca AS dockercli
 FROM node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
+ARG CASTOR_SOURCE_REVISION=unbound
+LABEL org.opencontainers.image.revision=$CASTOR_SOURCE_REVISION
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker

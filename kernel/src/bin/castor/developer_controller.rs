@@ -15,6 +15,8 @@ use std::io;
 #[cfg(target_os = "linux")]
 use std::io::Write;
 #[cfg(target_os = "linux")]
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 #[cfg(any(test, target_os = "linux"))]
 use std::path::Path;
@@ -123,6 +125,29 @@ pub fn engine_helper(raw: &str) -> io::Result<ExitCode> {
         );
         return Ok(ExitCode::SUCCESS);
     }
+    if mode == "identity" {
+        let state = request
+            .get("state")
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid("missing identity state"))?;
+        if !Path::new(state).is_absolute() || fs::canonicalize(state)? != Path::new(state) {
+            return Err(invalid("identity state is not canonical"));
+        }
+        let state_meta = fs::metadata(state)?;
+        let socket_meta = fs::metadata("/var/run/docker.sock")?;
+        if !state_meta.is_dir() || !socket_meta.file_type().is_socket() {
+            return Err(invalid("Engine state or Docker socket has wrong type"));
+        }
+        println!(
+            "{}",
+            json!({
+                "state_uid":state_meta.uid(), "state_gid":state_meta.gid(),
+                "socket_uid":socket_meta.uid(), "socket_gid":socket_meta.gid(),
+                "socket_mode":socket_meta.mode() & 0o777,
+            })
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
     let parent = PathBuf::from(
         request
             .get("parent")
@@ -142,6 +167,16 @@ pub fn engine_helper(raw: &str) -> io::Result<ExitCode> {
     private_scratch(&parent, &path, token)?;
     match mode {
         "allocate" => {
+            let uid = request
+                .get("uid")
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or_else(|| invalid("missing scratch UID"))?;
+            let gid = request
+                .get("gid")
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or_else(|| invalid("missing scratch GID"))?;
             fs::create_dir(&path)?; // exclusive: never adopt another user's directory
             fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
             let marker = path.join(".launcher-owner");
@@ -152,7 +187,15 @@ pub fn engine_helper(raw: &str) -> io::Result<ExitCode> {
                 .open(marker)?;
             file.write_all(token.as_bytes())?;
             file.sync_all()?;
-            File::open(&path)?.sync_all()?;
+            // Keep the already-open directory handle: after chown, cap-free
+            // root cannot traverse a different UID's 0700 scratch path.
+            let directory = File::open(&path)?;
+            let c_path = CString::new(path.as_os_str().as_encoded_bytes())
+                .map_err(|_| invalid("invalid scratch path"))?;
+            if unsafe { libc::chown(c_path.as_ptr(), uid, gid) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            directory.sync_all()?;
             File::open(&parent)?.sync_all()?;
         }
         "remove" => {
@@ -194,14 +237,24 @@ pub fn run_controller() -> io::Result<ExitCode> {
         env::var("CASTOR_CONTROLLER_TASK_SPEC")
             .map_err(|_| invalid("missing controller task spec"))?,
     );
-    if !socket.is_absolute()
-        || !socket.starts_with(&scratch)
-        || !bridge.is_dir()
-        || !Path::new("/project").is_dir()
-        || !spec.starts_with("/spec")
-        || !spec.is_file()
-    {
+    if !socket.is_absolute() || !socket.starts_with(&scratch) || !spec.starts_with("/spec") {
         return Err(invalid("invalid controller mount layout"));
+    }
+    for (name, path, directory) in [
+        ("bridge", bridge.as_path(), true),
+        ("project", Path::new("/project"), true),
+        ("task spec", spec.as_path(), false),
+        ("scratch", scratch.as_path(), true),
+    ] {
+        let meta = fs::metadata(path).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("controller {name} mount {}: {e}", path.display()),
+            )
+        })?;
+        if meta.is_dir() != directory {
+            return Err(invalid("invalid controller mount layout"));
+        }
     }
     let timeout_ms: u64 = env::var("CASTOR_CONTROLLER_TIMEOUT_MS")
         .map_err(|_| invalid("missing controller timeout"))?

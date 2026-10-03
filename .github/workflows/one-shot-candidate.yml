@@ -58,7 +58,7 @@ jobs:
           docker pull --platform "linux/${ARCH}" "$VERIFIER_REF"
           CARRIER_ID=$(docker image inspect --format '{{.Id}}' "$CARRIER_TAG")
           VERIFIER_ID=$(docker image inspect --format '{{.Id}}' "$VERIFIER_REF")
-          docker build --platform "linux/${ARCH}" -f kernel/controller/Dockerfile \
+          docker build --platform "linux/${ARCH}" --build-arg "CASTOR_SOURCE_REVISION=${GITHUB_SHA}" -f kernel/controller/Dockerfile \
             -t "$CONTROLLER_TAG" .
           CONTROLLER_ID=$(docker image inspect --format '{{.Id}}' "$CONTROLLER_TAG")
           docker save -o "out/carrier-${ARCH}.tar" "$CARRIER_TAG"
@@ -237,6 +237,7 @@ jobs:
           CONTROLLER_REF=$(python3 -c 'import json; print(json.load(open("out/native-refs.json"))["controller"])')
           docker image inspect "$CARRIER_REF" >/dev/null
           docker image inspect "$CONTROLLER_REF" >/dev/null
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$CONTROLLER_REF")" = "$GITHUB_SHA"
           docker image rm "$CARRIER_TAG" "$CONTROLLER_TAG" "$CARRIER_CANDIDATE" "$CONTROLLER_CANDIDATE"
           docker image rm "$CARRIER_REF" "$CONTROLLER_REF" 2>/dev/null || true
           if docker image inspect "$CARRIER_REF" >/dev/null 2>&1 || docker image inspect "$CONTROLLER_REF" >/dev/null 2>&1; then
