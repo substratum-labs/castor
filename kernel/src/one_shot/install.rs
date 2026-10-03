@@ -25,12 +25,6 @@ fn valid_hex(value: &str, length: usize) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
-fn valid_image_id(value: &str) -> bool {
-    value
-        .strip_prefix("sha256:")
-        .is_some_and(|hex| valid_hex(hex, 64))
-}
-
 fn valid_reference(value: &str) -> bool {
     let Some((repo, digest)) = value.rsplit_once("@sha256:") else {
         return false;
@@ -75,7 +69,6 @@ pub struct HostAssets {
 #[serde(deny_unknown_fields)]
 pub struct ImagePin {
     pub reference: String,
-    pub image_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,7 +118,7 @@ impl ReleaseManifest {
                 )
                 || [&pins.controller, &pins.carrier, &pins.verifier]
                     .iter()
-                    .any(|pin| !valid_reference(&pin.reference) || !valid_image_id(&pin.image_id))
+                    .any(|pin| !valid_reference(&pin.reference))
             {
                 return Err(invalid("invalid Castor release image pin"));
             }

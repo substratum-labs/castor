@@ -44,6 +44,9 @@ pub struct PreparedRuntime {
     pub release_version: String,
     pub source_revision: String,
     pub engine_arch: String,
+    pub controller_ref: String,
+    pub carrier_ref: String,
+    pub verifier_ref: String,
     pub controller_id: String,
     pub carrier_id: String,
     pub verifier_id: String,
@@ -56,6 +59,15 @@ fn normalize_arch(value: &str) -> &str {
         "aarch64" => "arm64",
         other => other,
     }
+}
+
+fn valid_image_id(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    })
 }
 
 fn checked_platform(
@@ -95,12 +107,14 @@ fn verify_image(
     let observed = engine
         .inspect(&pin.reference)?
         .ok_or_else(|| invalid("prepared image is missing"))?;
-    if observed.id != pin.image_id
+    if !valid_image_id(&observed.id)
         || observed.os != "linux"
         || normalize_arch(&observed.arch) != arch
         || !digest_reference_matches(pin, &observed.repo_digests)
     {
-        return Err(invalid("prepared image identity differs from release pin"));
+        return Err(invalid(
+            "prepared image digest, platform or local ID is invalid",
+        ));
     }
     Ok(observed)
 }
@@ -112,45 +126,60 @@ fn receipt_path(state_root: &Path, release: &InstalledRelease, arch: &str) -> Pa
     ))
 }
 
-fn receipt_for(release: &InstalledRelease, pins: &PlatformImages, arch: &str) -> PreparedRuntime {
+fn receipt_for(
+    release: &InstalledRelease,
+    pins: &PlatformImages,
+    arch: &str,
+    controller_id: String,
+    carrier_id: String,
+    verifier_id: String,
+) -> PreparedRuntime {
     PreparedRuntime {
         release_version: release.manifest.release_version.clone(),
         source_revision: release.manifest.source_revision.clone(),
         engine_arch: arch.into(),
-        controller_id: pins.controller.image_id.clone(),
-        carrier_id: pins.carrier.image_id.clone(),
-        verifier_id: pins.verifier.image_id.clone(),
+        controller_ref: pins.controller.reference.clone(),
+        carrier_ref: pins.carrier.reference.clone(),
+        verifier_ref: pins.verifier.reference.clone(),
+        controller_id,
+        carrier_id,
+        verifier_id,
         carrier_tag: pins.carrier_tag.clone(),
     }
 }
 
 fn read_receipt(path: &Path) -> io::Result<PreparedRuntime> {
     let mut bytes = Vec::new();
-    let mut file = OpenOptions::new()
+    let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)?;
     if !file.metadata()?.is_file() || file.metadata()?.len() > 4096 {
         return Err(invalid("invalid Castor runtime receipt"));
     }
-    file.read_to_end(&mut bytes)?;
+    file.take(4097).read_to_end(&mut bytes)?;
+    if bytes.len() > 4096 {
+        return Err(invalid("invalid Castor runtime receipt"));
+    }
     serde_json::from_slice(&bytes).map_err(io::Error::other)
 }
 
-fn verify_receipt(
+fn verify_receipt_metadata(
     receipt: &PreparedRuntime,
     release: &InstalledRelease,
     pins: &PlatformImages,
     arch: &str,
 ) -> io::Result<()> {
-    let expected = receipt_for(release, pins, arch);
-    if receipt.release_version != expected.release_version
-        || receipt.source_revision != expected.source_revision
-        || receipt.engine_arch != expected.engine_arch
-        || receipt.controller_id != expected.controller_id
-        || receipt.carrier_id != expected.carrier_id
-        || receipt.verifier_id != expected.verifier_id
-        || receipt.carrier_tag != expected.carrier_tag
+    if receipt.release_version != release.manifest.release_version
+        || receipt.source_revision != release.manifest.source_revision
+        || receipt.engine_arch != arch
+        || receipt.controller_ref != pins.controller.reference
+        || receipt.carrier_ref != pins.carrier.reference
+        || receipt.verifier_ref != pins.verifier.reference
+        || receipt.carrier_tag != pins.carrier_tag
+        || !valid_image_id(&receipt.controller_id)
+        || !valid_image_id(&receipt.carrier_id)
+        || !valid_image_id(&receipt.verifier_id)
     {
         return Err(invalid(
             "Castor runtime receipt differs from installed release",
@@ -167,14 +196,22 @@ pub fn revalidate(
     let platform = checked_platform(release, engine)?;
     let pins = release.pins(&platform.arch)?;
     let receipt = read_receipt(&receipt_path(state_root, release, &platform.arch))?;
-    verify_receipt(&receipt, release, pins, &platform.arch)?;
-    for pin in [&pins.controller, &pins.carrier, &pins.verifier] {
-        verify_image(engine, pin, &platform.arch)?;
+    verify_receipt_metadata(&receipt, release, pins, &platform.arch)?;
+    for (pin, expected_id) in [
+        (&pins.controller, receipt.controller_id.as_str()),
+        (&pins.carrier, receipt.carrier_id.as_str()),
+        (&pins.verifier, receipt.verifier_id.as_str()),
+    ] {
+        if verify_image(engine, pin, &platform.arch)?.id != expected_id {
+            return Err(invalid(
+                "prepared image local ID changed since runtime prepare",
+            ));
+        }
     }
     let carrier = engine
         .inspect(&pins.carrier_tag)?
         .ok_or_else(|| invalid("prepared carrier tag is missing"))?;
-    if carrier.id != pins.carrier.image_id {
+    if carrier.id != receipt.carrier_id {
         return Err(invalid("prepared carrier tag changed"));
     }
     Ok(receipt)
@@ -189,24 +226,37 @@ pub fn prepare(
     let pins = release.pins(&platform.arch)?;
     let path = receipt_path(state_root, release, &platform.arch);
     if path.exists() {
-        return revalidate(release, engine, state_root);
+        if let Ok(receipt) = revalidate(release, engine, state_root) {
+            return Ok(receipt);
+        }
+        // Explicit preparation may refresh a changed Engine-local representation;
+        // all exact registry digests are reverified before replacing the receipt.
     }
+    let mut observed = Vec::with_capacity(3);
     for pin in [&pins.controller, &pins.carrier, &pins.verifier] {
         if engine.inspect(&pin.reference)?.is_none() {
             engine.pull(&pin.reference)?;
         }
-        verify_image(engine, pin, &platform.arch)?;
+        observed.push(verify_image(engine, pin, &platform.arch)?);
     }
+    let carrier_id = observed[1].id.clone();
     match engine.inspect(&pins.carrier_tag)? {
-        Some(observed) if observed.id == pins.carrier.image_id => (),
+        Some(existing) if existing.id == carrier_id => (),
         Some(_) => {
             return Err(invalid(
                 "Castor-owned carrier tag conflicts with release pin",
             ))
         }
-        None => engine.tag(&pins.carrier.image_id, &pins.carrier_tag)?,
+        None => engine.tag(&carrier_id, &pins.carrier_tag)?,
     }
-    let receipt = receipt_for(release, pins, &platform.arch);
+    let receipt = receipt_for(
+        release,
+        pins,
+        &platform.arch,
+        observed[0].id.clone(),
+        carrier_id,
+        observed[2].id.clone(),
+    );
     let parent = path
         .parent()
         .ok_or_else(|| invalid("runtime state parent missing"))?;
@@ -268,7 +318,13 @@ fn bounded_program(
 }
 
 pub fn check_node_major() -> io::Result<()> {
-    let output = bounded_program("node", &["--version"], Duration::from_secs(5))?;
+    let output =
+        bounded_program("node", &["--version"], Duration::from_secs(5)).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("Node.js 22 or newer unavailable: {error}"),
+            )
+        })?;
     let version = std::str::from_utf8(&output.stdout)
         .map_err(|_| invalid("invalid Node.js version output"))?;
     let major: u32 = version

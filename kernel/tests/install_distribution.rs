@@ -27,8 +27,7 @@ fn host_arch() -> &'static str {
 
 fn pin(name: &str) -> Value {
     json!({
-        "reference": format!("ghcr.io/substratum-labs/{name}@sha256:{}", "a".repeat(64)),
-        "image_id": format!("sha256:{}", "b".repeat(64))
+        "reference": format!("ghcr.io/substratum-labs/{name}@sha256:{}", "a".repeat(64))
     })
 }
 
@@ -154,7 +153,10 @@ fn rejects_nested_duplicate_pin_key() {
     let (root, exe) = fixture();
     let path = release_file(root.path());
     let body = String::from_utf8(fs::read(&path).unwrap()).unwrap();
-    let old = format!("\"image_id\":\"sha256:{}\"", "b".repeat(64));
+    let old = format!(
+        "\"reference\":\"ghcr.io/substratum-labs/castor-controller@sha256:{}\"",
+        "a".repeat(64)
+    );
     let replacement = format!("{old},{old}");
     let duplicate = body.replacen(&old, &replacement, 1);
     assert_ne!(duplicate, body);
@@ -291,7 +293,41 @@ fn installed_pack_binds_versioned_carrier_instead_of_legacy_tag() {
     fs::create_dir(&fake_bin).unwrap();
     let docker = fake_bin.join("docker");
     let docker_log = root.path().join("docker.log");
-    fs::write(&docker, b"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CASTOR_FAKE_DOCKER_LOG\"\nif [ \"$1\" = info ]; then printf 'linux/amd64\\n'; else printf 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\\n'; fi\n").unwrap();
+    fs::write(
+        &docker,
+        br#"#!/bin/sh
+printf '%s\n' "$*" >> "$CASTOR_FAKE_DOCKER_LOG"
+if [ "$1" = info ]; then printf 'linux/amd64\n'; exit 0; fi
+case "$5" in
+  *controller@*) id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;;
+  *carrier@*) id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;;
+  *verifier@*) id=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc;;
+  *one-shot-*) id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;;
+  *) exit 1;;
+esac
+if [ "$4" = '{{json .}}' ]; then
+  printf '{"Id":"sha256:%s","RepoDigests":["%s"],"Os":"linux","Architecture":"amd64"}\n' "$id" "$5"
+else
+  printf 'sha256:%s\n' "$id"
+fi
+"#,
+    )
+    .unwrap();
+    let pins = &manifest["images"]["linux/amd64"];
+    let receipt = json!({
+        "release_version":"0.1.0", "source_revision":"c".repeat(40), "engine_arch":"amd64",
+        "controller_ref":pins["controller"]["reference"], "carrier_ref":pins["carrier"]["reference"],
+        "verifier_ref":pins["verifier"]["reference"], "controller_id":format!("sha256:{}", "a".repeat(64)),
+        "carrier_id":format!("sha256:{}", "b".repeat(64)), "verifier_id":format!("sha256:{}", "c".repeat(64)),
+        "carrier_tag":pins["carrier_tag"]
+    });
+    let runtime_dir = root.path().join(".castor/runtime");
+    fs::create_dir_all(&runtime_dir).unwrap();
+    fs::write(
+        runtime_dir.join("0.1.0-linux-amd64.json"),
+        serde_json::to_vec(&receipt).unwrap(),
+    )
+    .unwrap();
     fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
     let bundle = root.path().join("bundle");
     let output = Command::new(&exe)
@@ -301,6 +337,7 @@ fn installed_pack_binds_versioned_carrier_instead_of_legacy_tag() {
         .arg(&spec)
         .arg("--out")
         .arg(&bundle)
+        .env("HOME", root.path())
         .env("PATH", format!("{}:/usr/bin:/bin", fake_bin.display()))
         .env("CASTOR_FAKE_DOCKER_LOG", &docker_log)
         .output()
@@ -330,9 +367,42 @@ fn installed_pack_binds_versioned_carrier_instead_of_legacy_tag() {
         .arg(&spec)
         .arg("--out")
         .arg(root.path().join("windows-bundle"))
+        .env("HOME", root.path())
         .env("PATH", format!("{}:/usr/bin:/bin", fake_bin.display()))
         .output()
         .unwrap();
     assert_eq!(rejected.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("Linux Docker Engine"));
+}
+
+#[test]
+fn installed_prepare_reports_missing_node_explicitly_before_docker() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+    let (root, exe) = fixture();
+    fs::copy(env!("CARGO_BIN_EXE_castor"), root.path().join("bin/castor")).unwrap();
+    fs::set_permissions(
+        root.path().join("bin/castor"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let manifest_path = release_file(root.path());
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["host"]["castor_sha256"] =
+        json!(digest(&fs::read(root.path().join("bin/castor")).unwrap()));
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let empty_path = root.path().join("empty-path");
+    fs::create_dir(&empty_path).unwrap();
+    let output = Command::new(&exe)
+        .args(["runtime", "prepare"])
+        .env("HOME", root.path())
+        .env("PATH", &empty_path)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Node.js 22"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

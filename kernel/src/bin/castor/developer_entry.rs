@@ -316,6 +316,7 @@ struct Slot {
     parent: Option<String>,
     state_source: Option<String>,
     verifier_id: String,
+    release_carrier_ref: Option<String>,
     allocated: bool,
     adapter: Option<Child>,
     adapter_dir: Option<tempfile::TempDir>,
@@ -347,6 +348,7 @@ impl Slot {
             parent: None,
             state_source: None,
             verifier_id,
+            release_carrier_ref: None,
             allocated: false,
             adapter: None,
             adapter_dir: None,
@@ -579,7 +581,7 @@ impl Slot {
             .file_name()
             .ok_or_else(|| invalid("missing task spec name"))?;
         let mounted_spec = Path::new("/spec").join(spec_name);
-        let args = vec![
+        let mut args = vec![
             "--network".into(),
             "none".into(),
             "--read-only".into(),
@@ -616,8 +618,14 @@ impl Slot {
                 "type=bind,src={},dst=/spec,readonly",
                 path_string(spec_parent)?
             ),
-            self.image.clone(),
         ];
+        args.extend(release_pin_env_args(
+            self.release_carrier_ref.as_deref(),
+            self.release_carrier_ref
+                .as_ref()
+                .map(|_| self.verifier_id.as_str()),
+        )?);
+        args.push(self.image.clone());
         let id = self.create(&args, "controller")?;
         let item = self
             .docker
@@ -917,6 +925,25 @@ impl Slot {
     }
 }
 
+fn release_pin_env_args(carrier: Option<&str>, verifier: Option<&str>) -> io::Result<Vec<String>> {
+    match (carrier, verifier) {
+        (None, None) => Ok(Vec::new()),
+        (Some(carrier), Some(verifier)) => {
+            castor_kernel::one_shot::image::validate_base_image(carrier)?;
+            if !castor_kernel::one_shot::image::valid_digest(verifier) {
+                return Err(invalid("invalid current-Engine verifier ID"));
+            }
+            Ok(vec![
+                "--env".into(),
+                format!("CASTOR_RELEASE_CARRIER_REF={carrier}"),
+                "--env".into(),
+                format!("CASTOR_RELEASE_VERIFIER_ID={verifier}"),
+            ])
+        }
+        _ => Err(invalid("incomplete current-Engine controller pins")),
+    }
+}
+
 fn local_script(name: &str) -> io::Result<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -1031,6 +1058,7 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
                 verifier,
                 local_script("ollama_model_adapter.mjs")?,
                 json!(null),
+                None,
             ));
         }
         let installed = InstalledRelease::load_current()?;
@@ -1058,9 +1086,10 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
             prepared.verifier_id,
             installed.script(HostScript::OllamaAdapter).to_owned(),
             release,
+            Some(carrier),
         ))
     })();
-    let (receipt, pin, image, verifier, adapter_script, release) = match preflight {
+    let (receipt, pin, image, verifier, adapter_script, release, carrier_ref) = match preflight {
         Ok(value) => value,
         Err(error) => return preflight_failure(&state, &error),
     };
@@ -1069,6 +1098,7 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
         &json!({"model_pin":pin,"controller_image":image,"verifier_image":verifier,"pack_receipt":receipt,"release":release}),
     )?;
     let mut slot = Slot::new(state, token, image, verifier)?;
+    slot.release_carrier_ref = carrier_ref;
     let run_result = (|| -> io::Result<()> {
         slot.preflight_engine()?;
         if env::var_os("CASTOR_DEVELOPER_SOURCE_CHECKOUT").as_deref()
@@ -1111,6 +1141,23 @@ mod tests {
     use std::os::unix::net::UnixListener;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    #[test]
+    fn installed_controller_receives_current_engine_local_ids() {
+        let carrier = format!(
+            "substratum/castor-pi-carrier:one-shot-0.1.0@sha256:{}",
+            "a".repeat(64)
+        );
+        let verifier = format!("sha256:{}", "b".repeat(64));
+        let args = release_pin_env_args(Some(&carrier), Some(&verifier)).unwrap();
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--env", &format!("CASTOR_RELEASE_CARRIER_REF={carrier}")]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--env", &format!("CASTOR_RELEASE_VERIFIER_ID={verifier}")]));
+        assert!(release_pin_env_args(Some(&carrier), None).is_err());
+    }
+
     #[test]
     fn private_adapter_socket_stays_short_with_a_long_state_root() {
         let root = tempfile::tempdir().unwrap();

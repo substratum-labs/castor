@@ -13,8 +13,7 @@ fn sha(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 fn pin(name: &str, hex: char) -> serde_json::Value {
-    json!({"reference": format!("ghcr.io/substratum-labs/{name}@sha256:{}", hex.to_string().repeat(64)),
-           "image_id": format!("sha256:{}", hex.to_string().repeat(64))})
+    json!({"reference": format!("ghcr.io/substratum-labs/{name}@sha256:{}", hex.to_string().repeat(64))})
 }
 fn installed() -> (tempfile::TempDir, InstalledRelease) {
     let root = tempfile::tempdir().unwrap();
@@ -31,8 +30,7 @@ fn installed() -> (tempfile::TempDir, InstalledRelease) {
     .unwrap();
     let images = json!({
         "controller": pin("controller", 'a'), "carrier": pin("carrier", 'b'),
-        "verifier": {"reference": format!("docker.io/library/python:3.12-slim@sha256:{}", "c".repeat(64)),
-                     "image_id": format!("sha256:{}", "c".repeat(64))},
+        "verifier": {"reference": format!("docker.io/library/python:3.12-slim@sha256:{}", "c".repeat(64))},
         "carrier_tag": "substratum/castor-pi-carrier:one-shot-0.1.0"
     });
     let body = json!({"schema_version":1,"release_version":"0.1.0","source_revision":"d".repeat(40),
@@ -47,6 +45,16 @@ fn installed() -> (tempfile::TempDir, InstalledRelease) {
     .unwrap();
     let release = InstalledRelease::load_at(&exe).unwrap();
     (root, release)
+}
+
+fn name_for_pin(reference: &str) -> &str {
+    if reference.contains("controller") {
+        "controller"
+    } else if reference.contains("carrier") {
+        "carrier"
+    } else {
+        "verifier"
+    }
 }
 
 struct FakeEngine {
@@ -65,7 +73,15 @@ impl FakeEngine {
             remote.insert(
                 pin.reference.clone(),
                 ImageObservation {
-                    id: pin.image_id.clone(),
+                    id: format!(
+                        "sha256:{}",
+                        match name_for_pin(&pin.reference) {
+                            "controller" => "d",
+                            "carrier" => "e",
+                            _ => "f",
+                        }
+                        .repeat(64)
+                    ),
                     repo_digests: vec![pin.reference.clone()],
                     os: "linux".into(),
                     arch: arch.into(),
@@ -140,10 +156,7 @@ fn prepare_is_idempotent_and_revalidate_is_read_only() {
     let state = tempfile::tempdir().unwrap();
     let engine = FakeEngine::new(&release, "amd64");
     let first = prepare(&release, &engine, state.path()).unwrap();
-    assert_eq!(
-        first.carrier_id,
-        release.pins("amd64").unwrap().carrier.image_id
-    );
+    assert_eq!(first.carrier_id, format!("sha256:{}", "e".repeat(64)));
     assert!(marker(state.path()).exists());
     assert_eq!(
         engine
@@ -168,7 +181,7 @@ fn prepare_is_idempotent_and_revalidate_is_read_only() {
         .any(|call| call.starts_with("pull ") || call.starts_with("tag ")));
     engine.tags.borrow_mut().insert(
         first.carrier_tag.clone(),
-        format!("sha256:{}", "e".repeat(64)),
+        format!("sha256:{}", "9".repeat(64)),
     );
     assert!(revalidate(&release, &engine, state.path()).is_err());
 }
@@ -188,7 +201,7 @@ fn interrupted_prepare_never_writes_ready_marker() {
 }
 
 #[test]
-fn rejects_unsupported_platform_and_wrong_image_id_before_ready() {
+fn rejects_unsupported_platform_and_malformed_observed_id_before_ready() {
     let (_fixture, release) = installed();
     let state = tempfile::tempdir().unwrap();
     let mut engine = FakeEngine::new(&release, "amd64");
@@ -197,7 +210,7 @@ fn rejects_unsupported_platform_and_wrong_image_id_before_ready() {
     assert!(!engine.calls().iter().any(|call| call.starts_with("pull ")));
     let mut engine = FakeEngine::new(&release, "amd64");
     let controller = &release.pins("amd64").unwrap().controller.reference;
-    engine.remote.get_mut(controller).unwrap().id = format!("sha256:{}", "f".repeat(64));
+    engine.remote.get_mut(controller).unwrap().id = "malformed-image-id".into();
     assert!(prepare(&release, &engine, state.path()).is_err());
     assert!(!marker(state.path()).exists());
 }
@@ -220,4 +233,68 @@ fn docker_hub_library_alias_preserves_verifier_digest_identity() {
         .unwrap()
         .repo_digests = vec![format!("python@sha256:{}", "d".repeat(64))];
     assert!(revalidate(&release, &engine, state.path()).is_err());
+}
+
+#[test]
+fn explicit_prepare_refreshes_ids_after_engine_store_change() {
+    let (_fixture, release) = installed();
+    let state = tempfile::tempdir().unwrap();
+    let engine = FakeEngine::new(&release, "amd64");
+    let old = prepare(&release, &engine, state.path()).unwrap();
+    let pins = release.pins("amd64").unwrap();
+    for (pin, digit) in [
+        (&pins.controller, "1"),
+        (&pins.carrier, "2"),
+        (&pins.verifier, "3"),
+    ] {
+        engine
+            .local
+            .borrow_mut()
+            .get_mut(&pin.reference)
+            .unwrap()
+            .id = format!("sha256:{}", digit.repeat(64));
+    }
+    let new_carrier = format!("sha256:{}", "2".repeat(64));
+    engine
+        .tags
+        .borrow_mut()
+        .insert(pins.carrier_tag.clone(), new_carrier.clone());
+    assert!(revalidate(&release, &engine, state.path()).is_err());
+    engine.clear_calls();
+    let refreshed = prepare(&release, &engine, state.path()).unwrap();
+    assert_ne!(refreshed.controller_id, old.controller_id);
+    assert_eq!(refreshed.carrier_id, new_carrier);
+    assert!(!engine
+        .calls()
+        .iter()
+        .any(|call| call.starts_with("pull ") || call.starts_with("tag ")));
+    assert_eq!(
+        revalidate(&release, &engine, state.path())
+            .unwrap()
+            .carrier_id,
+        new_carrier
+    );
+}
+
+#[test]
+fn digest_mismatch_cannot_be_repaired_by_a_matching_local_id() {
+    let (_fixture, release) = installed();
+    let state = tempfile::tempdir().unwrap();
+    let engine = FakeEngine::new(&release, "amd64");
+    let controller = &release.pins("amd64").unwrap().controller.reference;
+    engine.remote.get(controller).unwrap();
+    engine.local.borrow_mut().insert(
+        controller.clone(),
+        ImageObservation {
+            id: format!("sha256:{}", "d".repeat(64)),
+            repo_digests: vec![format!(
+                "ghcr.io/substratum-labs/controller@sha256:{}",
+                "9".repeat(64)
+            )],
+            os: "linux".into(),
+            arch: "amd64".into(),
+        },
+    );
+    assert!(prepare(&release, &engine, state.path()).is_err());
+    assert!(!marker(state.path()).exists());
 }

@@ -24,8 +24,7 @@ def fake_elf(machine=62):
 
 
 def pin(name, char):
-    return {"reference": f"localhost:5000/castor/{name}@sha256:{char * 64}",
-            "image_id": f"sha256:{char * 64}"}
+    return {"reference": f"localhost:5000/castor/{name}@sha256:{char * 64}"}
 
 
 def pins():

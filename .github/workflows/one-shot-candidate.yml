@@ -59,8 +59,6 @@ jobs:
           CARRIER_ID=$(docker image inspect --format '{{.Id}}' "$CARRIER_TAG")
           VERIFIER_ID=$(docker image inspect --format '{{.Id}}' "$VERIFIER_REF")
           docker build --platform "linux/${ARCH}" -f kernel/controller/Dockerfile \
-            --build-arg "CASTOR_RELEASE_CARRIER_REF=${CARRIER_TAG}@${CARRIER_ID}" \
-            --build-arg "CASTOR_RELEASE_VERIFIER_ID=${VERIFIER_ID}" \
             -t "$CONTROLLER_TAG" .
           CONTROLLER_ID=$(docker image inspect --format '{{.Id}}' "$CONTROLLER_TAG")
           docker save -o "out/carrier-${ARCH}.tar" "$CARRIER_TAG"
@@ -134,13 +132,14 @@ jobs:
               controller_repo = f'localhost:5000/castor/controller'
               carrier = image(carrier_repo + ':candidate-' + arch)
               controller = image(controller_repo + ':candidate-' + arch)
-              if carrier['Id'] != ids['carrier_id'] or controller['Id'] != ids['controller_id']:
-                  raise SystemExit('loaded image ID differs from native build')
+              # Native build IDs are retained as evidence, but a different
+              # Engine's image store can report a different local .Id.
+              print(arch, 'native_ids', ids, 'assembly_ids',
+                    {'carrier': carrier['Id'], 'controller': controller['Id']})
               pins['linux/' + arch] = {
-                  'controller': {'reference': digest(controller, controller_repo), 'image_id': ids['controller_id']},
-                  'carrier': {'reference': digest(carrier, carrier_repo), 'image_id': ids['carrier_id']},
-                  'verifier': {'reference': 'docker.io/library/python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea',
-                               'image_id': ids['verifier_id']},
+                  'controller': {'reference': digest(controller, controller_repo)},
+                  'carrier': {'reference': digest(carrier, carrier_repo)},
+                  'verifier': {'reference': 'docker.io/library/python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea'},
                   'carrier_tag': 'substratum/castor-pi-carrier:one-shot-0.1.0-rc1',
               }
           pathlib.Path('out/engine-pins.json').write_text(json.dumps(pins, sort_keys=True))
@@ -164,6 +163,10 @@ jobs:
           mkdir -p /tmp/castor-candidate-install
           tar -xzf out/castor-one-shot-0.1.0-rc1-linux-amd64.tar.gz -C /tmp/castor-candidate-install
           export HOME=$(mktemp -d)
+          # The assembly job loaded arm64 last, leaving this shared local tag
+          # on the wrong architecture. Remove only that candidate tag so the
+          # amd64 prepare gate exercises a clean first installation.
+          docker image rm substratum/castor-pi-carrier:one-shot-0.1.0-rc1
           /tmp/castor-candidate-install/bin/castor runtime prepare
           test -f "$HOME/.castor/runtime/0.1.0-rc1-linux-amd64.json"
       - uses: actions/upload-artifact@v4

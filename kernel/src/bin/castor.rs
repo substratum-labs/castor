@@ -10,7 +10,7 @@ use castor_kernel::one_shot::project::engine::{
 };
 use castor_kernel::one_shot::result::TaskResult;
 use castor_kernel::one_shot::runtime_prepare::{
-    check_node_major, prepare, DockerEngine, EngineOps,
+    check_node_major, prepare, revalidate, DockerEngine,
 };
 use castor_kernel::one_shot::supervisor::{
     run_product_task, run_test_task, test_state_root, RunOutcome,
@@ -99,12 +99,10 @@ fn run() -> io::Result<ExitCode> {
         let receipt = if installed_layout {
             let release = InstalledRelease::load_current()?;
             let engine = DockerEngine;
-            let platform = engine.platform()?;
-            if platform.os != "linux" {
-                return Err(io::Error::other("Castor requires a Linux Docker Engine"));
-            }
-            let pins = release.pins(&platform.arch)?;
-            let carrier = format!("{}@{}", pins.carrier_tag, pins.carrier.image_id);
+            let home =
+                PathBuf::from(env::var_os("HOME").ok_or_else(|| io::Error::other("missing HOME"))?);
+            let prepared = revalidate(&release, &engine, &home.join(".castor"))?;
+            let carrier = format!("{}@{}", prepared.carrier_tag, prepared.carrier_id);
             pack_project_with_carrier(&project, &spec, &out, &carrier)?
         } else {
             pack_project(&project, &spec, &out)?

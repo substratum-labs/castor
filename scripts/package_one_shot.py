@@ -54,12 +54,12 @@ def checked_pins(path: pathlib.Path, version: str) -> dict:
             raise ValueError("carrier tag/version mismatch")
         for role in ("controller", "carrier", "verifier"):
             pin = values[role]
-            if not isinstance(pin, dict) or set(pin) != {"reference", "image_id"}:
+            if not isinstance(pin, dict) or set(pin) != {"reference"}:
                 raise ValueError(f"invalid {role} pin")
-            reference, image_id = pin["reference"], pin["image_id"]
-            if not isinstance(reference, str) or not isinstance(image_id, str):
-                raise ValueError(f"invalid {role} pin types")
-            if not SHA256.fullmatch(image_id) or "@" not in reference or not SHA256.fullmatch(reference.rsplit("@", 1)[1]):
+            reference = pin["reference"]
+            if not isinstance(reference, str):
+                raise ValueError(f"invalid {role} pin type")
+            if "@" not in reference or not SHA256.fullmatch(reference.rsplit("@", 1)[1]):
                 raise ValueError(f"invalid {role} pin digest")
             repo = reference.rsplit("@", 1)[0]
             if not re.fullmatch(r"[a-z0-9][a-z0-9./:_-]*", repo) or ".." in repo:
