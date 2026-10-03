@@ -7,9 +7,10 @@ use std::process::Command;
 
 #[test]
 fn verified_archive_builds_digest_addressed_read_only_workspace() {
-    let carrier = "substratum/castor-pi-carrier:v1";
+    let carrier = std::env::var("CASTOR_TEST_CARRIER_TAG")
+        .unwrap_or_else(|_| "substratum/castor-pi-carrier:v1".into());
     let inspect = Command::new("docker")
-        .args(["image", "inspect", "--format", "{{.Id}}", carrier])
+        .args(["image", "inspect", "--format", "{{.Id}}", &carrier])
         .output()
         .expect("inspect locally built Pi carrier");
     assert!(inspect.status.success(), "build the Pi carrier first");

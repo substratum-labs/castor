@@ -84,10 +84,14 @@ impl StagedSnapshot {
         let dockerfile = self.root.path().join("Dockerfile");
         fs::write(
             &dockerfile,
-            "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nCOPY --chown=10001:10001 --chmod=0555 workspace_snapshot/ /workspace/\n",
+            "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nUSER root\nCOPY --chown=10001:10001 workspace_snapshot/ /workspace/\nRUN chmod -R a+rX,a-w /workspace\nUSER 10001:10001\n",
         )?;
         let build_result = Command::new("docker")
             .arg("build")
+            // This build must consume the ID-checked local tag without a
+            // registry lookup. BuildKit may resolve even a local FROM tag
+            // through Docker Hub on Desktop's containerd image store.
+            .env("DOCKER_BUILDKIT", "0")
             .arg("--quiet")
             .arg("--build-arg")
             .arg(format!("BASE_IMAGE={local_tag}"))
