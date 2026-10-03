@@ -5,9 +5,13 @@ mod developer_entry;
 use castor_kernel::one_shot::image::{valid_digest, StagedSnapshot};
 use castor_kernel::one_shot::install::InstalledRelease;
 use castor_kernel::one_shot::manifest::TaskManifest;
-use castor_kernel::one_shot::project::engine::{pack_project, run_project, run_project_with_pins};
+use castor_kernel::one_shot::project::engine::{
+    pack_project, pack_project_with_carrier, run_project, run_project_with_pins,
+};
 use castor_kernel::one_shot::result::TaskResult;
-use castor_kernel::one_shot::runtime_prepare::{check_node_major, prepare, DockerEngine};
+use castor_kernel::one_shot::runtime_prepare::{
+    check_node_major, prepare, DockerEngine, EngineOps,
+};
 use castor_kernel::one_shot::supervisor::{
     run_product_task, run_test_task, test_state_root, RunOutcome,
 };
@@ -86,7 +90,25 @@ fn run() -> io::Result<ExitCode> {
         let project = project_path.ok_or_else(invalid_args)?;
         let spec = spec_path.ok_or_else(invalid_args)?;
         let out = out_path.ok_or_else(invalid_args)?;
-        let receipt = pack_project(&project, &spec, &out)?;
+        let executable = std::fs::canonicalize(env::current_exe()?)?;
+        let installed_layout = executable.file_name().is_some_and(|name| name == "castor")
+            && executable
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .is_some_and(|name| name == "bin");
+        let receipt = if installed_layout {
+            let release = InstalledRelease::load_current()?;
+            let engine = DockerEngine;
+            let platform = engine.platform()?;
+            if platform.os != "linux" {
+                return Err(io::Error::other("Castor requires a Linux Docker Engine"));
+            }
+            let pins = release.pins(&platform.arch)?;
+            let carrier = format!("{}@{}", pins.carrier_tag, pins.carrier.image_id);
+            pack_project_with_carrier(&project, &spec, &out, &carrier)?
+        } else {
+            pack_project(&project, &spec, &out)?
+        };
         println!(
             "{}",
             serde_json::to_string(&receipt).map_err(io::Error::other)?

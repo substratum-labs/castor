@@ -245,3 +245,94 @@ fn installed_run_rejects_missing_prepared_runtime_before_model_or_controller_bui
         "controller built from source: {calls}"
     );
 }
+
+#[test]
+fn installed_pack_binds_versioned_carrier_instead_of_legacy_tag() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+    let (root, exe) = fixture();
+    fs::copy(env!("CARGO_BIN_EXE_castor"), root.path().join("bin/castor")).unwrap();
+    fs::set_permissions(
+        root.path().join("bin/castor"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let manifest_path = release_file(root.path());
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["host"]["castor_sha256"] =
+        json!(digest(&fs::read(root.path().join("bin/castor")).unwrap()));
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let project = root.path().join("project");
+    fs::create_dir(&project).unwrap();
+    fs::write(project.join("hello.txt"), b"hello\n").unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["add", "hello.txt"],
+        vec![
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    ] {
+        assert!(Command::new("git")
+            .args(args)
+            .current_dir(&project)
+            .status()
+            .unwrap()
+            .success());
+    }
+    let spec = root.path().join("spec.json");
+    fs::write(&spec, br#"{"schema_version":1,"task_prompt":"Fix hello","verification_command":["cat","hello.txt"]}"#).unwrap();
+    let fake_bin = root.path().join("fake-bin");
+    fs::create_dir(&fake_bin).unwrap();
+    let docker = fake_bin.join("docker");
+    let docker_log = root.path().join("docker.log");
+    fs::write(&docker, b"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CASTOR_FAKE_DOCKER_LOG\"\nif [ \"$1\" = info ]; then printf 'linux/amd64\\n'; else printf 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\\n'; fi\n").unwrap();
+    fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+    let bundle = root.path().join("bundle");
+    let output = Command::new(&exe)
+        .args(["pack", "--project"])
+        .arg(&project)
+        .arg("--task-spec")
+        .arg(&spec)
+        .arg("--out")
+        .arg(&bundle)
+        .env("PATH", format!("{}:/usr/bin:/bin", fake_bin.display()))
+        .env("CASTOR_FAKE_DOCKER_LOG", &docker_log)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let packed: Value =
+        serde_json::from_slice(&fs::read(bundle.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(
+        packed["carrier_base_image"],
+        format!(
+            "substratum/castor-pi-carrier:one-shot-0.1.0@sha256:{}",
+            "b".repeat(64)
+        )
+    );
+    let calls = fs::read_to_string(&docker_log).unwrap();
+    assert!(calls.contains("one-shot-0.1.0"), "{calls}");
+    assert!(!calls.contains("carrier:v1"), "{calls}");
+    fs::write(&docker, b"#!/bin/sh\nif [ \"$1\" = info ]; then printf 'windows/amd64\\n'; else printf 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\\n'; fi\n").unwrap();
+    let rejected = Command::new(&exe)
+        .args(["pack", "--project"])
+        .arg(&project)
+        .arg("--task-spec")
+        .arg(&spec)
+        .arg("--out")
+        .arg(root.path().join("windows-bundle"))
+        .env("PATH", format!("{}:/usr/bin:/bin", fake_bin.display()))
+        .output()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("Linux Docker Engine"));
+}
