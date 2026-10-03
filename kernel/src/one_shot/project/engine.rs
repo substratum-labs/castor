@@ -350,7 +350,22 @@ pub fn pack_project(
     spec_path: &Path,
     out_dir: &Path,
 ) -> io::Result<PackReceipt> {
-    pack_project_with_parent(project_path, spec_path, out_dir, None)
+    pack_project_with_parent(project_path, spec_path, out_dir, None, None)
+}
+
+pub fn pack_project_with_carrier(
+    project_path: &Path,
+    spec_path: &Path,
+    out_dir: &Path,
+    carrier_reference: &str,
+) -> io::Result<PackReceipt> {
+    pack_project_with_parent(
+        project_path,
+        spec_path,
+        out_dir,
+        None,
+        Some(carrier_reference),
+    )
 }
 
 fn pack_project_with_parent(
@@ -358,6 +373,7 @@ fn pack_project_with_parent(
     spec_path: &Path,
     out_dir: &Path,
     parent_override: Option<&File>,
+    carrier_override: Option<&str>,
 ) -> io::Result<PackReceipt> {
     let deadline = Instant::now() + Duration::from_secs(60);
     let project_fd = open_root_dir(project_path)?;
@@ -408,7 +424,20 @@ fn pack_project_with_parent(
     if same_or_inside(&project, &output)? {
         return Err(invalid("output path cannot reside inside input project"));
     }
-    let carrier = format!("{CARRIER_TAG}@{}", image_id(CARRIER_TAG, deadline)?);
+    let carrier = if let Some(reference) = carrier_override {
+        crate::one_shot::image::validate_base_image(reference)?;
+        let (tag, expected_id) = reference
+            .split_once('@')
+            .expect("validated carrier reference");
+        if image_id(tag, deadline)? != expected_id {
+            return Err(invalid(
+                "release carrier tag differs from immutable image ID",
+            ));
+        }
+        reference.to_owned()
+    } else {
+        format!("{CARRIER_TAG}@{}", image_id(CARRIER_TAG, deadline)?)
+    };
     let prefix = format!(
         "{}.tmp-pack-",
         output.file_name().unwrap().to_string_lossy()
@@ -479,9 +508,37 @@ fn pack_project_with_parent(
 }
 
 pub fn run_project(project_path: &Path, spec_path: &Path) -> io::Result<PathBuf> {
+    run_project_inner(project_path, spec_path, None, None)
+}
+
+pub fn run_project_with_pins(
+    project_path: &Path,
+    spec_path: &Path,
+    carrier_reference: &str,
+    verifier_id: &str,
+) -> io::Result<PathBuf> {
+    run_project_inner(
+        project_path,
+        spec_path,
+        Some(carrier_reference),
+        Some(verifier_id),
+    )
+}
+
+fn run_project_inner(
+    project_path: &Path,
+    spec_path: &Path,
+    carrier_override: Option<&str>,
+    expected_verifier_id: Option<&str>,
+) -> io::Result<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        let _ = (project_path, spec_path);
+        let _ = (
+            project_path,
+            spec_path,
+            carrier_override,
+            expected_verifier_id,
+        );
         Err(invalid("run --project requires Linux because model Unix sockets cannot cross the macOS container kernel"))
     }
     #[cfg(target_os = "linux")]
@@ -500,11 +557,21 @@ pub fn run_project(project_path: &Path, spec_path: &Path) -> io::Result<PathBuf>
         if !verifier.starts_with("sha256:") {
             return Err(invalid("invalid verifier image"));
         }
+        if expected_verifier_id.is_some_and(|expected| expected != verifier) {
+            return Err(invalid(
+                "release verifier image differs from immutable image ID",
+            ));
+        }
         let pack_root = state_root.join("pack");
         let stage_root = StagingDir::create(&pack_fd, ".run-pack-")?;
         let provisional = pack_root.join(&stage_root.name).join("bundle");
-        let receipt =
-            pack_project_with_parent(project_path, spec_path, &provisional, Some(&stage_root.dir))?;
+        let receipt = pack_project_with_parent(
+            project_path,
+            spec_path,
+            &provisional,
+            Some(&stage_root.dir),
+            carrier_override,
+        )?;
         let final_out = pack_root.join(&receipt.task_id);
         let bundle_fd = open_child_dir(&stage_root.dir, std::ffi::OsStr::new("bundle"))?;
         let files = ["manifest.json", "workspace.tar", "pack-receipt.json"];

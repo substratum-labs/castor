@@ -5,7 +5,7 @@ mod developer_entry;
 use castor_kernel::one_shot::image::{valid_digest, StagedSnapshot};
 use castor_kernel::one_shot::install::InstalledRelease;
 use castor_kernel::one_shot::manifest::TaskManifest;
-use castor_kernel::one_shot::project::engine::{pack_project, run_project};
+use castor_kernel::one_shot::project::engine::{pack_project, run_project, run_project_with_pins};
 use castor_kernel::one_shot::result::TaskResult;
 use castor_kernel::one_shot::runtime_prepare::{check_node_major, prepare, DockerEngine};
 use castor_kernel::one_shot::supervisor::{
@@ -124,7 +124,18 @@ fn run() -> io::Result<ExitCode> {
             }
             return developer_entry::run(&project, &spec, state_root.as_deref());
         }
-        manifest_path = Some(run_project(&project, &spec)?);
+        manifest_path = Some(
+            match (
+                env::var("CASTOR_CONTROLLER_CARRIER_REF").ok(),
+                env::var("CASTOR_CONTROLLER_VERIFIER_ID").ok(),
+            ) {
+                (Some(carrier), Some(verifier)) => {
+                    run_project_with_pins(&project, &spec, &carrier, &verifier)?
+                }
+                (None, None) => run_project(&project, &spec)?,
+                _ => return Err(io::Error::other("incomplete controller release pins")),
+            },
+        );
     }
     let manifest_path = manifest_path.ok_or_else(invalid_args)?;
     let manifest = TaskManifest::read(&manifest_path)?;

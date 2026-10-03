@@ -1,7 +1,9 @@
 //! Source-checkout, local-model developer launcher. All Docker mutations are
 //! scoped to full recorded CIDs and an exclusively allocated private scratch.
 use castor_kernel::one_shot::developer_budget::{forward_to_local_adapter, BudgetLedger};
-use castor_kernel::one_shot::project::engine::pack_project;
+use castor_kernel::one_shot::install::{HostScript, InstalledRelease};
+use castor_kernel::one_shot::project::engine::{pack_project, pack_project_with_carrier};
+use castor_kernel::one_shot::runtime_prepare::{check_node_major, revalidate, DockerEngine};
 use serde_json::{json, Value};
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -1014,26 +1016,67 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
     // The pack validates the clean Git tree, task spec and pinned carrier image
     // before any provider process is started.
     let preflight = (|| -> io::Result<_> {
-        let receipt = pack_project(&project, &spec, &state.join("preflight-pack"))?;
-        let pin = model_pin(&local_script("model_pin.mjs")?)?;
-        let docker = Docker::default();
-        let image = controller_image(&docker)?;
-        let verifier = docker.text(&["image".into(), "inspect".into(), "--format".into(), "{{.Id}}".into(), "python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea".into()], Duration::from_secs(15))?;
-        Ok((receipt, pin, image, verifier))
+        if env::var_os("CASTOR_DEVELOPER_SOURCE_CHECKOUT").as_deref()
+            == Some(std::ffi::OsStr::new("1"))
+        {
+            let receipt = pack_project(&project, &spec, &state.join("preflight-pack"))?;
+            let pin = model_pin(&local_script("model_pin.mjs")?)?;
+            let docker = Docker::default();
+            let image = controller_image(&docker)?;
+            let verifier = docker.text(&["image".into(), "inspect".into(), "--format".into(), "{{.Id}}".into(), "python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea".into()], Duration::from_secs(15))?;
+            return Ok((
+                receipt,
+                pin,
+                image,
+                verifier,
+                local_script("ollama_model_adapter.mjs")?,
+                json!(null),
+            ));
+        }
+        let installed = InstalledRelease::load_current()?;
+        let home = PathBuf::from(env::var_os("HOME").ok_or_else(|| invalid("missing HOME"))?);
+        let prepared = revalidate(&installed, &DockerEngine, &home.join(".castor"))?;
+        let carrier = format!("{}@{}", prepared.carrier_tag, prepared.carrier_id);
+        let receipt =
+            pack_project_with_carrier(&project, &spec, &state.join("preflight-pack"), &carrier)?;
+        check_node_major()?;
+        let checked = InstalledRelease::load_current()?;
+        let pin = model_pin(checked.script(HostScript::ModelPin))?;
+        let images = installed.pins(&prepared.engine_arch)?;
+        let release = json!({"version":prepared.release_version,
+            "source_revision":prepared.source_revision,
+            "controller_ref":images.controller.reference,
+            "carrier_ref":images.carrier.reference,
+            "verifier_ref":images.verifier.reference,
+            "controller_id":prepared.controller_id,
+            "carrier_id":prepared.carrier_id,
+            "verifier_id":prepared.verifier_id});
+        Ok((
+            receipt,
+            pin,
+            prepared.controller_id,
+            prepared.verifier_id,
+            installed.script(HostScript::OllamaAdapter).to_owned(),
+            release,
+        ))
     })();
-    let (receipt, pin, image, verifier) = match preflight {
+    let (receipt, pin, image, verifier, adapter_script, release) = match preflight {
         Ok(value) => value,
         Err(error) => return preflight_failure(&state, &error),
     };
     write_json(
         &state.join("preflight.json"),
-        &json!({"model_pin":pin,"controller_image":image,"verifier_image":verifier,"pack_receipt":receipt}),
+        &json!({"model_pin":pin,"controller_image":image,"verifier_image":verifier,"pack_receipt":receipt,"release":release}),
     )?;
     let mut slot = Slot::new(state, token, image, verifier)?;
     let run_result = (|| -> io::Result<()> {
         slot.preflight_engine()?;
-        let adapter_socket =
-            slot.start_adapter(&local_script("ollama_model_adapter.mjs")?, &pin)?;
+        if env::var_os("CASTOR_DEVELOPER_SOURCE_CHECKOUT").as_deref()
+            != Some(std::ffi::OsStr::new("1"))
+        {
+            InstalledRelease::load_current()?;
+        }
+        let adapter_socket = slot.start_adapter(&adapter_script, &pin)?;
         slot.start_controller(&project, &spec)?;
         slot.workload(&adapter_socket)
     })();

@@ -15,5 +15,9 @@ COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/l
 COPY --from=build /src/kernel/target/release/castor /usr/local/bin/castor
 COPY --from=build /src/kernel/target/release/castord /usr/local/bin/castord
 COPY kernel/carrier/pi/host/file_exchange_bridge.mjs /opt/castor/file_exchange_bridge.mjs
+ARG CASTOR_RELEASE_CARRIER_REF=""
+ARG CASTOR_RELEASE_VERIFIER_ID=""
+ENV CASTOR_RELEASE_CARRIER_REF=${CASTOR_RELEASE_CARRIER_REF}
+ENV CASTOR_RELEASE_VERIFIER_ID=${CASTOR_RELEASE_VERIFIER_ID}
 RUN mkdir -p /state /project /run/castor && chmod 0555 /project /run/castor
 ENTRYPOINT ["/usr/local/bin/castor", "__controller"]

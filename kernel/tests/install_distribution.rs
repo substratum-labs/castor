@@ -161,3 +161,87 @@ fn rejects_nested_duplicate_pin_key() {
     fs::write(&path, duplicate).unwrap();
     assert!(InstalledRelease::load_at(&exe).is_err());
 }
+
+#[test]
+fn installed_run_rejects_missing_prepared_runtime_before_model_or_controller_build() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+    let (root, exe) = fixture();
+    fs::copy(env!("CARGO_BIN_EXE_castor"), root.path().join("bin/castor")).unwrap();
+    fs::set_permissions(
+        root.path().join("bin/castor"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let manifest_path = release_file(root.path());
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["host"]["castor_sha256"] =
+        json!(digest(&fs::read(root.path().join("bin/castor")).unwrap()));
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let project = root.path().join("project");
+    fs::create_dir(&project).unwrap();
+    fs::write(project.join("hello.txt"), b"hello\n").unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["add", "hello.txt"],
+        vec![
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    ] {
+        assert!(Command::new("git")
+            .args(args)
+            .current_dir(&project)
+            .status()
+            .unwrap()
+            .success());
+    }
+    let spec = root.path().join("spec.json");
+    fs::write(&spec, br#"{"schema_version":1,"task_prompt":"Fix hello","verification_command":["cat","hello.txt"]}"#).unwrap();
+    let fake_bin = root.path().join("fake-bin");
+    fs::create_dir(&fake_bin).unwrap();
+    let docker_log = root.path().join("docker.log");
+    let node_log = root.path().join("node.log");
+    let docker = fake_bin.join("docker");
+    fs::write(&docker, b"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CASTOR_FAKE_DOCKER_LOG\"\nif [ \"$1\" = info ]; then printf 'linux/amd64\\n'; else printf 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n'; fi\n").unwrap();
+    fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+    let node = fake_bin.join("node");
+    fs::write(
+        &node,
+        b"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CASTOR_FAKE_NODE_LOG\"\nexit 1\n",
+    )
+    .unwrap();
+    fs::set_permissions(&node, fs::Permissions::from_mode(0o755)).unwrap();
+    let output = Command::new(&exe)
+        .args(["run", "--project"])
+        .arg(&project)
+        .arg("--task-spec")
+        .arg(&spec)
+        .args(["--model", "local-ollama", "--state-root"])
+        .arg(root.path().join("state"))
+        .env("HOME", root.path())
+        .env("PATH", format!("{}:/usr/bin:/bin", fake_bin.display()))
+        .env("CASTOR_FAKE_DOCKER_LOG", &docker_log)
+        .env("CASTOR_FAKE_NODE_LOG", &node_log)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["launcher_status"], "PREFLIGHT_FAILED");
+    assert_eq!(envelope["model_calls"], 0);
+    assert_eq!(envelope["cleanup_status"], "CLEAN");
+    assert!(
+        !node_log.exists(),
+        "model metadata was contacted before release preflight"
+    );
+    let calls = fs::read_to_string(&docker_log).unwrap_or_default();
+    assert!(
+        !calls.contains("build"),
+        "controller built from source: {calls}"
+    );
+}

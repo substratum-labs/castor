@@ -49,17 +49,11 @@ impl StagedSnapshot {
         // Docker BuildKit interprets tag@config-ID and bare sha256:config-ID
         // as remote references. Resolve the local tag first, compare its ID to
         // the manifest pin, and give this build a unique temporary local tag.
-        let expected_id = carrier_base_image
-            .strip_prefix("substratum/castor-pi-carrier:v1@")
-            .expect("validated carrier prefix");
+        let (carrier_tag, expected_id) = carrier_base_image
+            .split_once('@')
+            .expect("validated carrier reference");
         let inspect = Command::new("docker")
-            .args([
-                "image",
-                "inspect",
-                "--format",
-                "{{.Id}}",
-                "substratum/castor-pi-carrier:v1",
-            ])
+            .args(["image", "inspect", "--format", "{{.Id}}", carrier_tag])
             .output()?;
         if !inspect.status.success() {
             return Err(io::Error::other(
@@ -171,12 +165,22 @@ fn unpack_archive(reader: impl Read, workspace: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn validate_base_image(image: &str) -> io::Result<()> {
-    let Some(digest) = image.strip_prefix("substratum/castor-pi-carrier:v1@") else {
-        return Err(invalid_archive(
-            "carrier image must be pinned to the Pi v1 digest",
-        ));
-    };
+pub fn validate_base_image(image: &str) -> io::Result<()> {
+    let (tag, digest) = image
+        .split_once('@')
+        .ok_or_else(|| invalid_archive("carrier image must have an immutable local image ID"))?;
+    let versioned = tag
+        .strip_prefix("substratum/castor-pi-carrier:one-shot-")
+        .is_some_and(|version| {
+            !version.is_empty()
+                && !version.contains("..")
+                && version
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+        });
+    if tag != "substratum/castor-pi-carrier:v1" && !versioned {
+        return Err(invalid_archive("carrier image tag is unsupported"));
+    }
     if !valid_digest(digest) {
         return Err(invalid_archive("carrier image digest is invalid"));
     }
@@ -194,4 +198,23 @@ pub fn valid_digest(value: &str) -> bool {
 
 fn invalid_archive(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
+}
+
+#[cfg(test)]
+mod versioned_carrier_tests {
+    use super::validate_base_image;
+
+    #[test]
+    fn versioned_carrier_pin_is_accepted_but_unpinned_or_malformed_is_not() {
+        let id = format!("sha256:{}", "a".repeat(64));
+        assert!(validate_base_image(&format!("substratum/castor-pi-carrier:v1@{id}")).is_ok());
+        assert!(
+            validate_base_image(&format!("substratum/castor-pi-carrier:one-shot-0.1.0@{id}"))
+                .is_ok()
+        );
+        assert!(validate_base_image("substratum/castor-pi-carrier:one-shot-0.1.0").is_err());
+        assert!(
+            validate_base_image(&format!("substratum/castor-pi-carrier:bad/tag@{id}")).is_err()
+        );
+    }
 }
