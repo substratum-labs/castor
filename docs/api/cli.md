@@ -1,8 +1,21 @@
 # CLI Reference
 
+## Installable one-shot runtime
+
+The host-specific one-shot archive includes `bin/castor`, two trusted Node.js
+scripts under `libexec/castor/`, and `share/castor/release.json`. Keep these
+paths together, then run `castor runtime prepare`. That command requires
+Node.js 22+ and a local Linux Docker Engine and pulls the exact release-pinned
+controller, Pi carrier and verifier images. It records their immutable local
+IDs and does not call Ollama. The installed `castor run --project PATH
+--task-spec FILE --model local-ollama` checks those IDs again before model
+access; it cannot silently fall back to a mutable image tag, a source checkout,
+or an implicit pull. Ollama `qwen3.5:9b` must be available locally for the run.
+See [the installation guide](../one-shot-install.md).
+
 ## Rust project pack and run
 
-The Rust `castor` binary packages an existing, clean Git project and a JSON task specification kept outside that project. The project must have a committed `HEAD`, a matching index and worktree, and no untracked files. Symlinks, special files, sparse or partial repositories, and unsafe Git metadata are rejected. Pack runs on supported Unix hosts; `run --project` requires Linux because the host model Unix socket must reach the Pi carrier.
+The Rust `castor` binary packages an existing, clean Git project and a JSON task specification kept outside that project. The project must have a committed `HEAD`, a matching index and worktree, and no untracked files. Symlinks, special files, sparse or partial repositories, and unsafe Git metadata are rejected. Pack runs on supported Unix hosts. The native no-model `run --project` path requires Linux because its host model Unix socket must reach the Pi carrier. The installable `run --project … --model local-ollama` path also supports macOS Docker Desktop through the trusted regular-file bridge between macOS and the Linux controller.
 
 ```json
 {

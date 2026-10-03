@@ -13,13 +13,37 @@ python -m pip install packages/castor-client/dist/castor_client-0.7.0a1-py3-none
 
 `castor run agent.py` remains a later product milestone. The source-checkout one-shot entry below packages a clean Git project automatically and uses the bundled Pi carrier; it does not ask for an Agent image.
 
+## Installable one-shot Castor candidate
+
+A release candidate contains a host-specific `castor` binary, two trusted host
+model scripts, and a release manifest. Keep the archive layout intact; the
+binary alone is not an installation. On macOS use Docker Desktop; on Linux use
+a local Linux Docker Engine. Node.js 22+ and local Ollama with `qwen3.5:9b` are
+required. The host does not need Python or Cargo, and the user does not build
+an Agent image.
+
+```bash
+/path/to/extracted/bin/castor runtime prepare
+/path/to/extracted/bin/castor run \
+  --project /absolute/path/to/clean-git-project \
+  --task-spec /absolute/path/to/task-spec.json \
+  --model local-ollama
+```
+
+`runtime prepare` fetches and verifies release-pinned controller, Pi carrier,
+and verifier images. A later `run` rechecks local image IDs and does not pull
+or build a controller from source. The verifier image still contains Python
+for tasks that request Python tests. See [installation and result semantics](docs/one-shot-install.md).
+This candidate workflow builds review artifacts; public GHCR/GitHub release
+publication remains separately gated.
+
 ## One-shot developer entry (source checkout)
 
 Build the Rust CLI from this checkout. Docker Desktop on macOS or a local Linux Docker Engine, Node.js 22 or newer, the pinned Pi carrier and verifier images, and local Ollama with `qwen3.5:9b` are required. This path does not run Python for management, model transport, Agent execution, or Core authority.
 
 ```bash
 cargo build --locked --release --manifest-path kernel/Cargo.toml --bin castor
-./kernel/target/release/castor run \
+CASTOR_DEVELOPER_SOURCE_CHECKOUT=1 ./kernel/target/release/castor run \
   --project /absolute/path/to/clean-git-project \
   --task-spec /absolute/path/to/task-spec.json \
   --model local-ollama
