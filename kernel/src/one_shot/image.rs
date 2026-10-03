@@ -3,6 +3,7 @@ use flate2::read::GzDecoder;
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use tar::Archive;
@@ -12,6 +13,48 @@ const MAX_EXTRACTED_BYTES: u64 = 1024 * 1024 * 1024;
 
 pub struct StagedSnapshot {
     root: tempfile::TempDir,
+}
+
+struct ReadonlyWorkspaceGuard {
+    original_modes: Vec<(PathBuf, u32)>,
+}
+
+impl ReadonlyWorkspaceGuard {
+    fn new(workspace: &Path) -> io::Result<Self> {
+        let mut guard = Self {
+            original_modes: Vec::new(),
+        };
+        let mut pending = vec![workspace.to_owned()];
+        while let Some(path) = pending.pop() {
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.is_dir() {
+                for entry in fs::read_dir(&path)? {
+                    pending.push(entry?.path());
+                }
+            } else if !metadata.is_file() {
+                return Err(invalid_archive("snapshot contains a special file"));
+            }
+            guard
+                .original_modes
+                .push((path.clone(), metadata.permissions().mode() & 0o7777));
+            fs::set_permissions(path, fs::Permissions::from_mode(0o555))?;
+        }
+        Ok(guard)
+    }
+
+    fn restore(&mut self) -> io::Result<()> {
+        for (path, mode) in self.original_modes.iter().rev() {
+            fs::set_permissions(path, fs::Permissions::from_mode(*mode))?;
+        }
+        self.original_modes.clear();
+        Ok(())
+    }
+}
+
+impl Drop for ReadonlyWorkspaceGuard {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
 }
 
 impl StagedSnapshot {
@@ -75,6 +118,7 @@ impl StagedSnapshot {
                 .and_then(|name| name.to_str())
                 .ok_or_else(|| io::Error::other("invalid private image build directory"))?
         );
+        let mut read_only = ReadonlyWorkspaceGuard::new(&self.workspace())?;
         let tagged = Command::new("docker")
             .args(["tag", &local_id, &local_tag])
             .output()?;
@@ -84,7 +128,7 @@ impl StagedSnapshot {
         let dockerfile = self.root.path().join("Dockerfile");
         fs::write(
             &dockerfile,
-            "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nUSER root\nCOPY --chown=10001:10001 workspace_snapshot/ /workspace/\nRUN chmod -R a+rX,a-w /workspace\nUSER 10001:10001\n",
+            "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nCOPY --chown=10001:10001 workspace_snapshot/ /workspace/\n",
         )?;
         let build_result = Command::new("docker")
             .arg("build")
@@ -102,6 +146,7 @@ impl StagedSnapshot {
         let _ = Command::new("docker")
             .args(["image", "rm", &local_tag])
             .output();
+        read_only.restore()?;
         let output = build_result?;
         if !output.status.success() {
             return Err(io::Error::other(format!(

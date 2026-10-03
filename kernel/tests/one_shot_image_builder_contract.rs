@@ -3,6 +3,7 @@ use castor_kernel::one_shot::manifest::TaskManifest;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 #[test]
@@ -51,7 +52,27 @@ fn verified_archive_builds_digest_addressed_read_only_workspace() {
     let manifest = TaskManifest::read(&manifest_path).unwrap();
     let snapshot = manifest.validate_snapshot(&manifest_path).unwrap();
     let staged = StagedSnapshot::stage(snapshot, &manifest.workspace_snapshot_path).unwrap();
+    assert_eq!(
+        fs::metadata(staged.workspace().join("defect.txt"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o644,
+        "host staging files must retain their writable source mode"
+    );
     let derived_digest = staged.build(&manifest.carrier_base_image).unwrap();
+    assert_eq!(
+        fs::metadata(staged.workspace().join("defect.txt"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o644,
+        "host staging mode must be restored after image build"
+    );
+    fs::write(staged.workspace().join("defect.txt"), b"settled fixture\n")
+        .expect("host actuator must be able to edit the staged workspace");
     assert!(derived_digest.starts_with("sha256:"));
     let inspect_derived = Command::new("docker")
         .args(["image", "inspect", "--format", "{{.Id}}", &derived_digest])
@@ -84,4 +105,32 @@ fn verified_archive_builds_digest_addressed_read_only_workspace() {
         String::from_utf8_lossy(&read.stderr)
     );
     assert_eq!(read.stdout, b"failing fixture\n");
+    let mode = Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--user",
+            "10001:10001",
+            &derived_digest,
+            "stat",
+            "-c",
+            "%a",
+            "/workspace/defect.txt",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        mode.status.success(),
+        "{}",
+        String::from_utf8_lossy(&mode.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&mode.stdout).trim(), "555");
+    let staging_root = staged.workspace().parent().unwrap().to_owned();
+    drop(staged);
+    assert!(
+        !staging_root.exists(),
+        "private image staging directory leaked"
+    );
 }
