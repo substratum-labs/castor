@@ -1,0 +1,246 @@
+name: One-shot Castor candidate artifacts
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-binaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, platform: linux-amd64 }
+          - { runner: ubuntu-24.04-arm, platform: linux-arm64 }
+          - { runner: macos-15-intel, platform: darwin-amd64 }
+          - { runner: macos-15, platform: darwin-arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build locked Rust host CLI
+        run: cargo build --locked --release --manifest-path kernel/Cargo.toml --bin castor
+      - name: Export exact host binary
+        run: |
+          mkdir -p out
+          cp kernel/target/release/castor "out/castor-${{ matrix.platform }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: host-${{ matrix.platform }}
+          path: out/castor-${{ matrix.platform }}
+          if-no-files-found: error
+          retention-days: 1
+
+  linux-images:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build carrier and pinned controller on native Linux architecture
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: 0.1.0-rc1
+        run: |
+          set -eu
+          mkdir -p out
+          CARRIER_TAG="substratum/castor-pi-carrier:one-shot-${VERSION}"
+          CONTROLLER_TAG="castor-controller:candidate-${ARCH}"
+          VERIFIER_REF='docker.io/library/python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea'
+          docker build --platform "linux/${ARCH}" -t "$CARRIER_TAG" kernel/carrier/pi
+          docker pull --platform "linux/${ARCH}" "$VERIFIER_REF"
+          CARRIER_ID=$(docker image inspect --format '{{.Id}}' "$CARRIER_TAG")
+          VERIFIER_ID=$(docker image inspect --format '{{.Id}}' "$VERIFIER_REF")
+          docker build --platform "linux/${ARCH}" -f kernel/controller/Dockerfile \
+            -t "$CONTROLLER_TAG" .
+          CONTROLLER_ID=$(docker image inspect --format '{{.Id}}' "$CONTROLLER_TAG")
+          docker save -o "out/carrier-${ARCH}.tar" "$CARRIER_TAG"
+          docker save -o "out/controller-${ARCH}.tar" "$CONTROLLER_TAG"
+          export CARRIER_ID VERIFIER_ID CONTROLLER_ID
+          python3 - <<'PY'
+          import json, os, pathlib
+          arch = os.environ['ARCH']
+          pathlib.Path(f'out/image-ids-{arch}.json').write_text(json.dumps({
+              'carrier_id': os.environ['CARRIER_ID'],
+              'controller_id': os.environ['CONTROLLER_ID'],
+              'verifier_id': os.environ['VERIFIER_ID'],
+              'arch': arch,
+          }, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: images-${{ matrix.arch }}
+          path: out/*-${{ matrix.arch }}.*
+          if-no-files-found: error
+          retention-days: 1
+
+  assemble:
+    needs: [host-binaries, linux-images]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: host-*
+          path: out
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: images-*
+          path: out
+          merge-multiple: true
+      - name: Assemble pinned candidate manifest against private local registry
+        run: |
+          set -eu
+          docker run -d --name castor-candidate-registry -p 127.0.0.1:5000:5000 registry:2
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --silent --fail http://127.0.0.1:5000/v2/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --silent --fail http://127.0.0.1:5000/v2/ >/dev/null
+          for arch in amd64 arm64; do
+            docker load -i "out/carrier-${arch}.tar"
+            docker load -i "out/controller-${arch}.tar"
+            docker tag "substratum/castor-pi-carrier:one-shot-0.1.0-rc1" "localhost:5000/castor/carrier:candidate-${arch}"
+            docker tag "castor-controller:candidate-${arch}" "localhost:5000/castor/controller:candidate-${arch}"
+            docker push "localhost:5000/castor/carrier:candidate-${arch}"
+            docker push "localhost:5000/castor/controller:candidate-${arch}"
+          done
+          python3 - <<'PY'
+          import json, pathlib, subprocess
+          def image(ref):
+              return json.loads(subprocess.check_output(['docker', 'image', 'inspect', ref]))[0]
+          def digest(item, prefix):
+              matches = [value for value in item['RepoDigests'] if value.startswith(prefix + '@sha256:')]
+              if len(matches) != 1:
+                  raise SystemExit(f'ambiguous registry digest: {prefix}: {matches}')
+              return matches[0]
+          pins = {}
+          for arch in ('amd64', 'arm64'):
+              ids = json.loads(pathlib.Path(f'out/image-ids-{arch}.json').read_text())
+              carrier_repo = f'localhost:5000/castor/carrier'
+              controller_repo = f'localhost:5000/castor/controller'
+              carrier = image(carrier_repo + ':candidate-' + arch)
+              controller = image(controller_repo + ':candidate-' + arch)
+              # Native build IDs are retained as evidence, but a different
+              # Engine's image store can report a different local .Id.
+              print(arch, 'native_ids', ids, 'assembly_ids',
+                    {'carrier': carrier['Id'], 'controller': controller['Id']})
+              pins['linux/' + arch] = {
+                  'controller': {'reference': digest(controller, controller_repo)},
+                  'carrier': {'reference': digest(carrier, carrier_repo)},
+                  'verifier': {'reference': 'docker.io/library/python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea'},
+                  'carrier_tag': 'substratum/castor-pi-carrier:one-shot-0.1.0-rc1',
+              }
+          pathlib.Path('out/engine-pins.json').write_text(json.dumps(pins, sort_keys=True))
+          PY
+      - name: Build all four deterministic host archives
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          set -eu
+          for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+            python3 scripts/package_one_shot.py --version 0.1.0-rc1 \
+              --source-revision "$SOURCE_REVISION" \
+              --host-bin "out/castor-${platform}" --engine-pins out/engine-pins.json \
+              --output "out/castor-one-shot-0.1.0-rc1-${platform}.tar.gz"
+          done
+          python3 -m unittest scripts/test_package_one_shot.py -v
+          test "$(find out -name 'castor-one-shot-*.tar.gz' | wc -l | tr -d ' ')" = 4
+      - name: Exercise source-free Linux archive and digest preparation
+        run: |
+          set -eu
+          mkdir -p /tmp/castor-candidate-install
+          tar -xzf out/castor-one-shot-0.1.0-rc1-linux-amd64.tar.gz -C /tmp/castor-candidate-install
+          export HOME=$(mktemp -d)
+          # The assembly job loaded arm64 last, leaving this shared local tag
+          # on the wrong architecture. Remove only that candidate tag so the
+          # amd64 prepare gate exercises a clean first installation.
+          docker image rm substratum/castor-pi-carrier:one-shot-0.1.0-rc1
+          /tmp/castor-candidate-install/bin/castor runtime prepare
+          test -f "$HOME/.castor/runtime/0.1.0-rc1-linux-amd64.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: one-shot-candidate-archives
+          path: |
+            out/castor-one-shot-*.tar.gz
+            out/engine-pins.json
+          if-no-files-found: error
+          retention-days: 1
+
+  native-prepare:
+    needs: assemble
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: images-${{ matrix.arch }}
+          path: out
+      - uses: actions/download-artifact@v4
+        with:
+          name: one-shot-candidate-archives
+          path: out
+      - name: Prepare exact digests from a clean native Engine store
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -eu
+          docker run -d --name castor-candidate-registry -p 127.0.0.1:5000:5000 registry:2
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --silent --fail http://127.0.0.1:5000/v2/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --silent --fail http://127.0.0.1:5000/v2/ >/dev/null
+          docker load -i "out/carrier-${ARCH}.tar"
+          docker load -i "out/controller-${ARCH}.tar"
+          CARRIER_TAG="substratum/castor-pi-carrier:one-shot-0.1.0-rc1"
+          CONTROLLER_TAG="castor-controller:candidate-${ARCH}"
+          CARRIER_CANDIDATE="localhost:5000/castor/carrier:candidate-${ARCH}"
+          CONTROLLER_CANDIDATE="localhost:5000/castor/controller:candidate-${ARCH}"
+          docker tag "$CARRIER_TAG" "$CARRIER_CANDIDATE"
+          docker tag "$CONTROLLER_TAG" "$CONTROLLER_CANDIDATE"
+          docker push "$CARRIER_CANDIDATE"
+          docker push "$CONTROLLER_CANDIDATE"
+          mkdir -p /tmp/castor-candidate-install
+          tar -xzf "out/castor-one-shot-0.1.0-rc1-linux-${ARCH}.tar.gz" -C /tmp/castor-candidate-install
+          python3 - <<'PY'
+          import json, os, pathlib
+          release = json.loads(pathlib.Path('/tmp/castor-candidate-install/share/castor/release.json').read_text())
+          pins = release['images']['linux/' + os.environ['ARCH']]
+          pathlib.Path('out/native-refs.json').write_text(json.dumps({
+              'carrier': pins['carrier']['reference'],
+              'controller': pins['controller']['reference'],
+          }))
+          PY
+          CARRIER_REF=$(python3 -c 'import json; print(json.load(open("out/native-refs.json"))["carrier"])')
+          CONTROLLER_REF=$(python3 -c 'import json; print(json.load(open("out/native-refs.json"))["controller"])')
+          docker image inspect "$CARRIER_REF" >/dev/null
+          docker image inspect "$CONTROLLER_REF" >/dev/null
+          docker image rm "$CARRIER_TAG" "$CONTROLLER_TAG" "$CARRIER_CANDIDATE" "$CONTROLLER_CANDIDATE"
+          docker image rm "$CARRIER_REF" "$CONTROLLER_REF" 2>/dev/null || true
+          if docker image inspect "$CARRIER_REF" >/dev/null 2>&1 || docker image inspect "$CONTROLLER_REF" >/dev/null 2>&1; then
+            echo 'candidate refs remained cached before native prepare' >&2
+            exit 1
+          fi
+          export HOME=$(mktemp -d)
+          /tmp/castor-candidate-install/bin/castor runtime prepare
+          test -f "$HOME/.castor/runtime/0.1.0-rc1-linux-${ARCH}.json"

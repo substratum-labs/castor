@@ -1,4 +1,6 @@
 //! Trusted Linux controller and Engine-namespace helper for developer mode.
+#[cfg(any(test, target_os = "linux"))]
+use castor_kernel::one_shot::image::{valid_digest, validate_base_image};
 #[cfg(target_os = "linux")]
 use serde_json::{json, Value};
 #[cfg(target_os = "linux")]
@@ -28,6 +30,24 @@ use std::time::{Duration, Instant};
 
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
+}
+
+#[cfg(any(test, target_os = "linux"))]
+fn validated_release_pins(
+    carrier: Option<&str>,
+    verifier: Option<&str>,
+) -> io::Result<Option<(String, String)>> {
+    match (carrier, verifier) {
+        (None, None) => Ok(None),
+        (Some(carrier), Some(verifier)) => {
+            validate_base_image(carrier)?;
+            if !valid_digest(verifier) {
+                return Err(invalid("invalid release verifier image ID"));
+            }
+            Ok(Some((carrier.to_owned(), verifier.to_owned())))
+        }
+        _ => Err(invalid("incomplete controller release pins")),
+    }
 }
 
 #[cfg(any(test, target_os = "linux"))]
@@ -205,13 +225,29 @@ pub fn run_controller() -> io::Result<ExitCode> {
         }
         thread::sleep(Duration::from_millis(10));
     }
-    let outcome = Command::new("/usr/local/bin/castor")
+    let release_pins = validated_release_pins(
+        env::var("CASTOR_RELEASE_CARRIER_REF")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .as_deref(),
+        env::var("CASTOR_RELEASE_VERIFIER_ID")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .as_deref(),
+    )?;
+    let mut native = Command::new("/usr/local/bin/castor");
+    native
         .args(["run", "--project", "/project", "--task-spec"])
         .arg(&spec)
         .env("CASTOR_STATE_ROOT", "/state")
         .env("CASTOR_MODEL_SOCKET", &socket)
-        .env("TMPDIR", &scratch)
-        .status();
+        .env("TMPDIR", &scratch);
+    if let Some((carrier, verifier)) = release_pins {
+        native
+            .env("CASTOR_CONTROLLER_CARRIER_REF", carrier)
+            .env("CASTOR_CONTROLLER_VERIFIER_ID", verifier);
+    }
+    let outcome = native.status();
     let _ = bridge_child.kill();
     let _ = bridge_child.wait();
     let result = outcome?;
@@ -232,6 +268,21 @@ pub fn run_controller() -> io::Result<ExitCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn controller_release_pins_reject_incomplete_or_unpinned_values() {
+        let id = format!("sha256:{}", "a".repeat(64));
+        let carrier = format!("substratum/castor-pi-carrier:one-shot-0.1.0@{id}");
+        assert!(validated_release_pins(Some(&carrier), Some(&id))
+            .unwrap()
+            .is_some());
+        assert!(validated_release_pins(Some(&carrier), None).is_err());
+        assert!(validated_release_pins(
+            Some("substratum/castor-pi-carrier:one-shot-0.1.0"),
+            Some(&id)
+        )
+        .is_err());
+    }
+
     #[test]
     fn private_scratch_requires_exact_canonical_child_and_owner() {
         let root = tempfile::tempdir().unwrap();

@@ -3,9 +3,15 @@ mod developer_controller;
 #[path = "castor/developer_entry.rs"]
 mod developer_entry;
 use castor_kernel::one_shot::image::{valid_digest, StagedSnapshot};
+use castor_kernel::one_shot::install::InstalledRelease;
 use castor_kernel::one_shot::manifest::TaskManifest;
-use castor_kernel::one_shot::project::engine::{pack_project, run_project};
+use castor_kernel::one_shot::project::engine::{
+    pack_project, pack_project_with_carrier, run_project, run_project_with_pins,
+};
 use castor_kernel::one_shot::result::TaskResult;
+use castor_kernel::one_shot::runtime_prepare::{
+    check_node_major, prepare, revalidate, DockerEngine,
+};
 use castor_kernel::one_shot::supervisor::{
     run_product_task, run_test_task, test_state_root, RunOutcome,
 };
@@ -32,6 +38,24 @@ fn run() -> io::Result<ExitCode> {
     }
     if command == "__engine-helper" {
         return developer_controller::engine_helper(&args.next().ok_or_else(invalid_args)?);
+    }
+    if command == "runtime" {
+        if args.next().as_deref() != Some("prepare") || args.next().is_some() {
+            return Err(invalid_args());
+        }
+        let release = InstalledRelease::load_current()?;
+        check_node_major()?;
+        let home = env::var_os("HOME").ok_or_else(|| io::Error::other("missing HOME"))?;
+        let receipt = prepare(
+            &release,
+            &DockerEngine,
+            &PathBuf::from(home).join(".castor"),
+        )?;
+        println!(
+            "{}",
+            serde_json::to_string(&receipt).map_err(io::Error::other)?
+        );
+        return Ok(ExitCode::SUCCESS);
     }
     if command != "run" && command != "pack" {
         return Err(invalid_args());
@@ -66,7 +90,23 @@ fn run() -> io::Result<ExitCode> {
         let project = project_path.ok_or_else(invalid_args)?;
         let spec = spec_path.ok_or_else(invalid_args)?;
         let out = out_path.ok_or_else(invalid_args)?;
-        let receipt = pack_project(&project, &spec, &out)?;
+        let executable = std::fs::canonicalize(env::current_exe()?)?;
+        let installed_layout = executable.file_name().is_some_and(|name| name == "castor")
+            && executable
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .is_some_and(|name| name == "bin");
+        let receipt = if installed_layout {
+            let release = InstalledRelease::load_current()?;
+            let engine = DockerEngine;
+            let home =
+                PathBuf::from(env::var_os("HOME").ok_or_else(|| io::Error::other("missing HOME"))?);
+            let prepared = revalidate(&release, &engine, &home.join(".castor"))?;
+            let carrier = format!("{}@{}", prepared.carrier_tag, prepared.carrier_id);
+            pack_project_with_carrier(&project, &spec, &out, &carrier)?
+        } else {
+            pack_project(&project, &spec, &out)?
+        };
         println!(
             "{}",
             serde_json::to_string(&receipt).map_err(io::Error::other)?
@@ -104,7 +144,18 @@ fn run() -> io::Result<ExitCode> {
             }
             return developer_entry::run(&project, &spec, state_root.as_deref());
         }
-        manifest_path = Some(run_project(&project, &spec)?);
+        manifest_path = Some(
+            match (
+                env::var("CASTOR_CONTROLLER_CARRIER_REF").ok(),
+                env::var("CASTOR_CONTROLLER_VERIFIER_ID").ok(),
+            ) {
+                (Some(carrier), Some(verifier)) => {
+                    run_project_with_pins(&project, &spec, &carrier, &verifier)?
+                }
+                (None, None) => run_project(&project, &spec)?,
+                _ => return Err(io::Error::other("incomplete controller release pins")),
+            },
+        );
     }
     let manifest_path = manifest_path.ok_or_else(invalid_args)?;
     let manifest = TaskManifest::read(&manifest_path)?;

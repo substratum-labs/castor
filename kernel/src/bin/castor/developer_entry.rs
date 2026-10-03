@@ -1,7 +1,9 @@
 //! Source-checkout, local-model developer launcher. All Docker mutations are
 //! scoped to full recorded CIDs and an exclusively allocated private scratch.
 use castor_kernel::one_shot::developer_budget::{forward_to_local_adapter, BudgetLedger};
-use castor_kernel::one_shot::project::engine::pack_project;
+use castor_kernel::one_shot::install::{HostScript, InstalledRelease};
+use castor_kernel::one_shot::project::engine::{pack_project, pack_project_with_carrier};
+use castor_kernel::one_shot::runtime_prepare::{check_node_major, revalidate, DockerEngine};
 use serde_json::{json, Value};
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -314,6 +316,7 @@ struct Slot {
     parent: Option<String>,
     state_source: Option<String>,
     verifier_id: String,
+    release_carrier_ref: Option<String>,
     allocated: bool,
     adapter: Option<Child>,
     adapter_dir: Option<tempfile::TempDir>,
@@ -345,6 +348,7 @@ impl Slot {
             parent: None,
             state_source: None,
             verifier_id,
+            release_carrier_ref: None,
             allocated: false,
             adapter: None,
             adapter_dir: None,
@@ -577,7 +581,7 @@ impl Slot {
             .file_name()
             .ok_or_else(|| invalid("missing task spec name"))?;
         let mounted_spec = Path::new("/spec").join(spec_name);
-        let args = vec![
+        let mut args = vec![
             "--network".into(),
             "none".into(),
             "--read-only".into(),
@@ -614,8 +618,14 @@ impl Slot {
                 "type=bind,src={},dst=/spec,readonly",
                 path_string(spec_parent)?
             ),
-            self.image.clone(),
         ];
+        args.extend(release_pin_env_args(
+            self.release_carrier_ref.as_deref(),
+            self.release_carrier_ref
+                .as_ref()
+                .map(|_| self.verifier_id.as_str()),
+        )?);
+        args.push(self.image.clone());
         let id = self.create(&args, "controller")?;
         let item = self
             .docker
@@ -915,6 +925,25 @@ impl Slot {
     }
 }
 
+fn release_pin_env_args(carrier: Option<&str>, verifier: Option<&str>) -> io::Result<Vec<String>> {
+    match (carrier, verifier) {
+        (None, None) => Ok(Vec::new()),
+        (Some(carrier), Some(verifier)) => {
+            castor_kernel::one_shot::image::validate_base_image(carrier)?;
+            if !castor_kernel::one_shot::image::valid_digest(verifier) {
+                return Err(invalid("invalid current-Engine verifier ID"));
+            }
+            Ok(vec![
+                "--env".into(),
+                format!("CASTOR_RELEASE_CARRIER_REF={carrier}"),
+                "--env".into(),
+                format!("CASTOR_RELEASE_VERIFIER_ID={verifier}"),
+            ])
+        }
+        _ => Err(invalid("incomplete current-Engine controller pins")),
+    }
+}
+
 fn local_script(name: &str) -> io::Result<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -1011,29 +1040,89 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
     let state = state_root.join(format!("run-{token}"));
     fs::create_dir(&state)?;
     fs::set_permissions(&state, fs::Permissions::from_mode(0o700))?;
+    let developer_mode = env::var_os("CASTOR_DEVELOPER_SOURCE_CHECKOUT").as_deref()
+        == Some(std::ffi::OsStr::new("1"));
     // The pack validates the clean Git tree, task spec and pinned carrier image
     // before any provider process is started.
     let preflight = (|| -> io::Result<_> {
-        let receipt = pack_project(&project, &spec, &state.join("preflight-pack"))?;
-        let pin = model_pin(&local_script("model_pin.mjs")?)?;
-        let docker = Docker::default();
-        let image = controller_image(&docker)?;
-        let verifier = docker.text(&["image".into(), "inspect".into(), "--format".into(), "{{.Id}}".into(), "python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea".into()], Duration::from_secs(15))?;
-        Ok((receipt, pin, image, verifier))
+        let executable = fs::canonicalize(env::current_exe()?)?;
+        let installed_layout = executable.file_name().is_some_and(|name| name == "castor")
+            && executable
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .is_some_and(|name| name == "bin");
+        if developer_mode && installed_layout {
+            return Err(invalid(
+                "developer source mode is unavailable in installed Castor",
+            ));
+        }
+        if developer_mode {
+            let receipt = pack_project(&project, &spec, &state.join("preflight-pack"))?;
+            let pin = model_pin(&local_script("model_pin.mjs")?)?;
+            let docker = Docker::default();
+            let image = controller_image(&docker)?;
+            let verifier = docker.text(&["image".into(), "inspect".into(), "--format".into(), "{{.Id}}".into(), "python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea".into()], Duration::from_secs(15))?;
+            return Ok((
+                receipt,
+                pin,
+                image,
+                verifier,
+                local_script("ollama_model_adapter.mjs")?,
+                json!(null),
+                None,
+            ));
+        }
+        let installed = InstalledRelease::load_current()?;
+        let home = PathBuf::from(env::var_os("HOME").ok_or_else(|| invalid("missing HOME"))?);
+        let prepared = revalidate(&installed, &DockerEngine, &home.join(".castor"))?;
+        let carrier = format!("{}@{}", prepared.carrier_tag, prepared.carrier_id);
+        let receipt =
+            pack_project_with_carrier(&project, &spec, &state.join("preflight-pack"), &carrier)?;
+        check_node_major()?;
+        let checked = InstalledRelease::load_current()?;
+        let scripts = state.join("verified-scripts");
+        fs::create_dir(&scripts)?;
+        fs::set_permissions(&scripts, fs::Permissions::from_mode(0o700))?;
+        let model_pin_script = scripts.join("model_pin.mjs");
+        let adapter_script = scripts.join("ollama_model_adapter.mjs");
+        checked.stage_script(HostScript::ModelPin, &model_pin_script)?;
+        checked.stage_script(HostScript::OllamaAdapter, &adapter_script)?;
+        let pin = model_pin(&model_pin_script)?;
+        let images = installed.pins(&prepared.engine_arch)?;
+        let release = json!({"version":prepared.release_version,
+            "source_revision":prepared.source_revision,
+            "controller_ref":images.controller.reference,
+            "carrier_ref":images.carrier.reference,
+            "verifier_ref":images.verifier.reference,
+            "controller_id":prepared.controller_id,
+            "carrier_id":prepared.carrier_id,
+            "verifier_id":prepared.verifier_id});
+        Ok((
+            receipt,
+            pin,
+            prepared.controller_id,
+            prepared.verifier_id,
+            adapter_script,
+            release,
+            Some(carrier),
+        ))
     })();
-    let (receipt, pin, image, verifier) = match preflight {
+    let (receipt, pin, image, verifier, adapter_script, release, carrier_ref) = match preflight {
         Ok(value) => value,
         Err(error) => return preflight_failure(&state, &error),
     };
     write_json(
         &state.join("preflight.json"),
-        &json!({"model_pin":pin,"controller_image":image,"verifier_image":verifier,"pack_receipt":receipt}),
+        &json!({"model_pin":pin,"controller_image":image,"verifier_image":verifier,"pack_receipt":receipt,"release":release}),
     )?;
     let mut slot = Slot::new(state, token, image, verifier)?;
+    slot.release_carrier_ref = carrier_ref;
     let run_result = (|| -> io::Result<()> {
         slot.preflight_engine()?;
-        let adapter_socket =
-            slot.start_adapter(&local_script("ollama_model_adapter.mjs")?, &pin)?;
+        if !developer_mode {
+            InstalledRelease::load_current()?;
+        }
+        let adapter_socket = slot.start_adapter(&adapter_script, &pin)?;
         slot.start_controller(&project, &spec)?;
         slot.workload(&adapter_socket)
     })();
@@ -1068,6 +1157,23 @@ mod tests {
     use std::os::unix::net::UnixListener;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    #[test]
+    fn installed_controller_receives_current_engine_local_ids() {
+        let carrier = format!(
+            "substratum/castor-pi-carrier:one-shot-0.1.0@sha256:{}",
+            "a".repeat(64)
+        );
+        let verifier = format!("sha256:{}", "b".repeat(64));
+        let args = release_pin_env_args(Some(&carrier), Some(&verifier)).unwrap();
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--env", &format!("CASTOR_RELEASE_CARRIER_REF={carrier}")]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--env", &format!("CASTOR_RELEASE_VERIFIER_ID={verifier}")]));
+        assert!(release_pin_env_args(Some(&carrier), None).is_err());
+    }
+
     #[test]
     fn private_adapter_socket_stays_short_with_a_long_state_root() {
         let root = tempfile::tempdir().unwrap();
