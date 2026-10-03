@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
@@ -291,6 +291,32 @@ impl InstalledRelease {
             HostScript::ModelPin => &self.model_pin_script,
             HostScript::OllamaAdapter => &self.adapter_script,
         }
+    }
+
+    /// Copy only bytes verified from an opened release asset into a private
+    /// run directory. Node executes this copy, never the mutable bundle path.
+    pub fn stage_script(&self, name: HostScript, destination: &Path) -> io::Result<()> {
+        let (path, expected) = match name {
+            HostScript::ModelPin => (&self.model_pin_script, &self.manifest.host.model_pin_sha256),
+            HostScript::OllamaAdapter => (&self.adapter_script, &self.manifest.host.adapter_sha256),
+        };
+        let mut bytes = Vec::new();
+        open_regular(path, MAX_SCRIPT_BYTES)?
+            .take(MAX_SCRIPT_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > MAX_SCRIPT_BYTES
+            || format!("{:x}", Sha256::digest(&bytes)) != *expected
+        {
+            return Err(invalid("Castor release script hash mismatch"));
+        }
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(destination)?;
+        output.write_all(&bytes)?;
+        output.sync_all()?;
+        Ok(())
     }
 
     pub fn pins(&self, engine_arch: &str) -> io::Result<&PlatformImages> {

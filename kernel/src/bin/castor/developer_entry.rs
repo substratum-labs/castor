@@ -1040,12 +1040,23 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
     let state = state_root.join(format!("run-{token}"));
     fs::create_dir(&state)?;
     fs::set_permissions(&state, fs::Permissions::from_mode(0o700))?;
+    let developer_mode = env::var_os("CASTOR_DEVELOPER_SOURCE_CHECKOUT").as_deref()
+        == Some(std::ffi::OsStr::new("1"));
     // The pack validates the clean Git tree, task spec and pinned carrier image
     // before any provider process is started.
     let preflight = (|| -> io::Result<_> {
-        if env::var_os("CASTOR_DEVELOPER_SOURCE_CHECKOUT").as_deref()
-            == Some(std::ffi::OsStr::new("1"))
-        {
+        let executable = fs::canonicalize(env::current_exe()?)?;
+        let installed_layout = executable.file_name().is_some_and(|name| name == "castor")
+            && executable
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .is_some_and(|name| name == "bin");
+        if developer_mode && installed_layout {
+            return Err(invalid(
+                "developer source mode is unavailable in installed Castor",
+            ));
+        }
+        if developer_mode {
             let receipt = pack_project(&project, &spec, &state.join("preflight-pack"))?;
             let pin = model_pin(&local_script("model_pin.mjs")?)?;
             let docker = Docker::default();
@@ -1069,7 +1080,14 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
             pack_project_with_carrier(&project, &spec, &state.join("preflight-pack"), &carrier)?;
         check_node_major()?;
         let checked = InstalledRelease::load_current()?;
-        let pin = model_pin(checked.script(HostScript::ModelPin))?;
+        let scripts = state.join("verified-scripts");
+        fs::create_dir(&scripts)?;
+        fs::set_permissions(&scripts, fs::Permissions::from_mode(0o700))?;
+        let model_pin_script = scripts.join("model_pin.mjs");
+        let adapter_script = scripts.join("ollama_model_adapter.mjs");
+        checked.stage_script(HostScript::ModelPin, &model_pin_script)?;
+        checked.stage_script(HostScript::OllamaAdapter, &adapter_script)?;
+        let pin = model_pin(&model_pin_script)?;
         let images = installed.pins(&prepared.engine_arch)?;
         let release = json!({"version":prepared.release_version,
             "source_revision":prepared.source_revision,
@@ -1084,7 +1102,7 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
             pin,
             prepared.controller_id,
             prepared.verifier_id,
-            installed.script(HostScript::OllamaAdapter).to_owned(),
+            adapter_script,
             release,
             Some(carrier),
         ))
@@ -1101,9 +1119,7 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
     slot.release_carrier_ref = carrier_ref;
     let run_result = (|| -> io::Result<()> {
         slot.preflight_engine()?;
-        if env::var_os("CASTOR_DEVELOPER_SOURCE_CHECKOUT").as_deref()
-            != Some(std::ffi::OsStr::new("1"))
-        {
+        if !developer_mode {
             InstalledRelease::load_current()?;
         }
         let adapter_socket = slot.start_adapter(&adapter_script, &pin)?;

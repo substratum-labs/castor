@@ -177,3 +177,70 @@ jobs:
             out/engine-pins.json
           if-no-files-found: error
           retention-days: 1
+
+  native-prepare:
+    needs: assemble
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: images-${{ matrix.arch }}
+          path: out
+      - uses: actions/download-artifact@v4
+        with:
+          name: one-shot-candidate-archives
+          path: out
+      - name: Prepare exact digests from a clean native Engine store
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -eu
+          docker run -d --name castor-candidate-registry -p 127.0.0.1:5000:5000 registry:2
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --silent --fail http://127.0.0.1:5000/v2/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --silent --fail http://127.0.0.1:5000/v2/ >/dev/null
+          docker load -i "out/carrier-${ARCH}.tar"
+          docker load -i "out/controller-${ARCH}.tar"
+          CARRIER_TAG="substratum/castor-pi-carrier:one-shot-0.1.0-rc1"
+          CONTROLLER_TAG="castor-controller:candidate-${ARCH}"
+          CARRIER_CANDIDATE="localhost:5000/castor/carrier:candidate-${ARCH}"
+          CONTROLLER_CANDIDATE="localhost:5000/castor/controller:candidate-${ARCH}"
+          docker tag "$CARRIER_TAG" "$CARRIER_CANDIDATE"
+          docker tag "$CONTROLLER_TAG" "$CONTROLLER_CANDIDATE"
+          docker push "$CARRIER_CANDIDATE"
+          docker push "$CONTROLLER_CANDIDATE"
+          mkdir -p /tmp/castor-candidate-install
+          tar -xzf "out/castor-one-shot-0.1.0-rc1-linux-${ARCH}.tar.gz" -C /tmp/castor-candidate-install
+          python3 - <<'PY'
+          import json, os, pathlib
+          release = json.loads(pathlib.Path('/tmp/castor-candidate-install/share/castor/release.json').read_text())
+          pins = release['images']['linux/' + os.environ['ARCH']]
+          pathlib.Path('out/native-refs.json').write_text(json.dumps({
+              'carrier': pins['carrier']['reference'],
+              'controller': pins['controller']['reference'],
+          }))
+          PY
+          CARRIER_REF=$(python3 -c 'import json; print(json.load(open("out/native-refs.json"))["carrier"])')
+          CONTROLLER_REF=$(python3 -c 'import json; print(json.load(open("out/native-refs.json"))["controller"])')
+          docker image inspect "$CARRIER_REF" >/dev/null
+          docker image inspect "$CONTROLLER_REF" >/dev/null
+          docker image rm "$CARRIER_TAG" "$CONTROLLER_TAG" "$CARRIER_CANDIDATE" "$CONTROLLER_CANDIDATE"
+          docker image rm "$CARRIER_REF" "$CONTROLLER_REF" 2>/dev/null || true
+          if docker image inspect "$CARRIER_REF" >/dev/null 2>&1 || docker image inspect "$CONTROLLER_REF" >/dev/null 2>&1; then
+            echo 'candidate refs remained cached before native prepare' >&2
+            exit 1
+          fi
+          export HOME=$(mktemp -d)
+          /tmp/castor-candidate-install/bin/castor runtime prepare
+          test -f "$HOME/.castor/runtime/0.1.0-rc1-linux-${ARCH}.json"

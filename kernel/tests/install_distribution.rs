@@ -246,6 +246,48 @@ fn installed_run_rejects_missing_prepared_runtime_before_model_or_controller_bui
         !calls.contains("build"),
         "controller built from source: {calls}"
     );
+    let developer_override = Command::new(&exe)
+        .args(["run", "--project"])
+        .arg(&project)
+        .arg("--task-spec")
+        .arg(&spec)
+        .args(["--model", "local-ollama", "--state-root"])
+        .arg(root.path().join("override-state"))
+        .env("HOME", root.path())
+        .env("PATH", format!("{}:/usr/bin:/bin", fake_bin.display()))
+        .env("CASTOR_DEVELOPER_SOURCE_CHECKOUT", "1")
+        .env("CASTOR_FAKE_DOCKER_LOG", &docker_log)
+        .env("CASTOR_FAKE_NODE_LOG", &node_log)
+        .output()
+        .unwrap();
+    assert_eq!(developer_override.status.code(), Some(2));
+    let override_envelope: Value = serde_json::from_slice(&developer_override.stdout).unwrap();
+    assert_eq!(override_envelope["launcher_status"], "PREFLIGHT_FAILED");
+    assert_eq!(override_envelope["model_calls"], 0);
+    assert!(!node_log.exists(), "developer flag reached model script");
+    assert!(!fs::read_to_string(&docker_log)
+        .unwrap_or_default()
+        .contains("build"));
+}
+
+#[test]
+fn staged_script_rehashes_opened_bytes_and_survives_source_replacement() {
+    let (root, exe) = fixture();
+    let installed = InstalledRelease::load_at(&exe).unwrap();
+    let destination = root.path().join("private-model-pin.mjs");
+    installed
+        .stage_script(HostScript::ModelPin, &destination)
+        .unwrap();
+    assert_eq!(fs::read(&destination).unwrap(), b"model pin");
+    fs::write(
+        root.path().join("libexec/castor/model_pin.mjs"),
+        b"untrusted",
+    )
+    .unwrap();
+    assert_eq!(fs::read(&destination).unwrap(), b"model pin");
+    assert!(installed
+        .stage_script(HostScript::ModelPin, &root.path().join("other.mjs"))
+        .is_err());
 }
 
 #[test]
