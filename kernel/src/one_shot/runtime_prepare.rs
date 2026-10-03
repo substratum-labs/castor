@@ -71,6 +71,22 @@ fn checked_platform(
     Ok(platform)
 }
 
+fn digest_reference_matches(pin: &ImagePin, observed: &[String]) -> bool {
+    if observed.contains(&pin.reference) {
+        return true;
+    }
+    let Some(library) = pin.reference.strip_prefix("docker.io/library/") else {
+        return false;
+    };
+    let Some((name_and_tag, digest)) = library.split_once('@') else {
+        return false;
+    };
+    let short_name = name_and_tag.split(':').next().unwrap_or_default();
+    observed
+        .iter()
+        .any(|value| value == &format!("{short_name}@{digest}"))
+}
+
 fn verify_image(
     engine: &impl EngineOps,
     pin: &ImagePin,
@@ -82,7 +98,7 @@ fn verify_image(
     if observed.id != pin.image_id
         || observed.os != "linux"
         || normalize_arch(&observed.arch) != arch
-        || !observed.repo_digests.contains(&pin.reference)
+        || !digest_reference_matches(pin, &observed.repo_digests)
     {
         return Err(invalid("prepared image identity differs from release pin"));
     }

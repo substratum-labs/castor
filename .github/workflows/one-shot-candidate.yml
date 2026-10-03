@@ -164,22 +164,6 @@ jobs:
           mkdir -p /tmp/castor-candidate-install
           tar -xzf out/castor-one-shot-0.1.0-rc1-linux-amd64.tar.gz -C /tmp/castor-candidate-install
           export HOME=$(mktemp -d)
-          python3 - <<'PYDIAG'
-          import json, pathlib, subprocess
-          pins = json.loads(pathlib.Path('out/engine-pins.json').read_text())['linux/amd64']
-          for role in ('controller', 'carrier', 'verifier'):
-              expected = pins[role]
-              result = subprocess.run(['docker', 'image', 'inspect', expected['reference']],
-                                      capture_output=True, text=True)
-              if result.returncode:
-                  print(role, 'ABSENT', expected['reference'])
-                  continue
-              observed = json.loads(result.stdout)[0]
-              print(role, 'expected_id', expected['image_id'],
-                    'observed_id', observed['Id'], 'os', observed['Os'],
-                    'arch', observed['Architecture'],
-                    'repo_digests', observed.get('RepoDigests', []))
-          PYDIAG
           /tmp/castor-candidate-install/bin/castor runtime prepare
           test -f "$HOME/.castor/runtime/0.1.0-rc1-linux-amd64.json"
       - uses: actions/upload-artifact@v4

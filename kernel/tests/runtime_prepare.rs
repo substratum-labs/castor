@@ -31,7 +31,8 @@ fn installed() -> (tempfile::TempDir, InstalledRelease) {
     .unwrap();
     let images = json!({
         "controller": pin("controller", 'a'), "carrier": pin("carrier", 'b'),
-        "verifier": pin("verifier", 'c'),
+        "verifier": {"reference": format!("docker.io/library/python:3.12-slim@sha256:{}", "c".repeat(64)),
+                     "image_id": format!("sha256:{}", "c".repeat(64))},
         "carrier_tag": "substratum/castor-pi-carrier:one-shot-0.1.0"
     });
     let body = json!({"schema_version":1,"release_version":"0.1.0","source_revision":"d".repeat(40),
@@ -199,4 +200,24 @@ fn rejects_unsupported_platform_and_wrong_image_id_before_ready() {
     engine.remote.get_mut(controller).unwrap().id = format!("sha256:{}", "f".repeat(64));
     assert!(prepare(&release, &engine, state.path()).is_err());
     assert!(!marker(state.path()).exists());
+}
+
+#[test]
+fn docker_hub_library_alias_preserves_verifier_digest_identity() {
+    let (_fixture, release) = installed();
+    let state = tempfile::tempdir().unwrap();
+    let mut engine = FakeEngine::new(&release, "amd64");
+    let verifier = &release.pins("amd64").unwrap().verifier.reference;
+    engine.remote.get_mut(verifier).unwrap().repo_digests =
+        vec![format!("python@sha256:{}", "c".repeat(64))];
+    assert!(prepare(&release, &engine, state.path()).is_ok());
+    engine.remote.get_mut(verifier).unwrap().repo_digests =
+        vec![format!("python@sha256:{}", "d".repeat(64))];
+    engine
+        .local
+        .borrow_mut()
+        .get_mut(verifier)
+        .unwrap()
+        .repo_digests = vec![format!("python@sha256:{}", "d".repeat(64))];
+    assert!(revalidate(&release, &engine, state.path()).is_err());
 }
