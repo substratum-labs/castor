@@ -389,7 +389,24 @@ impl Slot {
         Ok(id)
     }
 
-    fn helper(&mut self, request: Value, parent: Option<&str>) -> io::Result<(Value, Value)> {
+    fn helper(
+        &mut self,
+        request: Value,
+        parent: Option<&str>,
+        read_private_state: bool,
+    ) -> io::Result<(Value, Value)> {
+        if read_private_state
+            && (parent.is_some()
+                || request.get("operation").and_then(Value::as_str) != Some("canonical")
+                || request
+                    .get("paths")
+                    .and_then(Value::as_array)
+                    .is_none_or(|paths| paths.len() != 1))
+        {
+            return Err(invalid(
+                "private-state search is limited to one canonical path",
+            ));
+        }
         let label = format!("admin-{}", &random_token()?[..8]);
         let mut args = vec![
             "--network".into(),
@@ -404,6 +421,11 @@ impl Slot {
             "--mount".into(),
             format!("type=bind,src={},dst=/state", path_string(&self.state)?),
         ];
+        if read_private_state {
+            // Linux Engine paths can cross a user's 0700 state directory.
+            // Only this short-lived canonicalization helper may search it.
+            args.extend(["--cap-add".into(), "DAC_READ_SEARCH".into()]);
+        }
         if let Some(parent) = parent {
             args.extend([
                 "--mount".into(),
@@ -465,8 +487,11 @@ impl Slot {
             ],
             Duration::from_secs(15),
         )?;
-        let (paths, inspected) =
-            self.helper(json!({"operation":"canonical","paths":[root,"/run"]}), None)?;
+        let (paths, inspected) = self.helper(
+            json!({"operation":"canonical","paths":[root,"/run"]}),
+            None,
+            false,
+        )?;
         let paths = paths
             .as_array()
             .ok_or_else(|| invalid("invalid Engine canonical output"))?;
@@ -486,6 +511,7 @@ impl Slot {
         let (canonical, _) = self.helper(
             json!({"operation":"canonical","paths":[state_source]}),
             None,
+            true,
         )?;
         let state_source = canonical
             .get(0)
@@ -514,6 +540,7 @@ impl Slot {
         let (proof, _) = self.helper(
             json!({"operation":"allocate","parent":parent,"scratch":scratch,"token":self.token}),
             Some(parent),
+            false,
         )?;
         if proof.get("exists").and_then(Value::as_bool) != Some(true) {
             return Err(invalid("Engine scratch allocation not proved"));
@@ -892,7 +919,7 @@ impl Slot {
                     .parent
                     .clone()
                     .ok_or_else(|| invalid("missing Engine scratch parent"))?;
-                let (proof, _) = self.helper(json!({"operation":"remove","parent":parent,"scratch":scratch,"token":self.token}), Some(&parent))?;
+                let (proof, _) = self.helper(json!({"operation":"remove","parent":parent,"scratch":scratch,"token":self.token}), Some(&parent), false)?;
                 if proof.get("exists").and_then(Value::as_bool) != Some(false) {
                     return Err(invalid("scratch removal not proved"));
                 }
@@ -1172,6 +1199,18 @@ mod tests {
             .windows(2)
             .any(|pair| pair == ["--env", &format!("CASTOR_RELEASE_VERIFIER_ID={verifier}")]));
         assert!(release_pin_env_args(Some(&carrier), None).is_err());
+    }
+
+    #[test]
+    fn private_state_search_cannot_be_used_by_allocating_helper() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("state");
+        fs::create_dir(&state).unwrap();
+        let mut slot =
+            Slot::new(state, "test-token".into(), "unused".into(), "unused".into()).unwrap();
+        assert!(slot
+            .helper(json!({"operation":"allocate","paths":["/tmp"]}), None, true)
+            .is_err());
     }
 
     #[test]
@@ -1517,6 +1556,7 @@ mod tests {
             .helper(
                 json!({"operation":"remove","parent":parent,"scratch":scratch,"token":slot.token}),
                 Some(&parent),
+                false,
             )
             .unwrap();
         assert_eq!(proof["exists"], false);
