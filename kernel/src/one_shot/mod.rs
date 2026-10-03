@@ -9,3 +9,5 @@ pub mod project;
 pub mod result;
 pub mod supervisor;
 pub mod verifier;
+
+pub mod install;
