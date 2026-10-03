@@ -3,9 +3,11 @@ mod developer_controller;
 #[path = "castor/developer_entry.rs"]
 mod developer_entry;
 use castor_kernel::one_shot::image::{valid_digest, StagedSnapshot};
+use castor_kernel::one_shot::install::InstalledRelease;
 use castor_kernel::one_shot::manifest::TaskManifest;
 use castor_kernel::one_shot::project::engine::{pack_project, run_project};
 use castor_kernel::one_shot::result::TaskResult;
+use castor_kernel::one_shot::runtime_prepare::{check_node_major, prepare, DockerEngine};
 use castor_kernel::one_shot::supervisor::{
     run_product_task, run_test_task, test_state_root, RunOutcome,
 };
@@ -32,6 +34,24 @@ fn run() -> io::Result<ExitCode> {
     }
     if command == "__engine-helper" {
         return developer_controller::engine_helper(&args.next().ok_or_else(invalid_args)?);
+    }
+    if command == "runtime" {
+        if args.next().as_deref() != Some("prepare") || args.next().is_some() {
+            return Err(invalid_args());
+        }
+        let release = InstalledRelease::load_current()?;
+        check_node_major()?;
+        let home = env::var_os("HOME").ok_or_else(|| io::Error::other("missing HOME"))?;
+        let receipt = prepare(
+            &release,
+            &DockerEngine,
+            &PathBuf::from(home).join(".castor"),
+        )?;
+        println!(
+            "{}",
+            serde_json::to_string(&receipt).map_err(io::Error::other)?
+        );
+        return Ok(ExitCode::SUCCESS);
     }
     if command != "run" && command != "pack" {
         return Err(invalid_args());
