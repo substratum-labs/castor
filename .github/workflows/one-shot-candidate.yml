@@ -157,6 +157,7 @@ jobs:
           done
           python3 -m unittest scripts/test_package_one_shot.py -v
           test "$(find out -name 'castor-one-shot-*.tar.gz' | wc -l | tr -d ' ')" = 4
+          cp scripts/ci_fake_ollama.cjs out/ci_fake_ollama.cjs
       - name: Exercise source-free Linux archive and digest preparation
         run: |
           set -eu
@@ -175,6 +176,7 @@ jobs:
           path: |
             out/castor-one-shot-*.tar.gz
             out/engine-pins.json
+            out/ci_fake_ollama.cjs
           if-no-files-found: error
           retention-days: 1
 
@@ -244,3 +246,43 @@ jobs:
           export HOME=$(mktemp -d)
           /tmp/castor-candidate-install/bin/castor runtime prepare
           test -f "$HOME/.castor/runtime/0.1.0-rc1-linux-${ARCH}.json"
+      - name: Run installed read/edit/verifier fixture with fake provider
+        run: |
+          set -eu
+          FIXTURE=$(mktemp -d)
+          mkdir -p "$FIXTURE/project"
+          printf 'hello\n' > "$FIXTURE/project/hello.txt"
+          printf '%s\n' '{"schema_version":1,"task_prompt":"Read hello.txt and change hello to fixed.","verification_command":["/bin/sh","-c","test \"$(cat hello.txt)\" = \"fixed\""]}' > "$FIXTURE/task.json"
+          git -C "$FIXTURE/project" init -q
+          git -C "$FIXTURE/project" add hello.txt
+          git -C "$FIXTURE/project" -c user.name='Castor CI' -c user.email='castor-ci@example.invalid' commit -qm fixture
+          export HOME=$(mktemp -d)
+          # The previous job step's HOME is not persisted across steps.
+          /tmp/castor-candidate-install/bin/castor runtime prepare
+          export CASTOR_FAKE_OLLAMA_LOG="$FIXTURE/fake-fetch.jsonl"
+          export NODE_OPTIONS="--require=$PWD/out/ci_fake_ollama.cjs"
+          if ! /tmp/castor-candidate-install/bin/castor run \
+              --project "$FIXTURE/project" --task-spec "$FIXTURE/task.json" \
+              --model local-ollama --state-root "$FIXTURE/state" > "$FIXTURE/result.json"; then
+            cat "$FIXTURE/result.json"
+            exit 1
+          fi
+          python3 - "$FIXTURE" <<'PY'
+          import json, pathlib, subprocess, sys
+          root = pathlib.Path(sys.argv[1])
+          result = json.loads((root / 'result.json').read_text())
+          calls = [json.loads(line) for line in (root / 'fake-fetch.jsonl').read_text().splitlines()]
+          assert result['launcher_status'] == 'SUCCEEDED', result
+          assert result['cleanup_status'] == 'CLEAN', result
+          assert result['task_result']['status'] == 'SUCCEEDED', result
+          assert result['task_result']['test_passed'] is True, result
+          assert result['task_result']['settled_actions_count'] == 1, result
+          assert result['model_calls'] == 2, result
+          assert sum(call['path'] == '/api/chat' for call in calls) == 2, calls
+          assert all(call['path'] in ('/api/chat', '/api/tags', '/api/version') for call in calls), calls
+          for cid in [result['controller_cid'], *result['owned_cids']]:
+              assert subprocess.run(['docker', 'container', 'inspect', cid], capture_output=True).returncode != 0, cid
+          assert not subprocess.check_output(['git', '-C', str(root / 'project'), 'status', '--porcelain'])
+          print(json.dumps({'status':'SUCCEEDED','cleanup':'CLEAN','fake_chat_posts':2,
+                            'real_provider_calls':0,'patch_sha256':result['task_result']['final_patch_sha256']}))
+          PY
