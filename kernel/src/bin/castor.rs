@@ -13,7 +13,7 @@ use castor_kernel::one_shot::runtime_prepare::{
     check_node_major, prepare, revalidate, DockerEngine,
 };
 use castor_kernel::one_shot::supervisor::{
-    run_product_task, run_test_task, test_state_root, RunOutcome,
+    existing_terminal_result, run_product_task, run_test_task, test_state_root, RunOutcome,
 };
 use std::env;
 use std::io;
@@ -161,6 +161,34 @@ fn run() -> io::Result<ExitCode> {
     let manifest = TaskManifest::read(&manifest_path)?;
     match manifest.validate_snapshot(&manifest_path) {
         Ok(snapshot) => {
+            if !allow_test_opcodes {
+                let state_root = env::var_os("CASTOR_STATE_ROOT")
+                    .map(PathBuf::from)
+                    .or_else(|| {
+                        env::var_os("HOME").map(|home| PathBuf::from(home).join(".castor/state"))
+                    })
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "missing HOME or CASTOR_STATE_ROOT",
+                        )
+                    })?;
+                if let Some(value) =
+                    existing_terminal_result(&manifest, &manifest_path, &state_root)?
+                {
+                    let success =
+                        value.get("status").and_then(|status| status.as_str()) == Some("SUCCEEDED");
+                    println!(
+                        "{}",
+                        serde_json::to_string(&value).map_err(io::Error::other)?
+                    );
+                    return Ok(if success {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    });
+                }
+            }
             let staged = match StagedSnapshot::stage(snapshot, &manifest.workspace_snapshot_path) {
                 Ok(staged) => staged,
                 Err(error) => {

@@ -5,6 +5,7 @@ use castor_kernel::one_shot::install::{HostScript, InstalledRelease};
 use castor_kernel::one_shot::project::engine::{pack_project, pack_project_with_carrier};
 use castor_kernel::one_shot::runtime_prepare::{check_node_major, revalidate, DockerEngine};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -304,6 +305,31 @@ fn decode_controller_result(stdout: &[u8], stderr: &[u8], inspect: &Value) -> io
     Ok(value)
 }
 
+fn owned_task_image(image: &Value, base: &Value, id: &str, token: &str) -> bool {
+    if image.get("Id").and_then(Value::as_str) != Some(id)
+        || image
+            .pointer("/Config/Labels/castor.stage.owner")
+            .and_then(Value::as_str)
+            != Some(token)
+    {
+        return false;
+    }
+    let Some(base_layers) = base.pointer("/RootFS/Layers").and_then(Value::as_array) else {
+        return false;
+    };
+    let Some(layers) = image.pointer("/RootFS/Layers").and_then(Value::as_array) else {
+        return false;
+    };
+    if layers.len() != base_layers.len() + 1 || &layers[..base_layers.len()] != base_layers {
+        return false;
+    }
+    ["Cmd", "Entrypoint", "Env", "User", "WorkingDir", "Volumes"]
+        .iter()
+        .all(|key| {
+            image.pointer(&format!("/Config/{key}")) == base.pointer(&format!("/Config/{key}"))
+        })
+}
+
 fn observed_staging_profile(item: &Value, scratch: &str, token: &str, carrier_id: &str) -> bool {
     let Some(mounts) = item.get("Mounts").and_then(Value::as_array) else {
         return false;
@@ -428,6 +454,123 @@ struct Slot {
 }
 
 impl Slot {
+    fn remove_unbound_task_images(&self) -> io::Result<()> {
+        if self.carrier_id.is_empty() {
+            return Ok(());
+        }
+        let ids = self.docker.text(
+            &[
+                "image".into(),
+                "ls".into(),
+                "--all".into(),
+                "--quiet".into(),
+                "--no-trunc".into(),
+            ],
+            Duration::from_secs(15),
+        )?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let ids: HashSet<_> = ids.split_whitespace().map(str::to_owned).collect();
+        if ids.len() > 256 {
+            return Err(invalid(
+                "too many Engine images for bounded ownership audit",
+            ));
+        }
+        let base = self.docker.text(
+            &["image".into(), "inspect".into(), self.carrier_id.clone()],
+            Duration::from_secs(15),
+        )?;
+        let base: Vec<Value> = serde_json::from_str(&base).map_err(io::Error::other)?;
+        if base.len() != 1 || base[0].get("Id").and_then(Value::as_str) != Some(&self.carrier_id) {
+            return Err(invalid("prepared carrier changed during image cleanup"));
+        }
+        let mut retained = HashSet::new();
+        match fs::read(self.state.join("board.json")) {
+            Ok(bytes) => {
+                let board: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+                let board = board
+                    .as_object()
+                    .ok_or_else(|| invalid("invalid task board during image cleanup"))?;
+                for task in board.values() {
+                    if let Some(id) = task
+                        .get("derived_task_image_digest")
+                        .and_then(Value::as_str)
+                    {
+                        retained.insert(id.to_owned());
+                    }
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error),
+        }
+        if let Some(id) = self
+            .result
+            .as_ref()
+            .and_then(|result| result.get("derived_task_image_digest"))
+            .and_then(Value::as_str)
+        {
+            retained.insert(id.to_owned());
+        }
+        let mut summary_args = vec![
+            "image".into(),
+            "inspect".into(),
+            "--format".into(),
+            "{{.Id}} {{json .Config}}".into(),
+        ];
+        summary_args.extend(ids.iter().cloned());
+        let summaries = self.docker.text(&summary_args, Duration::from_secs(15))?;
+        if summaries.lines().count() != ids.len() {
+            return Err(invalid("incomplete Engine image ownership audit"));
+        }
+        for summary in summaries.lines() {
+            let (id, config) = summary
+                .split_once(' ')
+                .ok_or_else(|| invalid("invalid Engine image summary"))?;
+            if !ids.contains(id) {
+                return Err(invalid("Engine image inventory changed during cleanup"));
+            }
+            let config: Value = serde_json::from_str(config).map_err(io::Error::other)?;
+            if config
+                .pointer("/Labels/castor.stage.owner")
+                .and_then(Value::as_str)
+                != Some(&self.token)
+            {
+                continue;
+            }
+            let hex = id
+                .strip_prefix("sha256:")
+                .ok_or_else(|| invalid("invalid owned image ID"))?;
+            full_cid(hex)?;
+            let inspected = self.docker.text(
+                &["image".into(), "inspect".into(), id.into()],
+                Duration::from_secs(15),
+            )?;
+            let inspected: Vec<Value> =
+                serde_json::from_str(&inspected).map_err(io::Error::other)?;
+            if inspected.len() != 1 {
+                return Err(invalid("ambiguous Engine image inspection"));
+            }
+            if inspected[0]
+                .pointer("/Config/Labels/castor.stage.owner")
+                .and_then(Value::as_str)
+                != Some(&self.token)
+            {
+                continue;
+            }
+            if !owned_task_image(&inspected[0], &base[0], id, &self.token) {
+                return Err(invalid("owned task image identity could not be proved"));
+            }
+            if !retained.contains(id) {
+                self.docker.call(
+                    &["image".into(), "rm".into(), id.into()],
+                    Duration::from_secs(15),
+                    true,
+                )?;
+            }
+        }
+        Ok(())
+    }
     fn new(state: PathBuf, token: String, image: String, verifier_id: String) -> io::Result<Self> {
         let evidence = state.join("launcher");
         fs::create_dir(&evidence)?;
@@ -1055,6 +1198,7 @@ impl Slot {
                     self.remove_cid(&id)?;
                 }
             }
+            self.remove_unbound_task_images()?;
             if self.allocated {
                 let scratch = self
                     .scratch
@@ -1347,6 +1491,103 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_cleanup_requires_exact_run_label_and_carrier_ancestry() {
+        let token = "0123456789abcdef0123456789abcdef";
+        let id = format!("sha256:{}", "a".repeat(64));
+        let base = json!({"RootFS":{"Layers":["sha256:base"]},
+            "Config":{"Cmd":["node"],"Entrypoint":["docker-entrypoint.sh"],
+                "Env":["HOME=/tmp"],"User":"10001:10001","WorkingDir":"/opt/castor"}});
+        let mut derived = json!({"Id":id,"RootFS":{"Layers":["sha256:base","sha256:task"]},
+            "Config":{"Cmd":["node"],"Entrypoint":["docker-entrypoint.sh"],
+                "Env":["HOME=/tmp"],"User":"10001:10001","WorkingDir":"/opt/castor",
+                "Labels":{"castor.stage.owner":token}}});
+        assert!(owned_task_image(&derived, &base, &id, token));
+        derived["Config"]["Labels"]["castor.stage.owner"] = json!("another-owner");
+        assert!(!owned_task_image(&derived, &base, &id, token));
+        derived["Config"]["Labels"]["castor.stage.owner"] = json!(token);
+        derived["RootFS"]["Layers"][0] = json!("sha256:other-base");
+        assert!(!owned_task_image(&derived, &base, &id, token));
+    }
+
+    #[test]
+    #[ignore = "requires a local Docker Engine and the t337g Pi carrier"]
+    fn orphaned_owned_task_image_is_removed_by_host_cleanup() {
+        let root = tempfile::tempdir().unwrap();
+        let token = random_token().unwrap();
+        let docker = Docker::default();
+        let base = docker
+            .text(
+                &[
+                    "image".into(),
+                    "inspect".into(),
+                    "--format".into(),
+                    "{{.Id}}".into(),
+                    "substratum/castor-pi-carrier:t337g".into(),
+                ],
+                Duration::from_secs(15),
+            )
+            .unwrap();
+        let cid = docker
+            .text(
+                &[
+                    "create".into(),
+                    "--network".into(),
+                    "none".into(),
+                    "--label".into(),
+                    format!("castor.stage.owner={token}"),
+                    base.clone(),
+                ],
+                Duration::from_secs(15),
+            )
+            .unwrap();
+        fs::write(root.path().join("probe.txt"), b"owned\n").unwrap();
+        let mut image = String::new();
+        let outcome = (|| -> io::Result<()> {
+            docker.call(
+                &[
+                    "cp".into(),
+                    path_string(&root.path().join("probe.txt"))?,
+                    format!("{cid}:/workspace/probe.txt"),
+                ],
+                Duration::from_secs(15),
+                true,
+            )?;
+            image = docker.text(&["commit".into(), cid.clone()], Duration::from_secs(15))?;
+            docker.call(&["rm".into(), cid.clone()], Duration::from_secs(15), true)?;
+            fs::create_dir(root.path().join("state"))?;
+            let mut slot = Slot::new(
+                root.path().join("state"),
+                token,
+                String::new(),
+                String::new(),
+            )?;
+            slot.carrier_id = base;
+            slot.remove_unbound_task_images()?;
+            if docker
+                .call(
+                    &["image".into(), "inspect".into(), image.clone()],
+                    Duration::from_secs(15),
+                    false,
+                )?
+                .status
+                .success()
+            {
+                return Err(invalid("orphaned image survived host cleanup"));
+            }
+            Ok(())
+        })();
+        let _ = docker.call(&["rm".into(), cid], Duration::from_secs(15), false);
+        if !image.is_empty() {
+            let _ = docker.call(
+                &["image".into(), "rm".into(), image],
+                Duration::from_secs(15),
+                false,
+            );
+        }
+        outcome.unwrap();
+    }
 
     #[test]
     fn stopped_staging_container_is_owned_only_with_exact_marker_and_carrier() {
