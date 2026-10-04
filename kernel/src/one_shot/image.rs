@@ -1,17 +1,112 @@
 use crate::one_shot::manifest::ValidatedSnapshot;
 use flate2::read::GzDecoder;
+use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
-use tar::Archive;
+use std::process::{Command, Stdio};
+use tar::{Archive, Builder, Header};
 
 const MAX_ENTRIES: usize = 50_000;
 const MAX_EXTRACTED_BYTES: u64 = 1024 * 1024 * 1024;
 
 pub struct StagedSnapshot {
     root: tempfile::TempDir,
+}
+
+struct StagingContainer(String);
+
+impl Drop for StagingContainer {
+    fn drop(&mut self) {
+        if !self.0.is_empty() {
+            let _ = Command::new("docker").args(["rm", &self.0]).output();
+        }
+    }
+}
+
+struct DerivedImage(String);
+
+impl Drop for DerivedImage {
+    fn drop(&mut self) {
+        if !self.0.is_empty() {
+            let _ = Command::new("docker")
+                .args(["image", "rm", &self.0])
+                .output();
+        }
+    }
+}
+
+fn docker(args: &[&str]) -> io::Result<String> {
+    let output = Command::new("docker").args(args).output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "Docker {} failed: {}",
+            args.first().copied().unwrap_or("?"),
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    String::from_utf8(output.stdout)
+        .map(|value| value.trim().to_owned())
+        .map_err(|_| invalid_archive("non-UTF8 Docker output"))
+}
+
+fn inspect_image(image: &str) -> io::Result<Value> {
+    let output = docker(&["image", "inspect", image])?;
+    let mut images: Vec<Value> = serde_json::from_str(&output).map_err(io::Error::other)?;
+    if images.len() != 1 {
+        return Err(invalid_archive("Docker image inspect was ambiguous"));
+    }
+    Ok(images.remove(0))
+}
+
+fn snapshot_tar(workspace: &Path, target: &Path) -> io::Result<()> {
+    let output = fs::File::create(target)?;
+    let mut tar = Builder::new(output);
+    let mut pending = vec![workspace.to_owned()];
+    let mut count = 0usize;
+    let mut total = 0u64;
+    while let Some(directory) = pending.pop() {
+        let mut children = fs::read_dir(&directory)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<io::Result<Vec<_>>>()?;
+        children.sort();
+        for path in children {
+            count += 1;
+            if count > MAX_ENTRIES {
+                return Err(invalid_archive("snapshot has too many entries"));
+            }
+            let name = path.strip_prefix(workspace).map_err(io::Error::other)?;
+            let metadata = fs::symlink_metadata(&path)?;
+            let mut header = Header::new_gnu();
+            header.set_uid(10001);
+            header.set_gid(10001);
+            header.set_mode(0o555);
+            header.set_mtime(0);
+            if metadata.is_dir() {
+                header.set_entry_type(tar::EntryType::Directory);
+                header.set_size(0);
+                header.set_cksum();
+                tar.append_data(&mut header, name, io::empty())?;
+                pending.push(path);
+            } else if metadata.is_file() {
+                total = total
+                    .checked_add(metadata.len())
+                    .ok_or_else(|| invalid_archive("snapshot size overflow"))?;
+                if total > MAX_EXTRACTED_BYTES {
+                    return Err(invalid_archive("snapshot exceeds size limit"));
+                }
+                header.set_entry_type(tar::EntryType::Regular);
+                header.set_size(metadata.len());
+                header.set_cksum();
+                tar.append_data(&mut header, name, fs::File::open(&path)?)?;
+            } else {
+                return Err(invalid_archive("snapshot contains a link or special file"));
+            }
+        }
+    }
+    tar.finish()?;
+    tar.into_inner()?.sync_all()
 }
 
 impl StagedSnapshot {
@@ -45,79 +140,130 @@ impl StagedSnapshot {
 
     pub fn build(&self, carrier_base_image: &str) -> io::Result<String> {
         validate_base_image(carrier_base_image)?;
-        // The manifest pins the locally built carrier's immutable image ID.
-        // Docker BuildKit interprets tag@config-ID and bare sha256:config-ID
-        // as remote references. Resolve the local tag first, compare its ID to
-        // the manifest pin, and give this build a unique temporary local tag.
         let (carrier_tag, expected_id) = carrier_base_image
             .split_once('@')
             .expect("validated carrier reference");
-        let inspect = Command::new("docker")
-            .args(["image", "inspect", "--format", "{{.Id}}", carrier_tag])
-            .output()?;
-        if !inspect.status.success() {
-            return Err(io::Error::other(
-                "pinned Pi carrier is not installed locally",
-            ));
-        }
-        let local_id = String::from_utf8_lossy(&inspect.stdout).trim().to_owned();
-        if local_id != expected_id {
+        let base = inspect_image(carrier_tag)?;
+        if base.get("Id").and_then(Value::as_str) != Some(expected_id) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "local Pi carrier digest differs from task manifest pin",
             ));
         }
-        let local_tag = format!(
-            "substratum/castor-pi-carrier:{}",
-            self.root
-                .path()
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| io::Error::other("invalid private image build directory"))?
-        );
-        let tagged = Command::new("docker")
-            .args(["tag", &local_id, &local_tag])
-            .output()?;
-        if !tagged.status.success() {
-            return Err(io::Error::other("failed to pin a local carrier build tag"));
-        }
-        let dockerfile = self.root.path().join("Dockerfile");
-        fs::write(
-            &dockerfile,
-            "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nCOPY --chown=10001:10001 --chmod=0555 workspace_snapshot/ /workspace/\n",
-        )?;
-        let build_result = Command::new("docker")
-            .arg("build")
-            .arg("--quiet")
-            .arg("--build-arg")
-            .arg(format!("BASE_IMAGE={local_tag}"))
-            .arg("--file")
-            .arg(&dockerfile)
-            .arg(self.root.path())
-            .output();
-        let _ = Command::new("docker")
-            .args(["image", "rm", &local_tag])
-            .output();
-        let output = build_result?;
-        if !output.status.success() {
-            return Err(io::Error::other(format!(
-                "derived image build failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-        let digest = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .last()
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
-        if !valid_digest(&digest) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "image builder returned no immutable sha256 digest",
+        if base.pointer("/Config/Volumes").is_some_and(|value| {
+            !value.is_null() && value.as_object().is_some_and(|volumes| !volumes.is_empty())
+        }) {
+            return Err(invalid_archive(
+                "carrier defines volumes; snapshot image would be incomplete",
             ));
         }
-        Ok(digest)
+        let tar_path = self.root.path().join("snapshot.tar");
+        snapshot_tar(&self.workspace(), &tar_path)?;
+        let mut args = vec![
+            "create",
+            "--network",
+            "none",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--pids-limit",
+            "64",
+        ];
+        let marker = std::env::var("CASTOR_STAGE_OWNER_DIR").ok();
+        let token = std::env::var("CASTOR_STAGE_OWNER_TOKEN").ok();
+        if marker.is_some() != token.is_some() {
+            return Err(invalid_archive("incomplete staging ownership"));
+        }
+        if let Some(token) = &token {
+            if token.len() != 32
+                || !token
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            {
+                return Err(invalid_archive("invalid staging owner token"));
+            }
+        }
+        let label = token
+            .as_ref()
+            .map(|token| format!("castor.stage.owner={token}"));
+        let mount = marker
+            .as_ref()
+            .map(|path| format!("type=bind,src={path},dst=/run/castor-stage-owner,readonly"));
+        if let Some(value) = &mount {
+            args.extend(["--mount", value]);
+        }
+        if let Some(value) = &label {
+            args.extend(["--label", value]);
+        }
+        args.push(expected_id);
+        let cid = docker(&args)?;
+        if cid.len() != 64 || !cid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(invalid_archive("Docker returned invalid staging CID"));
+        }
+        let mut staging = StagingContainer(cid);
+        let created: Vec<Value> =
+            serde_json::from_str(&docker(&["inspect", &staging.0])?).map_err(io::Error::other)?;
+        let created = created
+            .first()
+            .ok_or_else(|| invalid_archive("staging inspect missing"))?;
+        if created.get("Image").and_then(Value::as_str) != Some(expected_id)
+            || created.pointer("/State/Status").and_then(Value::as_str) != Some("created")
+            || created.pointer("/State/Running").and_then(Value::as_bool) != Some(false)
+            || created
+                .get("Mounts")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                != Some(usize::from(marker.is_some()))
+        {
+            return Err(invalid_archive(
+                "staging container differs from pinned, stopped profile",
+            ));
+        }
+        let stage = Command::new("docker")
+            .args(["cp", "-a", "-"])
+            .arg(format!("{}:/workspace", staging.0))
+            .stdin(Stdio::from(fs::File::open(&tar_path)?))
+            .output()?;
+        if !stage.status.success() {
+            return Err(io::Error::other(format!(
+                "snapshot copy failed: {}",
+                String::from_utf8_lossy(&stage.stderr)
+            )));
+        }
+        let digest = docker(&["commit", &staging.0])?;
+        if !valid_digest(&digest) {
+            return Err(invalid_archive("Docker commit returned invalid image ID"));
+        }
+        let mut owned_image = DerivedImage(digest);
+        let derived = inspect_image(&owned_image.0)?;
+        let config =
+            |image: &Value, field: &str| image.pointer(&format!("/Config/{field}")).cloned();
+        for field in ["Cmd", "Entrypoint", "Env", "User", "WorkingDir", "Volumes"] {
+            if config(&base, field) != config(&derived, field) {
+                return Err(invalid_archive(
+                    "derived image changed carrier startup configuration",
+                ));
+            }
+        }
+        let base_layers = base
+            .pointer("/RootFS/Layers")
+            .and_then(Value::as_array)
+            .ok_or_else(|| invalid_archive("carrier has no rootfs layers"))?;
+        let derived_layers = derived
+            .pointer("/RootFS/Layers")
+            .and_then(Value::as_array)
+            .ok_or_else(|| invalid_archive("derived image has no rootfs layers"))?;
+        if derived_layers.len() != base_layers.len() + 1
+            || &derived_layers[..base_layers.len()] != base_layers
+        {
+            return Err(invalid_archive(
+                "derived image does not extend pinned carrier by one layer",
+            ));
+        }
+        docker(&["rm", &staging.0])?;
+        staging.0.clear();
+        Ok(std::mem::take(&mut owned_image.0))
     }
 }
 

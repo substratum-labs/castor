@@ -35,7 +35,8 @@ and verifier images. A later `run` rechecks local image IDs and does not pull
 or build a controller from source. The verifier image still contains Python
 for tasks that request Python tests. See [installation and result semantics](docs/one-shot-install.md).
 This candidate workflow builds review artifacts; public GHCR/GitHub release
-publication remains separately gated.
+publication remains separately gated. The [release operator runbook](docs/one-shot-release.md)
+describes the protected tag workflow and final artifact checks.
 
 ## One-shot developer entry (source checkout)
 

@@ -1,0 +1,290 @@
+name: One-shot Castor release
+
+# A tag starts the build; publication also requires the protected environment
+# and a one-time environment secret matching this exact tag and commit.
+on:
+  push:
+    tags: ['one-shot-v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: one-shot-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check immutable tag and main ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/tags/one-shot-v* ]]
+          VERSION="${GITHUB_REF_NAME#one-shot-v}"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]]
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+  host-binaries:
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, platform: linux-amd64 }
+          - { runner: ubuntu-24.04-arm, platform: linux-arm64 }
+          - { runner: macos-15-intel, platform: darwin-amd64 }
+          - { runner: macos-15, platform: darwin-arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked --release --manifest-path kernel/Cargo.toml --bin castor
+      - run: |
+          mkdir -p out
+          cp kernel/target/release/castor "out/castor-${{ matrix.platform }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-host-${{ matrix.platform }}
+          path: out/castor-${{ matrix.platform }}
+          if-no-files-found: error
+
+  linux-images:
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native controller and Pi carrier
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#one-shot-v}"
+          CARRIER_TAG="substratum/castor-pi-carrier:one-shot-${VERSION}"
+          CONTROLLER_TAG="castor-controller:release-${ARCH}"
+          docker build --platform "linux/${ARCH}" --build-arg "CASTOR_SOURCE_REVISION=${GITHUB_SHA}" -t "$CARRIER_TAG" kernel/carrier/pi
+          docker build --platform "linux/${ARCH}" --build-arg "CASTOR_SOURCE_REVISION=${GITHUB_SHA}" -f kernel/controller/Dockerfile -t "$CONTROLLER_TAG" .
+          for ref in "$CARRIER_TAG" "$CONTROLLER_TAG"; do
+            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$ref")" = "$GITHUB_SHA"
+          done
+          mkdir -p out
+          docker save -o "out/carrier-${ARCH}.tar" "$CARRIER_TAG"
+          docker save -o "out/controller-${ARCH}.tar" "$CONTROLLER_TAG"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-images-${{ matrix.arch }}
+          path: out/*-${{ matrix.arch }}.tar
+          if-no-files-found: error
+
+  publish-candidate:
+    needs: [host-binaries, linux-images]
+    runs-on: ubuntu-24.04
+    environment: castor-one-shot-release
+    permissions:
+      contents: write
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require exact release arming before any registry write
+        env:
+          ARMED: ${{ secrets.CASTOR_RELEASE_ARMED }}
+        run: |
+          set -eu
+          test -n "$ARMED"
+          test "$ARMED" = "${GITHUB_REF_NAME}@${GITHUB_SHA}"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-host-*
+          path: out
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-images-*
+          path: out
+          merge-multiple: true
+      - name: Sign in to GHCR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Publish four architecture-specific image manifests and pin their digests
+        id: images
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#one-shot-v}"
+          CARRIER_REPO=ghcr.io/substratum-labs/castor-pi-carrier
+          CONTROLLER_REPO=ghcr.io/substratum-labs/castor-controller
+          for ARCH in amd64 arm64; do
+            docker load -i "out/carrier-${ARCH}.tar"
+            docker load -i "out/controller-${ARCH}.tar"
+            CARRIER_SOURCE="substratum/castor-pi-carrier:one-shot-${VERSION}"
+            CONTROLLER_SOURCE="castor-controller:release-${ARCH}"
+            for ref in "$CARRIER_SOURCE" "$CONTROLLER_SOURCE"; do
+              test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$ref")" = "$GITHUB_SHA"
+            done
+            docker tag "$CARRIER_SOURCE" "$CARRIER_REPO:${VERSION}-${ARCH}"
+            docker tag "$CONTROLLER_SOURCE" "$CONTROLLER_REPO:${VERSION}-${ARCH}"
+            docker push "$CARRIER_REPO:${VERSION}-${ARCH}"
+            docker push "$CONTROLLER_REPO:${VERSION}-${ARCH}"
+          done
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          version = os.environ['GITHUB_REF_NAME'].removeprefix('one-shot-v')
+          repos = {'carrier': 'ghcr.io/substratum-labs/castor-pi-carrier',
+                   'controller': 'ghcr.io/substratum-labs/castor-controller'}
+          verifier = 'docker.io/library/python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea'
+          pins, outputs = {}, []
+          for arch in ('amd64', 'arm64'):
+              values = {'verifier': {'reference': verifier},
+                        'carrier_tag': f'substratum/castor-pi-carrier:one-shot-{version}'}
+              for role, repo in repos.items():
+                  ref = f'{repo}:{version}-{arch}'
+                  image = json.loads(subprocess.check_output(['docker', 'image', 'inspect', ref]))[0]
+                  matches = [v for v in image['RepoDigests'] if v.startswith(repo + '@sha256:')]
+                  if len(matches) != 1 or image['Config']['Labels'].get('org.opencontainers.image.revision') != os.environ['GITHUB_SHA']:
+                      raise SystemExit(f'missing or ambiguous published digest: {ref}')
+                  values[role] = {'reference': matches[0]}
+                  outputs.append(f'{role}_{arch}={matches[0].split("@", 1)[1]}')
+              pins[f'linux/{arch}'] = values
+          pathlib.Path('out/engine-pins.json').write_text(json.dumps(pins, sort_keys=True))
+          with pathlib.Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
+              output.write('\n'.join(outputs) + '\n')
+          PY
+      - uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/substratum-labs/castor-pi-carrier
+          subject-digest: ${{ steps.images.outputs.carrier_amd64 }}
+          push-to-registry: true
+      - uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/substratum-labs/castor-pi-carrier
+          subject-digest: ${{ steps.images.outputs.carrier_arm64 }}
+          push-to-registry: true
+      - uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/substratum-labs/castor-controller
+          subject-digest: ${{ steps.images.outputs.controller_amd64 }}
+          push-to-registry: true
+      - uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/substratum-labs/castor-controller
+          subject-digest: ${{ steps.images.outputs.controller_arm64 }}
+          push-to-registry: true
+      - name: Package final host archives with published GHCR digests
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#one-shot-v}"
+          for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+            python3 scripts/package_one_shot.py --version "$VERSION" --source-revision "$GITHUB_SHA" \
+              --host-bin "out/castor-${platform}" --engine-pins out/engine-pins.json \
+              --output "out/castor-one-shot-${VERSION}-${platform}.tar.gz"
+          done
+          python3 -m unittest scripts/test_package_one_shot.py scripts/test_one_shot_release_workflow.py -v
+          (cd out && sha256sum castor-one-shot-*.tar.gz > SHA256SUMS)
+      - uses: actions/attest@v4
+        with:
+          subject-path: out/castor-one-shot-*.tar.gz
+      - name: Verify exact source and signer for all published subjects
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          IDENTITY=(--repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/one-shot-release.yml" --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA")
+          for archive in out/castor-one-shot-*.tar.gz; do
+            gh attestation verify "$archive" "${IDENTITY[@]}"
+          done
+          for role in carrier controller; do
+            for arch in amd64 arm64; do
+              REF=$(python3 - "$role" "$arch" <<'PY'
+          import json, sys
+          print(json.load(open('out/engine-pins.json'))['linux/' + sys.argv[2]][sys.argv[1]]['reference'])
+          PY
+          )
+              gh attestation verify "oci://$REF" "${IDENTITY[@]}"
+            done
+          done
+      - name: Open draft release with attested archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          gh release create "$GITHUB_REF_NAME" out/castor-one-shot-*.tar.gz out/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+            --title "Castor one-shot ${GITHUB_REF_NAME#one-shot-v}" \
+            --notes 'Pending installed GHCR/GitHub artifact acceptance on native Linux hosts.'
+
+  installed-smoke:
+    needs: publish-candidate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Download exact draft GitHub release archive and prepare from GHCR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#one-shot-v}"
+          mkdir -p /tmp/castor-release-install
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern "castor-one-shot-${VERSION}-linux-${ARCH}.tar.gz" --dir /tmp
+          gh attestation verify "/tmp/castor-one-shot-${VERSION}-linux-${ARCH}.tar.gz" \
+            --repo "$GITHUB_REPOSITORY" --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA"
+          tar -xzf "/tmp/castor-one-shot-${VERSION}-linux-${ARCH}.tar.gz" -C /tmp/castor-release-install
+          # A public release must work without a developer's GHCR login.
+          export DOCKER_CONFIG=$(mktemp -d)
+          export HOME=$(mktemp -d)
+          /tmp/castor-release-install/bin/castor runtime prepare
+          FIXTURE=$(mktemp -d)
+          mkdir -p "$FIXTURE/project"
+          printf 'hello\n' > "$FIXTURE/project/hello.txt"
+          printf '%s\n' '{"schema_version":1,"task_prompt":"Read hello.txt and change hello to fixed.","verification_command":["/bin/sh","-c","test \"$(cat hello.txt)\" = \"fixed\""]}' > "$FIXTURE/task.json"
+          git -C "$FIXTURE/project" init -q
+          git -C "$FIXTURE/project" add hello.txt
+          git -C "$FIXTURE/project" -c user.name='Castor CI' -c user.email='castor-ci@example.invalid' commit -qm fixture
+          export CASTOR_FAKE_OLLAMA_LOG="$FIXTURE/fake-fetch.jsonl"
+          export NODE_OPTIONS="--require=$PWD/scripts/ci_fake_ollama.cjs"
+          /tmp/castor-release-install/bin/castor run --project "$FIXTURE/project" \
+            --task-spec "$FIXTURE/task.json" --model local-ollama --state-root "$FIXTURE/state" > "$FIXTURE/result.json"
+          python3 - "$FIXTURE" <<'PY'
+          import json, pathlib, subprocess, sys
+          root = pathlib.Path(sys.argv[1])
+          result = json.loads((root / 'result.json').read_text())
+          calls = [json.loads(line) for line in (root / 'fake-fetch.jsonl').read_text().splitlines()]
+          assert result['launcher_status'] == 'SUCCEEDED', result
+          assert result['cleanup_status'] == 'CLEAN', result
+          assert result['task_result']['test_passed'] is True, result
+          assert result['task_result']['settled_actions_count'] == 1, result
+          assert sum(call['path'] == '/api/chat' for call in calls) == 2, calls
+          for cid in [result['controller_cid'], *result['owned_cids']]:
+              assert subprocess.run(['docker', 'container', 'inspect', cid], capture_output=True).returncode != 0, cid
+          assert not subprocess.check_output(['git', '-C', str(root / 'project'), 'status', '--porcelain'])
+          print(json.dumps({'status': 'SUCCEEDED', 'cleanup': 'CLEAN', 'real_provider_calls': 0}))
+          PY

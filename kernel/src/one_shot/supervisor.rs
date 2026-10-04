@@ -271,6 +271,27 @@ impl Drop for BoardLock {
     }
 }
 
+/// A completed task can be replayed without constructing another task image.
+pub fn existing_terminal_result(
+    manifest: &TaskManifest,
+    manifest_path: &Path,
+    state_root: &Path,
+) -> io::Result<Option<Value>> {
+    let manifest_digest = format!("sha256:{:x}", Sha256::digest(fs::read(manifest_path)?));
+    let _lock = BoardLock::acquire(state_root)?;
+    let board = read_board(state_root)?;
+    let Some(existing) = board.get(&manifest.idempotency_key) else {
+        return Ok(None);
+    };
+    if existing.manifest_digest != manifest_digest || existing.task_id != manifest.task_id {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "task key is bound to another manifest",
+        ));
+    }
+    Ok(existing.result.clone())
+}
+
 pub fn run_test_task(
     manifest: &TaskManifest,
     manifest_path: &Path,

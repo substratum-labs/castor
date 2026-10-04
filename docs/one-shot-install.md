@@ -23,7 +23,10 @@ command needs it.
 `runtime prepare` pulls and verifies the exact controller, Pi carrier and
 verifier images in the archive's release manifest. It does not call the model.
 `run` checks those local image identities again before inference and never
-pulls or builds the controller from source. The project must be a clean,
+pulls or builds the controller from source. For each task, Castor copies the
+validated project snapshot into a stopped temporary container based on the
+pinned Pi carrier, saves the resulting task image, and removes the temporary
+container. The project must be a clean,
 committed Git tree. The task spec is a JSON file outside that tree; for example:
 
 ```json

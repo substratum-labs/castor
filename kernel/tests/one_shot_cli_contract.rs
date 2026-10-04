@@ -207,7 +207,7 @@ fn image_build_failure_returns_truthful_failed_result() {
     let docker = fake_bin.join("docker");
     fs::write(
         &docker,
-        format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CASTOR_TEST_DOCKER_CALLS\"\nif [ \"$1\" = image ] && [ \"$2\" = inspect ]; then printf '%s\\n' '{BASE_DIGEST}'; exit 0; fi\nif [ \"$1\" = tag ]; then exit 0; fi\nexit 67\n"),
+        format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CASTOR_TEST_DOCKER_CALLS\"\nif [ \"$1\" = image ] && [ \"$2\" = inspect ]; then printf '%s\\n' '[{{\"Id\":\"{BASE_DIGEST}\",\"Config\":{{\"Volumes\":null}},\"RootFS\":{{\"Layers\":[\"sha256:base\"]}}}}]'; exit 0; fi\nexit 67\n"),
     )
     .unwrap();
     fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
@@ -235,9 +235,53 @@ fn image_build_failure_returns_truthful_failed_result() {
     assert!(
         fs::read_to_string(&calls)
             .unwrap_or_default()
-            .contains("build"),
-        "the injected image builder must be attempted before reporting build failure"
+            .contains("create"),
+        "the injected container staging must be attempted before reporting failure"
     );
+}
+
+#[test]
+fn completed_task_replay_returns_recorded_result_before_creating_another_image() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let archive_hash = create_archive(root.path(), "snapshot.tar");
+    let manifest = write_manifest_with_hash(root.path(), "snapshot.tar", &archive_hash);
+    let manifest_hash = format!("sha256:{:x}", Sha256::digest(fs::read(&manifest).unwrap()));
+    let state = root.path().join("state");
+    fs::create_dir(&state).unwrap();
+    let expected = json!({"task_id":"task-snapshot-gate","status":"SUCCEEDED",
+        "derived_task_image_digest":BASE_DIGEST,"test_passed":true});
+    let board = json!({"snapshot-gate-001":{
+        "task_id":"task-snapshot-gate","idempotency_key":"snapshot-gate-001",
+        "manifest_digest":manifest_hash,"status":"SUCCEEDED",
+        "derived_task_image_digest":BASE_DIGEST,"result":expected
+    }});
+    fs::write(
+        state.join("board.json"),
+        serde_json::to_vec(&board).unwrap(),
+    )
+    .unwrap();
+    let fake_bin = root.path().join("bin");
+    fs::create_dir(&fake_bin).unwrap();
+    let docker = fake_bin.join("docker");
+    fs::write(&docker, b"#!/bin/sh\nexit 67\n").unwrap();
+    fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+    let output = Command::new(castor_cli())
+        .args(["run", "--task"])
+        .arg(&manifest)
+        .env("CASTOR_STATE_ROOT", &state)
+        .env(
+            "PATH",
+            format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap()),
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(result(&output), expected);
 }
 
 #[test]

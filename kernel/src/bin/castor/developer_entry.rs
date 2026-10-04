@@ -5,10 +5,11 @@ use castor_kernel::one_shot::install::{HostScript, InstalledRelease};
 use castor_kernel::one_shot::project::engine::{pack_project, pack_project_with_carrier};
 use castor_kernel::one_shot::runtime_prepare::{check_node_major, revalidate, DockerEngine};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
 use std::thread;
@@ -233,6 +234,129 @@ fn overlaps(left: &str, right: &str) -> bool {
     left == right || inside(left, right) || inside(right, left)
 }
 
+#[derive(Clone, Debug)]
+struct ControllerIdentity {
+    uid: u32,
+    gid: u32,
+    socket_gid: u32,
+}
+
+impl ControllerIdentity {
+    fn from_helper(value: &Value, host_uid: Option<u32>) -> io::Result<Self> {
+        let number = |key: &str| -> io::Result<u32> {
+            value
+                .get(key)
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or_else(|| invalid("invalid Engine identity metadata"))
+        };
+        let uid = number("state_uid")?;
+        let gid = number("state_gid")?;
+        let socket_uid = number("socket_uid")?;
+        let socket_gid = number("socket_gid")?;
+        let mode = number("socket_mode")?;
+        if host_uid.is_some_and(|host_uid| uid != host_uid) {
+            return Err(invalid("Engine state UID differs from invoking host UID; user namespace mapping is unsupported"));
+        }
+        let accessible = if uid == socket_uid {
+            mode & 0o600 == 0o600
+        } else if gid == socket_gid || mode & 0o060 == 0o060 {
+            mode & 0o060 == 0o060
+        } else {
+            false
+        };
+        if !accessible {
+            return Err(invalid(
+                "controller UID/GID cannot access Engine Docker socket",
+            ));
+        }
+        Ok(Self {
+            uid,
+            gid,
+            socket_gid,
+        })
+    }
+
+    fn user(&self) -> String {
+        format!("{}:{}", self.uid, self.gid)
+    }
+    fn socket_group(&self) -> Option<String> {
+        (self.socket_gid != self.gid).then(|| self.socket_gid.to_string())
+    }
+}
+
+fn decode_controller_result(stdout: &[u8], stderr: &[u8], inspect: &Value) -> io::Result<Value> {
+    let value: Value = serde_json::from_slice(stdout).map_err(|_| {
+        let code = inspect
+            .pointer("/State/ExitCode")
+            .and_then(Value::as_i64)
+            .map_or("unknown".to_owned(), |v| v.to_string());
+        let detail = if stderr.windows(b"Permission denied".len()).any(|w| w == b"Permission denied")
+            || stderr.windows(b"os error 13".len()).any(|w| w == b"os error 13") {
+            "permission denied; "
+        } else { "" };
+        io::Error::other(format!(
+            "controller exited {code} without a native TaskResult: {detail}see private controller.stderr evidence"
+        ))
+    })?;
+    if value.get("status").and_then(Value::as_str).is_none() {
+        return Err(invalid("native TaskResult has no status"));
+    }
+    Ok(value)
+}
+
+fn owned_task_image(image: &Value, base: &Value, id: &str, token: &str) -> bool {
+    if image.get("Id").and_then(Value::as_str) != Some(id)
+        || image
+            .pointer("/Config/Labels/castor.stage.owner")
+            .and_then(Value::as_str)
+            != Some(token)
+    {
+        return false;
+    }
+    let Some(base_layers) = base.pointer("/RootFS/Layers").and_then(Value::as_array) else {
+        return false;
+    };
+    let Some(layers) = image.pointer("/RootFS/Layers").and_then(Value::as_array) else {
+        return false;
+    };
+    if layers.len() != base_layers.len() + 1 || &layers[..base_layers.len()] != base_layers {
+        return false;
+    }
+    ["Cmd", "Entrypoint", "Env", "User", "WorkingDir", "Volumes"]
+        .iter()
+        .all(|key| {
+            image.pointer(&format!("/Config/{key}")) == base.pointer(&format!("/Config/{key}"))
+        })
+}
+
+fn observed_staging_profile(item: &Value, scratch: &str, token: &str, carrier_id: &str) -> bool {
+    let Some(mounts) = item.get("Mounts").and_then(Value::as_array) else {
+        return false;
+    };
+    if mounts.len() != 1 || item.get("Image").and_then(Value::as_str) != Some(carrier_id) {
+        return false;
+    }
+    let mount = &mounts[0];
+    let host = &item["HostConfig"];
+    let config = &item["Config"];
+    mount.get("Source").and_then(Value::as_str) == Some(format!("{scratch}/stage-owner").as_str())
+        && mount.get("Destination").and_then(Value::as_str) == Some("/run/castor-stage-owner")
+        && mount.get("Type").and_then(Value::as_str) == Some("bind")
+        && mount.get("RW").and_then(Value::as_bool) == Some(false)
+        && config
+            .pointer("/Labels/castor.stage.owner")
+            .and_then(Value::as_str)
+            == Some(token)
+        && host.get("NetworkMode").and_then(Value::as_str) == Some("none")
+        && host.get("ReadonlyRootfs").and_then(Value::as_bool) == Some(false)
+        && host.get("Privileged").and_then(Value::as_bool) == Some(false)
+        && host.get("PidsLimit").and_then(Value::as_i64) == Some(64)
+        && host.get("CapDrop").and_then(Value::as_array) == Some(&vec![json!("ALL")])
+        && item.pointer("/State/Running").and_then(Value::as_bool) == Some(false)
+        && item.pointer("/State/Status").and_then(Value::as_str) == Some("created")
+}
+
 fn observed_child_profile(item: &Value, scratch: &str, verifier_id: &str) -> Option<&'static str> {
     let mounts = item.get("Mounts")?.as_array()?;
     if mounts.len() != 1 {
@@ -315,8 +439,10 @@ struct Slot {
     scratch: Option<String>,
     parent: Option<String>,
     state_source: Option<String>,
+    identity: Option<ControllerIdentity>,
     verifier_id: String,
     release_carrier_ref: Option<String>,
+    carrier_id: String,
     allocated: bool,
     adapter: Option<Child>,
     adapter_dir: Option<tempfile::TempDir>,
@@ -328,6 +454,123 @@ struct Slot {
 }
 
 impl Slot {
+    fn remove_unbound_task_images(&self) -> io::Result<()> {
+        if !self.allocated || self.carrier_id.is_empty() {
+            return Ok(());
+        }
+        let ids = self.docker.text(
+            &[
+                "image".into(),
+                "ls".into(),
+                "--all".into(),
+                "--quiet".into(),
+                "--no-trunc".into(),
+            ],
+            Duration::from_secs(15),
+        )?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let ids: HashSet<_> = ids.split_whitespace().map(str::to_owned).collect();
+        if ids.len() > 256 {
+            return Err(invalid(
+                "too many Engine images for bounded ownership audit",
+            ));
+        }
+        let base = self.docker.text(
+            &["image".into(), "inspect".into(), self.carrier_id.clone()],
+            Duration::from_secs(15),
+        )?;
+        let base: Vec<Value> = serde_json::from_str(&base).map_err(io::Error::other)?;
+        if base.len() != 1 || base[0].get("Id").and_then(Value::as_str) != Some(&self.carrier_id) {
+            return Err(invalid("prepared carrier changed during image cleanup"));
+        }
+        let mut retained = HashSet::new();
+        match fs::read(self.state.join("board.json")) {
+            Ok(bytes) => {
+                let board: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+                let board = board
+                    .as_object()
+                    .ok_or_else(|| invalid("invalid task board during image cleanup"))?;
+                for task in board.values() {
+                    if let Some(id) = task
+                        .get("derived_task_image_digest")
+                        .and_then(Value::as_str)
+                    {
+                        retained.insert(id.to_owned());
+                    }
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error),
+        }
+        if let Some(id) = self
+            .result
+            .as_ref()
+            .and_then(|result| result.get("derived_task_image_digest"))
+            .and_then(Value::as_str)
+        {
+            retained.insert(id.to_owned());
+        }
+        let mut summary_args = vec![
+            "image".into(),
+            "inspect".into(),
+            "--format".into(),
+            "{{.Id}} {{json .Config}}".into(),
+        ];
+        summary_args.extend(ids.iter().cloned());
+        let summaries = self.docker.text(&summary_args, Duration::from_secs(15))?;
+        if summaries.lines().count() != ids.len() {
+            return Err(invalid("incomplete Engine image ownership audit"));
+        }
+        for summary in summaries.lines() {
+            let (id, config) = summary
+                .split_once(' ')
+                .ok_or_else(|| invalid("invalid Engine image summary"))?;
+            if !ids.contains(id) {
+                return Err(invalid("Engine image inventory changed during cleanup"));
+            }
+            let config: Value = serde_json::from_str(config).map_err(io::Error::other)?;
+            if config
+                .pointer("/Labels/castor.stage.owner")
+                .and_then(Value::as_str)
+                != Some(&self.token)
+            {
+                continue;
+            }
+            let hex = id
+                .strip_prefix("sha256:")
+                .ok_or_else(|| invalid("invalid owned image ID"))?;
+            full_cid(hex)?;
+            let inspected = self.docker.text(
+                &["image".into(), "inspect".into(), id.into()],
+                Duration::from_secs(15),
+            )?;
+            let inspected: Vec<Value> =
+                serde_json::from_str(&inspected).map_err(io::Error::other)?;
+            if inspected.len() != 1 {
+                return Err(invalid("ambiguous Engine image inspection"));
+            }
+            if inspected[0]
+                .pointer("/Config/Labels/castor.stage.owner")
+                .and_then(Value::as_str)
+                != Some(&self.token)
+            {
+                continue;
+            }
+            if !owned_task_image(&inspected[0], &base[0], id, &self.token) {
+                return Err(invalid("owned task image identity could not be proved"));
+            }
+            if !retained.contains(id) {
+                self.docker.call(
+                    &["image".into(), "rm".into(), id.into()],
+                    Duration::from_secs(15),
+                    true,
+                )?;
+            }
+        }
+        Ok(())
+    }
     fn new(state: PathBuf, token: String, image: String, verifier_id: String) -> io::Result<Self> {
         let evidence = state.join("launcher");
         fs::create_dir(&evidence)?;
@@ -347,8 +590,10 @@ impl Slot {
             scratch: None,
             parent: None,
             state_source: None,
+            identity: None,
             verifier_id,
             release_carrier_ref: None,
+            carrier_id: String::new(),
             allocated: false,
             adapter: None,
             adapter_dir: None,
@@ -389,8 +634,29 @@ impl Slot {
         Ok(id)
     }
 
-    fn helper(&mut self, request: Value, parent: Option<&str>) -> io::Result<(Value, Value)> {
+    fn helper(
+        &mut self,
+        request: Value,
+        parent: Option<&str>,
+        read_private_state: bool,
+    ) -> io::Result<(Value, Value)> {
+        if read_private_state
+            && (parent.is_some()
+                || match request.get("operation").and_then(Value::as_str) {
+                    Some("canonical") => request
+                        .get("paths")
+                        .and_then(Value::as_array)
+                        .is_none_or(|paths| paths.len() != 1),
+                    Some("identity") => request.get("state").and_then(Value::as_str).is_none(),
+                    _ => true,
+                })
+        {
+            return Err(invalid(
+                "private-state search is limited to one canonical path",
+            ));
+        }
         let label = format!("admin-{}", &random_token()?[..8]);
+        let operation = request.get("operation").and_then(Value::as_str);
         let mut args = vec![
             "--network".into(),
             "none".into(),
@@ -401,9 +667,30 @@ impl Slot {
             "SYS_CHROOT".into(),
             "--mount".into(),
             "type=bind,src=/,dst=/engine,readonly".into(),
-            "--mount".into(),
-            format!("type=bind,src={},dst=/state", path_string(&self.state)?),
         ];
+        if operation == Some("canonical") {
+            args.extend([
+                "--mount".into(),
+                format!(
+                    "type=bind,src={},dst=/state,readonly",
+                    path_string(&self.state)?
+                ),
+            ]);
+        }
+        if read_private_state {
+            // Only one-path canonicalization or identity inspection may search private state.
+            args.extend(["--cap-add".into(), "DAC_READ_SEARCH".into()]);
+        }
+        match operation {
+            Some("allocate") => args.extend(["--cap-add".into(), "CHOWN".into()]),
+            Some("remove") => args.extend([
+                "--cap-add".into(),
+                "DAC_READ_SEARCH".into(),
+                "--cap-add".into(),
+                "DAC_OVERRIDE".into(),
+            ]),
+            _ => {}
+        }
         if let Some(parent) = parent {
             args.extend([
                 "--mount".into(),
@@ -465,8 +752,11 @@ impl Slot {
             ],
             Duration::from_secs(15),
         )?;
-        let (paths, inspected) =
-            self.helper(json!({"operation":"canonical","paths":[root,"/run"]}), None)?;
+        let (paths, inspected) = self.helper(
+            json!({"operation":"canonical","paths":[root,"/run"]}),
+            None,
+            false,
+        )?;
         let paths = paths
             .as_array()
             .ok_or_else(|| invalid("invalid Engine canonical output"))?;
@@ -486,12 +776,24 @@ impl Slot {
         let (canonical, _) = self.helper(
             json!({"operation":"canonical","paths":[state_source]}),
             None,
+            true,
         )?;
         let state_source = canonical
             .get(0)
             .and_then(Value::as_str)
             .ok_or_else(|| invalid("invalid Engine state mapping"))?
             .to_owned();
+        let (identity_json, _) = self.helper(
+            json!({"operation":"identity","state":state_source}),
+            None,
+            true,
+        )?;
+        let host_uid = fs::metadata(&self.state)?.uid();
+        let identity = ControllerIdentity::from_helper(
+            &identity_json,
+            cfg!(target_os = "linux").then_some(host_uid),
+        )?;
+        self.identity = Some(identity.clone());
         if [scratch.as_str(), docker_root, "/run"]
             .iter()
             .any(|p| overlaps(&state_source, p))
@@ -508,12 +810,15 @@ impl Slot {
         self.state_source = Some(state_source.clone());
         write_json(
             &self.evidence.join("engine-map.json"),
-            &json!({"docker_root":docker_root,"scratch":scratch,"state_source":state_source}),
+            &json!({"docker_root":docker_root,"scratch":scratch,"state_source":state_source,
+                "state_uid":identity.uid,"state_gid":identity.gid,"socket_gid":identity.socket_gid}),
         )?;
         self.allocated = true; // uncertain helper allocation must retain rather than claim CLEAN
         let (proof, _) = self.helper(
-            json!({"operation":"allocate","parent":parent,"scratch":scratch,"token":self.token}),
+            json!({"operation":"allocate","parent":parent,"scratch":scratch,"token":self.token,
+                "uid":identity.uid,"gid":identity.gid}),
             Some(parent),
+            false,
         )?;
         if proof.get("exists").and_then(Value::as_bool) != Some(true) {
             return Err(invalid("Engine scratch allocation not proved"));
@@ -581,12 +886,18 @@ impl Slot {
             .file_name()
             .ok_or_else(|| invalid("missing task spec name"))?;
         let mounted_spec = Path::new("/spec").join(spec_name);
+        let identity = self
+            .identity
+            .as_ref()
+            .ok_or_else(|| invalid("missing Engine controller identity"))?;
         let mut args = vec![
             "--network".into(),
             "none".into(),
             "--read-only".into(),
             "--cap-drop".into(),
             "ALL".into(),
+            "--user".into(),
+            identity.user(),
             "--tmpfs".into(),
             "/tmp:rw,nosuid,nodev,size=64m".into(),
             "--env".into(),
@@ -602,6 +913,8 @@ impl Slot {
                 "CASTOR_CONTROLLER_TASK_SPEC={}",
                 path_string(&mounted_spec)?
             ),
+            "--env".into(),
+            format!("CASTOR_CONTROLLER_STAGE_TOKEN={}", self.token),
             "--mount".into(),
             "type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock".into(),
             "--mount".into(),
@@ -619,6 +932,9 @@ impl Slot {
                 path_string(spec_parent)?
             ),
         ];
+        if let Some(group) = identity.socket_group() {
+            args.extend(["--group-add".into(), group]);
+        }
         args.extend(release_pin_env_args(
             self.release_carrier_ref.as_deref(),
             self.release_carrier_ref
@@ -650,12 +966,14 @@ impl Slot {
             return Ok(Vec::new());
         };
         let mut live = Vec::new();
-        for item in self.docker.inventory()? {
+        for mut item in self.docker.inventory()? {
             let id = item
                 .get("Id")
                 .and_then(Value::as_str)
-                .ok_or_else(|| invalid("inventory without CID"))?;
-            if self.controller.as_deref() == Some(id) || self.admin.iter().any(|known| known == id)
+                .ok_or_else(|| invalid("inventory without CID"))?
+                .to_owned();
+            if self.controller.as_deref() == Some(&id)
+                || self.admin.iter().any(|known| known == &id)
             {
                 continue;
             }
@@ -672,14 +990,41 @@ impl Slot {
             if !private {
                 continue;
             }
-            if observed_child_profile(&item, scratch, &self.verifier_id).is_none() {
+            let recognized = |value: &Value| {
+                observed_child_profile(value, scratch, &self.verifier_id).is_some()
+                    || observed_staging_profile(value, scratch, &self.token, &self.carrier_id)
+            };
+            let possibly_transitioning = item.pointer("/State/Status").and_then(Value::as_str)
+                == Some("created")
+                || item
+                    .pointer("/Config/Labels/castor.stage.owner")
+                    .and_then(Value::as_str)
+                    == Some(&self.token);
+            if !recognized(&item) && possibly_transitioning {
+                // Docker may expose a just-created container to inventory
+                // before its final mount/config inspection is populated.
+                for _ in 0..10 {
+                    thread::sleep(Duration::from_millis(50));
+                    let Some(refreshed) = self.docker.inspect(&id)? else {
+                        break;
+                    };
+                    item = refreshed;
+                    if recognized(&item) {
+                        break;
+                    }
+                }
+            }
+            if !recognized(&item) {
+                if self.docker.inspect(&id)?.is_none() {
+                    continue;
+                }
                 return Err(invalid(
                     "unrecognized container uses private scratch; cleanup retained",
                 ));
             }
-            full_cid(id)?;
-            if !self.children.iter().any(|known| known == id) {
-                self.children.push(id.into());
+            full_cid(&id)?;
+            if !self.children.iter().any(|known| known == &id) {
+                self.children.push(id);
             }
             live.push(item);
         }
@@ -791,12 +1136,25 @@ impl Slot {
         fs::write(self.evidence.join(format!("{name}.stdout")), &output.stdout)?;
         fs::write(self.evidence.join(format!("{name}.stderr")), &output.stderr)?;
         write_json(&self.evidence.join(format!("{name}.inspect.json")), &item)?;
-        if controller && self.status != "TIMEOUT" {
-            let result: Value = serde_json::from_slice(&output.stdout)
-                .map_err(|_| invalid("native TaskResult missing or malformed"))?;
-            if result.get("status").and_then(Value::as_str).is_none() {
-                return Err(invalid("native TaskResult has no status"));
-            }
+        let result = if controller && self.status != "TIMEOUT" {
+            Some(decode_controller_result(
+                &output.stdout,
+                &output.stderr,
+                &item,
+            ))
+        } else {
+            None
+        };
+        if let Some(Err(error)) = &result {
+            self.status = "FAILED".into();
+            self.run_error = Some(match self.run_error.take() {
+                Some(previous) => format!("{previous}; {error}"),
+                None => error.to_string(),
+            });
+        }
+        // Always attempt exact CID removal after logs and inspect have been preserved.
+        self.remove_cid(id)?;
+        if let Some(Ok(result)) = result {
             self.status = if result.get("status").and_then(Value::as_str) == Some("SUCCEEDED") {
                 "SUCCEEDED"
             } else {
@@ -806,7 +1164,7 @@ impl Slot {
             write_json(&self.evidence.join("task-result.json"), &result)?;
             self.result = Some(result);
         }
-        self.remove_cid(id)
+        Ok(())
     }
 
     fn finish(&mut self) -> Value {
@@ -867,6 +1225,7 @@ impl Slot {
                     self.remove_cid(&id)?;
                 }
             }
+            self.remove_unbound_task_images()?;
             if self.allocated {
                 let scratch = self
                     .scratch
@@ -892,7 +1251,7 @@ impl Slot {
                     .parent
                     .clone()
                     .ok_or_else(|| invalid("missing Engine scratch parent"))?;
-                let (proof, _) = self.helper(json!({"operation":"remove","parent":parent,"scratch":scratch,"token":self.token}), Some(&parent))?;
+                let (proof, _) = self.helper(json!({"operation":"remove","parent":parent,"scratch":scratch,"token":self.token}), Some(&parent), false)?;
                 if proof.get("exists").and_then(Value::as_bool) != Some(false) {
                     return Err(invalid("scratch removal not proved"));
                 }
@@ -1115,8 +1474,14 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
         &state.join("preflight.json"),
         &json!({"model_pin":pin,"controller_image":image,"verifier_image":verifier,"pack_receipt":receipt,"release":release}),
     )?;
+    let carrier_id = receipt
+        .carrier_base_image
+        .rsplit_once('@')
+        .map(|(_, id)| id.to_owned())
+        .ok_or_else(|| invalid("pack receipt missing pinned carrier"))?;
     let mut slot = Slot::new(state, token, image, verifier)?;
     slot.release_carrier_ref = carrier_ref;
+    slot.carrier_id = carrier_id;
     let run_result = (|| -> io::Result<()> {
         slot.preflight_engine()?;
         if !developer_mode {
@@ -1153,10 +1518,228 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_cleanup_requires_exact_run_label_and_carrier_ancestry() {
+        let token = "0123456789abcdef0123456789abcdef";
+        let id = format!("sha256:{}", "a".repeat(64));
+        let base = json!({"RootFS":{"Layers":["sha256:base"]},
+            "Config":{"Cmd":["node"],"Entrypoint":["docker-entrypoint.sh"],
+                "Env":["HOME=/tmp"],"User":"10001:10001","WorkingDir":"/opt/castor"}});
+        let mut derived = json!({"Id":id,"RootFS":{"Layers":["sha256:base","sha256:task"]},
+            "Config":{"Cmd":["node"],"Entrypoint":["docker-entrypoint.sh"],
+                "Env":["HOME=/tmp"],"User":"10001:10001","WorkingDir":"/opt/castor",
+                "Labels":{"castor.stage.owner":token}}});
+        assert!(owned_task_image(&derived, &base, &id, token));
+        derived["Config"]["Labels"]["castor.stage.owner"] = json!("another-owner");
+        assert!(!owned_task_image(&derived, &base, &id, token));
+        derived["Config"]["Labels"]["castor.stage.owner"] = json!(token);
+        derived["RootFS"]["Layers"][0] = json!("sha256:other-base");
+        assert!(!owned_task_image(&derived, &base, &id, token));
+    }
+
+    #[test]
+    #[ignore = "requires a local Docker Engine and the t337g Pi carrier"]
+    fn orphaned_owned_task_image_is_removed_by_host_cleanup() {
+        let root = tempfile::tempdir().unwrap();
+        let token = random_token().unwrap();
+        let docker = Docker::default();
+        let base = docker
+            .text(
+                &[
+                    "image".into(),
+                    "inspect".into(),
+                    "--format".into(),
+                    "{{.Id}}".into(),
+                    "substratum/castor-pi-carrier:t337g".into(),
+                ],
+                Duration::from_secs(15),
+            )
+            .unwrap();
+        let cid = docker
+            .text(
+                &[
+                    "create".into(),
+                    "--network".into(),
+                    "none".into(),
+                    "--label".into(),
+                    format!("castor.stage.owner={token}"),
+                    base.clone(),
+                ],
+                Duration::from_secs(15),
+            )
+            .unwrap();
+        fs::write(root.path().join("probe.txt"), b"owned\n").unwrap();
+        let mut image = String::new();
+        let outcome = (|| -> io::Result<()> {
+            docker.call(
+                &[
+                    "cp".into(),
+                    path_string(&root.path().join("probe.txt"))?,
+                    format!("{cid}:/workspace/probe.txt"),
+                ],
+                Duration::from_secs(15),
+                true,
+            )?;
+            image = docker.text(&["commit".into(), cid.clone()], Duration::from_secs(15))?;
+            docker.call(&["rm".into(), cid.clone()], Duration::from_secs(15), true)?;
+            fs::create_dir(root.path().join("state"))?;
+            let mut slot = Slot::new(
+                root.path().join("state"),
+                token,
+                String::new(),
+                String::new(),
+            )?;
+            slot.carrier_id = base;
+            slot.allocated = true;
+            slot.remove_unbound_task_images()?;
+            if docker
+                .call(
+                    &["image".into(), "inspect".into(), image.clone()],
+                    Duration::from_secs(15),
+                    false,
+                )?
+                .status
+                .success()
+            {
+                return Err(invalid("orphaned image survived host cleanup"));
+            }
+            Ok(())
+        })();
+        let _ = docker.call(&["rm".into(), cid], Duration::from_secs(15), false);
+        if !image.is_empty() {
+            let _ = docker.call(
+                &["image".into(), "rm".into(), image],
+                Duration::from_secs(15),
+                false,
+            );
+        }
+        outcome.unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a local Docker Engine and the t337g Pi carrier"]
+    fn engine_created_staging_container_matches_host_discovery_profile() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("stage-owner");
+        fs::create_dir(&marker).unwrap();
+        let token = random_token().unwrap();
+        let docker = Docker::default();
+        let base = docker
+            .text(
+                &[
+                    "image".into(),
+                    "inspect".into(),
+                    "--format".into(),
+                    "{{.Id}}".into(),
+                    "substratum/castor-pi-carrier:t337g".into(),
+                ],
+                Duration::from_secs(15),
+            )
+            .unwrap();
+        let cid = docker
+            .text(
+                &[
+                    "create".into(),
+                    "--network".into(),
+                    "none".into(),
+                    "--cap-drop".into(),
+                    "ALL".into(),
+                    "--security-opt".into(),
+                    "no-new-privileges".into(),
+                    "--pids-limit".into(),
+                    "64".into(),
+                    "--mount".into(),
+                    format!(
+                        "type=bind,src={},dst=/run/castor-stage-owner,readonly",
+                        marker.display()
+                    ),
+                    "--label".into(),
+                    format!("castor.stage.owner={token}"),
+                    base.clone(),
+                ],
+                Duration::from_secs(15),
+            )
+            .unwrap();
+        let item = docker.inspect(&cid).unwrap().unwrap();
+        let source = item["Mounts"][0]["Source"].as_str().unwrap();
+        let scratch = source.strip_suffix("/stage-owner").unwrap();
+        let matched = observed_staging_profile(&item, scratch, &token, &base);
+        docker
+            .call(&["rm".into(), cid], Duration::from_secs(15), true)
+            .unwrap();
+        assert!(
+            matched,
+            "actual stopped Engine staging profile was rejected"
+        );
+    }
+
+    #[test]
+    fn stopped_staging_container_is_owned_only_with_exact_marker_and_carrier() {
+        let token = "0123456789abcdef0123456789abcdef";
+        let image = format!("sha256:{}", "a".repeat(64));
+        let mut item = json!({
+            "Image":image,
+            "Mounts":[{"Source":"/run/c-0123456789ab/stage-owner",
+                "Destination":"/run/castor-stage-owner","Type":"bind","RW":false}],
+            "Config":{"Labels":{"castor.stage.owner":token}},
+            "HostConfig":{"NetworkMode":"none","ReadonlyRootfs":false,
+                "Privileged":false,"PidsLimit":64,"CapDrop":["ALL"]},
+            "State":{"Running":false,"Status":"created"}
+        });
+        assert!(observed_staging_profile(
+            &item,
+            "/run/c-0123456789ab",
+            token,
+            &image
+        ));
+        item["State"]["Running"] = json!(true);
+        assert!(!observed_staging_profile(
+            &item,
+            "/run/c-0123456789ab",
+            token,
+            &image
+        ));
+        item["State"]["Running"] = json!(false);
+        item["Image"] = json!(format!("sha256:{}", "b".repeat(64)));
+        assert!(!observed_staging_profile(
+            &item,
+            "/run/c-0123456789ab",
+            token,
+            &image
+        ));
+    }
     use sha2::{Digest, Sha256};
     use std::os::unix::net::UnixListener;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+
+    #[test]
+    fn controller_identity_uses_engine_state_owner_and_socket_group() {
+        let identity = json!({"state_uid":1001,"state_gid":1001,"socket_uid":0,"socket_gid":123,"socket_mode":0o660});
+        let profile = ControllerIdentity::from_helper(&identity, Some(1001)).unwrap();
+        assert_eq!(profile.user(), "1001:1001");
+        assert_eq!(profile.socket_group(), Some("123".to_owned()));
+        assert!(ControllerIdentity::from_helper(&identity, Some(501)).is_err());
+        assert!(ControllerIdentity::from_helper(&json!({"state_uid":1001,"state_gid":1001,"socket_uid":0,"socket_gid":123,"socket_mode":0o600}), Some(1001)).is_err());
+    }
+
+    #[test]
+    fn missing_controller_result_preserves_startup_reason() {
+        let inspect = json!({"State":{"ExitCode":2}});
+        let error = decode_controller_result(
+            b"",
+            b"castor: invalid controller mount layout: Permission denied (os error 13)\n",
+            &inspect,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("permission denied"), "{error}");
+        assert!(error.to_string().contains("exited 2"), "{error}");
+        assert!(!error.to_string().contains("controller mount layout"));
+        let private =
+            decode_controller_result(b"", b"API_KEY=private-value", &inspect).unwrap_err();
+        assert!(!private.to_string().contains("private-value"));
+    }
     #[test]
     fn installed_controller_receives_current_engine_local_ids() {
         let carrier = format!(
@@ -1172,6 +1755,18 @@ mod tests {
             .windows(2)
             .any(|pair| pair == ["--env", &format!("CASTOR_RELEASE_VERIFIER_ID={verifier}")]));
         assert!(release_pin_env_args(Some(&carrier), None).is_err());
+    }
+
+    #[test]
+    fn private_state_search_cannot_be_used_by_allocating_helper() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("state");
+        fs::create_dir(&state).unwrap();
+        let mut slot =
+            Slot::new(state, "test-token".into(), "unused".into(), "unused".into()).unwrap();
+        assert!(slot
+            .helper(json!({"operation":"allocate","paths":["/tmp"]}), None, true)
+            .is_err());
     }
 
     #[test]
@@ -1517,6 +2112,7 @@ mod tests {
             .helper(
                 json!({"operation":"remove","parent":parent,"scratch":scratch,"token":slot.token}),
                 Some(&parent),
+                false,
             )
             .unwrap();
         assert_eq!(proof["exists"], false);
