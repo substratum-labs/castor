@@ -155,7 +155,7 @@ jobs:
               --host-bin "out/castor-${platform}" --engine-pins out/engine-pins.json \
               --output "out/castor-one-shot-0.1.0-rc1-${platform}.tar.gz"
           done
-          python3 -m unittest scripts/test_package_one_shot.py -v
+          python3 -m unittest scripts/test_package_one_shot.py scripts/test_one_shot_release_workflow.py -v
           test "$(find out -name 'castor-one-shot-*.tar.gz' | wc -l | tr -d ' ')" = 4
           cp scripts/ci_fake_ollama.cjs out/ci_fake_ollama.cjs
       - name: Exercise source-free Linux archive and digest preparation
