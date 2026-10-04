@@ -5,6 +5,7 @@ pub mod developer_budget;
 pub mod image;
 pub mod manifest;
 pub mod model;
+pub mod oci_layout;
 pub mod project;
 pub mod result;
 pub mod supervisor;

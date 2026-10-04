@@ -10,7 +10,7 @@ use castor_kernel::one_shot::project::engine::{
 };
 use castor_kernel::one_shot::result::TaskResult;
 use castor_kernel::one_shot::runtime_prepare::{
-    check_node_major, prepare, revalidate, DockerEngine,
+    check_node_major, prepare, prepare_carrier_layout, revalidate, DockerEngine,
 };
 use castor_kernel::one_shot::supervisor::{
     run_product_task, run_test_task, test_state_root, RunOutcome,
@@ -46,11 +46,9 @@ fn run() -> io::Result<ExitCode> {
         let release = InstalledRelease::load_current()?;
         check_node_major()?;
         let home = env::var_os("HOME").ok_or_else(|| io::Error::other("missing HOME"))?;
-        let receipt = prepare(
-            &release,
-            &DockerEngine,
-            &PathBuf::from(home).join(".castor"),
-        )?;
+        let runtime_root = PathBuf::from(home).join(".castor");
+        let receipt = prepare(&release, &DockerEngine, &runtime_root)?;
+        prepare_carrier_layout(&receipt, &runtime_root)?;
         println!(
             "{}",
             serde_json::to_string(&receipt).map_err(io::Error::other)?

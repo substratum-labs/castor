@@ -298,6 +298,17 @@ pub fn run_controller() -> io::Result<ExitCode> {
             .filter(|value| !value.is_empty())
             .as_deref(),
     )?;
+    let layout_digest = env::var("CASTOR_CONTROLLER_CARRIER_OCI_DIGEST").ok();
+    if layout_digest.is_some() != release_pins.is_some() {
+        return Err(invalid(
+            "controller carrier OCI layout and release pins must agree",
+        ));
+    }
+    if let Some(digest) = &layout_digest {
+        if !valid_digest(digest) || !fs::metadata("/carrier-oci")?.is_dir() {
+            return Err(invalid("invalid controller carrier OCI layout"));
+        }
+    }
     let mut native = Command::new("/usr/local/bin/castor");
     native
         .args(["run", "--project", "/project", "--task-spec"])
@@ -309,6 +320,11 @@ pub fn run_controller() -> io::Result<ExitCode> {
         native
             .env("CASTOR_CONTROLLER_CARRIER_REF", carrier)
             .env("CASTOR_CONTROLLER_VERIFIER_ID", verifier);
+    }
+    if let Some(digest) = layout_digest {
+        native
+            .env("CASTOR_CARRIER_OCI_LAYOUT", "/carrier-oci")
+            .env("CASTOR_CARRIER_OCI_DIGEST", digest);
     }
     let outcome = native.status();
     let _ = bridge_child.kill();

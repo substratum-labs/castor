@@ -21,9 +21,12 @@ command needs it.
 ```
 
 `runtime prepare` pulls and verifies the exact controller, Pi carrier and
-verifier images in the archive's release manifest. It does not call the model.
-`run` checks those local image identities again before inference and never
-pulls or builds the controller from source. The project must be a clean,
+verifier images in the archive's release manifest. It also saves and validates
+a local OCI copy of the Pi carrier under `~/.castor/runtime/` for BuildKit.
+This needs roughly one extra carrier image's worth of disk space and does not
+call the model. `run` checks those local image identities and the OCI copy
+again before inference. Task images build from that local copy; the controller
+is never pulled or built from source during a run. The project must be a clean,
 committed Git tree. The task spec is a JSON file outside that tree; for example:
 
 ```json

@@ -1,4 +1,5 @@
 use crate::one_shot::manifest::ValidatedSnapshot;
+use crate::one_shot::oci_layout::{export_layout, verify_layout};
 use flate2::read::GzDecoder;
 use std::collections::HashSet;
 use std::fs;
@@ -88,10 +89,6 @@ impl StagedSnapshot {
 
     pub fn build(&self, carrier_base_image: &str) -> io::Result<String> {
         validate_base_image(carrier_base_image)?;
-        // The manifest pins the locally built carrier's immutable image ID.
-        // Docker BuildKit interprets tag@config-ID and bare sha256:config-ID
-        // as remote references. Resolve the local tag first, compare its ID to
-        // the manifest pin, and give this build a unique temporary local tag.
         let (carrier_tag, expected_id) = carrier_base_image
             .split_once('@')
             .expect("validated carrier reference");
@@ -110,41 +107,76 @@ impl StagedSnapshot {
                 "local Pi carrier digest differs from task manifest pin",
             ));
         }
-        let local_tag = format!(
-            "substratum/castor-pi-carrier:{}",
-            self.root
-                .path()
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| io::Error::other("invalid private image build directory"))?
-        );
-        let mut read_only = ReadonlyWorkspaceGuard::new(&self.workspace())?;
-        let tagged = Command::new("docker")
-            .args(["tag", &local_id, &local_tag])
+        let inspect_arch = Command::new("docker")
+            .args([
+                "image",
+                "inspect",
+                "--format",
+                "{{.Architecture}}",
+                carrier_tag,
+            ])
             .output()?;
-        if !tagged.status.success() {
-            return Err(io::Error::other("failed to pin a local carrier build tag"));
+        if !inspect_arch.status.success() {
+            return Err(io::Error::other(
+                "cannot inspect local Pi carrier architecture",
+            ));
         }
+        let arch = String::from_utf8_lossy(&inspect_arch.stdout)
+            .trim()
+            .to_owned();
+        if arch != "amd64" && arch != "arm64" {
+            return Err(io::Error::other(
+                "unsupported local Pi carrier architecture",
+            ));
+        }
+        let private_layout = tempfile::Builder::new()
+            .prefix("castor-carrier-oci-")
+            .tempdir()?;
+        let (layout, manifest_digest) = match (
+            std::env::var_os("CASTOR_CARRIER_OCI_LAYOUT"),
+            std::env::var_os("CASTOR_CARRIER_OCI_DIGEST"),
+        ) {
+            (Some(path), Some(digest)) => {
+                let path = PathBuf::from(path);
+                if !path.is_absolute() {
+                    return Err(io::Error::other("carrier OCI layout path is not absolute"));
+                }
+                let digest = digest
+                    .into_string()
+                    .map_err(|_| io::Error::other("invalid carrier OCI digest"))?;
+                let actual = verify_layout(&path, expected_id, &arch, None)?;
+                if actual != digest {
+                    return Err(io::Error::other(
+                        "carrier OCI layout digest differs from prepared runtime",
+                    ));
+                }
+                (path, actual)
+            }
+            (None, None) => {
+                let path = private_layout.path().join("carrier-oci");
+                let digest = export_layout(carrier_tag, &path, expected_id, &arch, None)?;
+                (path, digest)
+            }
+            _ => return Err(io::Error::other("incomplete carrier OCI layout input")),
+        };
+        let mut read_only = ReadonlyWorkspaceGuard::new(&self.workspace())?;
         let dockerfile = self.root.path().join("Dockerfile");
         fs::write(
             &dockerfile,
-            "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nCOPY --chown=10001:10001 workspace_snapshot/ /workspace/\n",
+            "FROM castor_base\nCOPY --chown=10001:10001 workspace_snapshot/ /workspace/\n",
         )?;
         let build_result = Command::new("docker")
-            .arg("build")
-            // This build must consume the ID-checked local tag without a
-            // registry lookup. BuildKit may resolve even a local FROM tag
-            // through Docker Hub on Desktop's containerd image store.
-            .env("DOCKER_BUILDKIT", "0")
+            .args(["buildx", "build"])
             .arg("--quiet")
-            .arg("--build-arg")
-            .arg(format!("BASE_IMAGE={local_tag}"))
+            .arg("--load")
+            .arg("--build-context")
+            .arg(format!(
+                "castor_base=oci-layout://{}@{manifest_digest}",
+                layout.display()
+            ))
             .arg("--file")
             .arg(&dockerfile)
             .arg(self.root.path())
-            .output();
-        let _ = Command::new("docker")
-            .args(["image", "rm", &local_tag])
             .output();
         read_only.restore()?;
         let output = build_result?;
@@ -164,6 +196,14 @@ impl StagedSnapshot {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "image builder returned no immutable sha256 digest",
+            ));
+        }
+        let loaded = Command::new("docker")
+            .args(["image", "inspect", "--format", "{{.Id}}", &digest])
+            .output()?;
+        if !loaded.status.success() || String::from_utf8_lossy(&loaded.stdout).trim() != digest {
+            return Err(io::Error::other(
+                "BuildKit result is not installed as the returned immutable image",
             ));
         }
         Ok(digest)

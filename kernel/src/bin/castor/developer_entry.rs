@@ -3,7 +3,9 @@
 use castor_kernel::one_shot::developer_budget::{forward_to_local_adapter, BudgetLedger};
 use castor_kernel::one_shot::install::{HostScript, InstalledRelease};
 use castor_kernel::one_shot::project::engine::{pack_project, pack_project_with_carrier};
-use castor_kernel::one_shot::runtime_prepare::{check_node_major, revalidate, DockerEngine};
+use castor_kernel::one_shot::runtime_prepare::{
+    check_node_major, revalidate, revalidate_carrier_layout, CarrierLayout, DockerEngine,
+};
 use serde_json::{json, Value};
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -389,6 +391,7 @@ struct Slot {
     identity: Option<ControllerIdentity>,
     verifier_id: String,
     release_carrier_ref: Option<String>,
+    carrier_layout: Option<CarrierLayout>,
     allocated: bool,
     adapter: Option<Child>,
     adapter_dir: Option<tempfile::TempDir>,
@@ -422,6 +425,7 @@ impl Slot {
             identity: None,
             verifier_id,
             release_carrier_ref: None,
+            carrier_layout: None,
             allocated: false,
             adapter: None,
             adapter_dir: None,
@@ -761,6 +765,20 @@ impl Slot {
         if let Some(group) = identity.socket_group() {
             args.extend(["--group-add".into(), group]);
         }
+        if let Some(layout) = &self.carrier_layout {
+            args.extend([
+                "--mount".into(),
+                format!(
+                    "type=bind,src={},dst=/carrier-oci,readonly",
+                    path_string(&layout.path)?
+                ),
+                "--env".into(),
+                format!(
+                    "CASTOR_CONTROLLER_CARRIER_OCI_DIGEST={}",
+                    layout.manifest_digest
+                ),
+            ]);
+        }
         args.extend(release_pin_env_args(
             self.release_carrier_ref.as_deref(),
             self.release_carrier_ref
@@ -781,6 +799,20 @@ impl Slot {
                     .ok_or_else(|| invalid("missing state mapping"))?
         {
             return Err(invalid("controller Engine bind differs from preflight"));
+        }
+        if self.carrier_layout.is_some()
+            && !item
+                .get("Mounts")
+                .and_then(Value::as_array)
+                .is_some_and(|mounts| {
+                    mounts.iter().any(|mount| {
+                        mount.get("Destination").and_then(Value::as_str) == Some("/carrier-oci")
+                            && mount.get("Type").and_then(Value::as_str) == Some("bind")
+                            && mount.get("RW").and_then(Value::as_bool) == Some(false)
+                    })
+                })
+        {
+            return Err(invalid("controller OCI layout mount is not read-only"));
         }
         self.docker
             .call(&["start".into(), id], Duration::from_secs(15), true)?;
@@ -1225,11 +1257,13 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
                 local_script("ollama_model_adapter.mjs")?,
                 json!(null),
                 None,
+                None,
             ));
         }
         let installed = InstalledRelease::load_current()?;
         let home = PathBuf::from(env::var_os("HOME").ok_or_else(|| invalid("missing HOME"))?);
         let prepared = revalidate(&installed, &DockerEngine, &home.join(".castor"))?;
+        let carrier_layout = revalidate_carrier_layout(&prepared, &home.join(".castor"))?;
         let carrier = format!("{}@{}", prepared.carrier_tag, prepared.carrier_id);
         let receipt =
             pack_project_with_carrier(&project, &spec, &state.join("preflight-pack"), &carrier)?;
@@ -1260,18 +1294,21 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
             adapter_script,
             release,
             Some(carrier),
+            Some(carrier_layout),
         ))
     })();
-    let (receipt, pin, image, verifier, adapter_script, release, carrier_ref) = match preflight {
-        Ok(value) => value,
-        Err(error) => return preflight_failure(&state, &error),
-    };
+    let (receipt, pin, image, verifier, adapter_script, release, carrier_ref, carrier_layout) =
+        match preflight {
+            Ok(value) => value,
+            Err(error) => return preflight_failure(&state, &error),
+        };
     write_json(
         &state.join("preflight.json"),
         &json!({"model_pin":pin,"controller_image":image,"verifier_image":verifier,"pack_receipt":receipt,"release":release}),
     )?;
     let mut slot = Slot::new(state, token, image, verifier)?;
     slot.release_carrier_ref = carrier_ref;
+    slot.carrier_layout = carrier_layout;
     let run_result = (|| -> io::Result<()> {
         slot.preflight_engine()?;
         if !developer_mode {
