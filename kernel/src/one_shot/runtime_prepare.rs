@@ -1,6 +1,5 @@
 //! Pinned, idempotent preparation of the one-shot Docker runtime.
 use crate::one_shot::install::{ImagePin, InstalledRelease, PlatformImages};
-use crate::one_shot::oci_layout::{export_layout, verify_layout};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
@@ -52,83 +51,6 @@ pub struct PreparedRuntime {
     pub carrier_id: String,
     pub verifier_id: String,
     pub carrier_tag: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct CarrierLayout {
-    pub path: PathBuf,
-    pub manifest_digest: String,
-}
-
-fn carrier_layout_path(receipt: &PreparedRuntime, state_root: &Path) -> io::Result<PathBuf> {
-    if !valid_image_id(&receipt.carrier_id) {
-        return Err(invalid("invalid prepared carrier ID"));
-    }
-    Ok(state_root.join("runtime").join(format!(
-        "carrier-oci-{}-linux-{}-{}",
-        receipt.release_version,
-        receipt.engine_arch,
-        &receipt.carrier_id[7..]
-    )))
-}
-
-pub fn revalidate_carrier_layout(
-    receipt: &PreparedRuntime,
-    state_root: &Path,
-) -> io::Result<CarrierLayout> {
-    let path = carrier_layout_path(receipt, state_root)?;
-    let manifest_digest = verify_layout(
-        &path,
-        &receipt.carrier_id,
-        &receipt.engine_arch,
-        Some(&receipt.source_revision),
-    )?;
-    Ok(CarrierLayout {
-        path,
-        manifest_digest,
-    })
-}
-
-pub fn prepare_carrier_layout(
-    receipt: &PreparedRuntime,
-    state_root: &Path,
-) -> io::Result<CarrierLayout> {
-    if let Ok(layout) = revalidate_carrier_layout(receipt, state_root) {
-        return Ok(layout);
-    }
-    let path = carrier_layout_path(receipt, state_root)?;
-    match fs::symlink_metadata(&path) {
-        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
-            fs::remove_dir_all(&path)?;
-        }
-        Ok(_) => return Err(invalid("prepared OCI layout has an unsafe file type")),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => (),
-        Err(error) => return Err(error),
-    }
-    let engine = DockerEngine;
-    let before = engine
-        .inspect(&receipt.carrier_tag)?
-        .ok_or_else(|| invalid("prepared carrier tag is missing before OCI export"))?;
-    if before.id != receipt.carrier_id {
-        return Err(invalid("prepared carrier tag changed before OCI export"));
-    }
-    let manifest_digest = export_layout(
-        &receipt.carrier_tag,
-        &path,
-        &receipt.carrier_id,
-        &receipt.engine_arch,
-        Some(&receipt.source_revision),
-    )?;
-    let after = engine
-        .inspect(&receipt.carrier_tag)?
-        .ok_or_else(|| invalid("prepared carrier tag disappeared after OCI export"))?;
-    if after.id != receipt.carrier_id {
-        return Err(invalid("prepared carrier tag changed during OCI export"));
-    }
-    Ok(CarrierLayout {
-        path,
-        manifest_digest,
-    })
 }
 
 fn normalize_arch(value: &str) -> &str {

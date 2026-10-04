@@ -3,9 +3,7 @@
 use castor_kernel::one_shot::developer_budget::{forward_to_local_adapter, BudgetLedger};
 use castor_kernel::one_shot::install::{HostScript, InstalledRelease};
 use castor_kernel::one_shot::project::engine::{pack_project, pack_project_with_carrier};
-use castor_kernel::one_shot::runtime_prepare::{
-    check_node_major, revalidate, revalidate_carrier_layout, CarrierLayout, DockerEngine,
-};
+use castor_kernel::one_shot::runtime_prepare::{check_node_major, revalidate, DockerEngine};
 use serde_json::{json, Value};
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -306,6 +304,33 @@ fn decode_controller_result(stdout: &[u8], stderr: &[u8], inspect: &Value) -> io
     Ok(value)
 }
 
+fn observed_staging_profile(item: &Value, scratch: &str, token: &str, carrier_id: &str) -> bool {
+    let Some(mounts) = item.get("Mounts").and_then(Value::as_array) else {
+        return false;
+    };
+    if mounts.len() != 1 || item.get("Image").and_then(Value::as_str) != Some(carrier_id) {
+        return false;
+    }
+    let mount = &mounts[0];
+    let host = &item["HostConfig"];
+    let config = &item["Config"];
+    mount.get("Source").and_then(Value::as_str) == Some(format!("{scratch}/stage-owner").as_str())
+        && mount.get("Destination").and_then(Value::as_str) == Some("/run/castor-stage-owner")
+        && mount.get("Type").and_then(Value::as_str) == Some("bind")
+        && mount.get("RW").and_then(Value::as_bool) == Some(false)
+        && config
+            .pointer("/Labels/castor.stage.owner")
+            .and_then(Value::as_str)
+            == Some(token)
+        && host.get("NetworkMode").and_then(Value::as_str) == Some("none")
+        && host.get("ReadonlyRootfs").and_then(Value::as_bool) == Some(false)
+        && host.get("Privileged").and_then(Value::as_bool) == Some(false)
+        && host.get("PidsLimit").and_then(Value::as_i64) == Some(64)
+        && host.get("CapDrop").and_then(Value::as_array) == Some(&vec![json!("ALL")])
+        && item.pointer("/State/Running").and_then(Value::as_bool) == Some(false)
+        && item.pointer("/State/Status").and_then(Value::as_str) == Some("created")
+}
+
 fn observed_child_profile(item: &Value, scratch: &str, verifier_id: &str) -> Option<&'static str> {
     let mounts = item.get("Mounts")?.as_array()?;
     if mounts.len() != 1 {
@@ -391,7 +416,7 @@ struct Slot {
     identity: Option<ControllerIdentity>,
     verifier_id: String,
     release_carrier_ref: Option<String>,
-    carrier_layout: Option<CarrierLayout>,
+    carrier_id: String,
     allocated: bool,
     adapter: Option<Child>,
     adapter_dir: Option<tempfile::TempDir>,
@@ -425,7 +450,7 @@ impl Slot {
             identity: None,
             verifier_id,
             release_carrier_ref: None,
-            carrier_layout: None,
+            carrier_id: String::new(),
             allocated: false,
             adapter: None,
             adapter_dir: None,
@@ -745,6 +770,8 @@ impl Slot {
                 "CASTOR_CONTROLLER_TASK_SPEC={}",
                 path_string(&mounted_spec)?
             ),
+            "--env".into(),
+            format!("CASTOR_CONTROLLER_STAGE_TOKEN={}", self.token),
             "--mount".into(),
             "type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock".into(),
             "--mount".into(),
@@ -764,20 +791,6 @@ impl Slot {
         ];
         if let Some(group) = identity.socket_group() {
             args.extend(["--group-add".into(), group]);
-        }
-        if let Some(layout) = &self.carrier_layout {
-            args.extend([
-                "--mount".into(),
-                format!(
-                    "type=bind,src={},dst=/carrier-oci,readonly",
-                    path_string(&layout.path)?
-                ),
-                "--env".into(),
-                format!(
-                    "CASTOR_CONTROLLER_CARRIER_OCI_DIGEST={}",
-                    layout.manifest_digest
-                ),
-            ]);
         }
         args.extend(release_pin_env_args(
             self.release_carrier_ref.as_deref(),
@@ -799,20 +812,6 @@ impl Slot {
                     .ok_or_else(|| invalid("missing state mapping"))?
         {
             return Err(invalid("controller Engine bind differs from preflight"));
-        }
-        if self.carrier_layout.is_some()
-            && !item
-                .get("Mounts")
-                .and_then(Value::as_array)
-                .is_some_and(|mounts| {
-                    mounts.iter().any(|mount| {
-                        mount.get("Destination").and_then(Value::as_str) == Some("/carrier-oci")
-                            && mount.get("Type").and_then(Value::as_str) == Some("bind")
-                            && mount.get("RW").and_then(Value::as_bool) == Some(false)
-                    })
-                })
-        {
-            return Err(invalid("controller OCI layout mount is not read-only"));
         }
         self.docker
             .call(&["start".into(), id], Duration::from_secs(15), true)?;
@@ -846,7 +845,9 @@ impl Slot {
             if !private {
                 continue;
             }
-            if observed_child_profile(&item, scratch, &self.verifier_id).is_none() {
+            if observed_child_profile(&item, scratch, &self.verifier_id).is_none()
+                && !observed_staging_profile(&item, scratch, &self.token, &self.carrier_id)
+            {
                 return Err(invalid(
                     "unrecognized container uses private scratch; cleanup retained",
                 ));
@@ -1257,13 +1258,11 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
                 local_script("ollama_model_adapter.mjs")?,
                 json!(null),
                 None,
-                None,
             ));
         }
         let installed = InstalledRelease::load_current()?;
         let home = PathBuf::from(env::var_os("HOME").ok_or_else(|| invalid("missing HOME"))?);
         let prepared = revalidate(&installed, &DockerEngine, &home.join(".castor"))?;
-        let carrier_layout = revalidate_carrier_layout(&prepared, &home.join(".castor"))?;
         let carrier = format!("{}@{}", prepared.carrier_tag, prepared.carrier_id);
         let receipt =
             pack_project_with_carrier(&project, &spec, &state.join("preflight-pack"), &carrier)?;
@@ -1294,21 +1293,24 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
             adapter_script,
             release,
             Some(carrier),
-            Some(carrier_layout),
         ))
     })();
-    let (receipt, pin, image, verifier, adapter_script, release, carrier_ref, carrier_layout) =
-        match preflight {
-            Ok(value) => value,
-            Err(error) => return preflight_failure(&state, &error),
-        };
+    let (receipt, pin, image, verifier, adapter_script, release, carrier_ref) = match preflight {
+        Ok(value) => value,
+        Err(error) => return preflight_failure(&state, &error),
+    };
     write_json(
         &state.join("preflight.json"),
         &json!({"model_pin":pin,"controller_image":image,"verifier_image":verifier,"pack_receipt":receipt,"release":release}),
     )?;
+    let carrier_id = receipt
+        .carrier_base_image
+        .rsplit_once('@')
+        .map(|(_, id)| id.to_owned())
+        .ok_or_else(|| invalid("pack receipt missing pinned carrier"))?;
     let mut slot = Slot::new(state, token, image, verifier)?;
     slot.release_carrier_ref = carrier_ref;
-    slot.carrier_layout = carrier_layout;
+    slot.carrier_id = carrier_id;
     let run_result = (|| -> io::Result<()> {
         slot.preflight_engine()?;
         if !developer_mode {
@@ -1345,6 +1347,42 @@ pub fn run(project: &Path, spec: &Path, custom_state_root: Option<&Path>) -> io:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stopped_staging_container_is_owned_only_with_exact_marker_and_carrier() {
+        let token = "0123456789abcdef0123456789abcdef";
+        let image = format!("sha256:{}", "a".repeat(64));
+        let mut item = json!({
+            "Image":image,
+            "Mounts":[{"Source":"/run/c-0123456789ab/stage-owner",
+                "Destination":"/run/castor-stage-owner","Type":"bind","RW":false}],
+            "Config":{"Labels":{"castor.stage.owner":token}},
+            "HostConfig":{"NetworkMode":"none","ReadonlyRootfs":false,
+                "Privileged":false,"PidsLimit":64,"CapDrop":["ALL"]},
+            "State":{"Running":false,"Status":"created"}
+        });
+        assert!(observed_staging_profile(
+            &item,
+            "/run/c-0123456789ab",
+            token,
+            &image
+        ));
+        item["State"]["Running"] = json!(true);
+        assert!(!observed_staging_profile(
+            &item,
+            "/run/c-0123456789ab",
+            token,
+            &image
+        ));
+        item["State"]["Running"] = json!(false);
+        item["Image"] = json!(format!("sha256:{}", "b".repeat(64)));
+        assert!(!observed_staging_profile(
+            &item,
+            "/run/c-0123456789ab",
+            token,
+            &image
+        ));
+    }
     use sha2::{Digest, Sha256};
     use std::os::unix::net::UnixListener;
     use std::sync::atomic::{AtomicBool, Ordering};

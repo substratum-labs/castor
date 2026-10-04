@@ -207,7 +207,7 @@ fn image_build_failure_returns_truthful_failed_result() {
     let docker = fake_bin.join("docker");
     fs::write(
         &docker,
-        format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CASTOR_TEST_DOCKER_CALLS\"\nif [ \"$1\" = image ] && [ \"$2\" = inspect ]; then printf '%s\\n' '{BASE_DIGEST}'; exit 0; fi\nif [ \"$1\" = tag ]; then exit 0; fi\nexit 67\n"),
+        format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CASTOR_TEST_DOCKER_CALLS\"\nif [ \"$1\" = image ] && [ \"$2\" = inspect ]; then printf '%s\\n' '[{{\"Id\":\"{BASE_DIGEST}\",\"Config\":{{\"Volumes\":null}},\"RootFS\":{{\"Layers\":[\"sha256:base\"]}}}}]'; exit 0; fi\nexit 67\n"),
     )
     .unwrap();
     fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
@@ -235,8 +235,8 @@ fn image_build_failure_returns_truthful_failed_result() {
     assert!(
         fs::read_to_string(&calls)
             .unwrap_or_default()
-            .contains("build"),
-        "the injected image builder must be attempted before reporting build failure"
+            .contains("create"),
+        "the injected container staging must be attempted before reporting failure"
     );
 }
 

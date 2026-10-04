@@ -240,6 +240,18 @@ pub fn run_controller() -> io::Result<ExitCode> {
     if !socket.is_absolute() || !socket.starts_with(&scratch) || !spec.starts_with("/spec") {
         return Err(invalid("invalid controller mount layout"));
     }
+    let stage_token = env::var("CASTOR_CONTROLLER_STAGE_TOKEN")
+        .map_err(|_| invalid("missing controller staging token"))?;
+    if stage_token.len() != 32
+        || !stage_token
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(invalid("invalid controller staging token"));
+    }
+    let stage_owner = scratch.join("stage-owner");
+    fs::create_dir(&stage_owner)?;
+    fs::set_permissions(&stage_owner, fs::Permissions::from_mode(0o700))?;
     for (name, path, directory) in [
         ("bridge", bridge.as_path(), true),
         ("project", Path::new("/project"), true),
@@ -298,33 +310,19 @@ pub fn run_controller() -> io::Result<ExitCode> {
             .filter(|value| !value.is_empty())
             .as_deref(),
     )?;
-    let layout_digest = env::var("CASTOR_CONTROLLER_CARRIER_OCI_DIGEST").ok();
-    if layout_digest.is_some() != release_pins.is_some() {
-        return Err(invalid(
-            "controller carrier OCI layout and release pins must agree",
-        ));
-    }
-    if let Some(digest) = &layout_digest {
-        if !valid_digest(digest) || !fs::metadata("/carrier-oci")?.is_dir() {
-            return Err(invalid("invalid controller carrier OCI layout"));
-        }
-    }
     let mut native = Command::new("/usr/local/bin/castor");
     native
         .args(["run", "--project", "/project", "--task-spec"])
         .arg(&spec)
         .env("CASTOR_STATE_ROOT", "/state")
         .env("CASTOR_MODEL_SOCKET", &socket)
-        .env("TMPDIR", &scratch);
+        .env("TMPDIR", &scratch)
+        .env("CASTOR_STAGE_OWNER_DIR", &stage_owner)
+        .env("CASTOR_STAGE_OWNER_TOKEN", &stage_token);
     if let Some((carrier, verifier)) = release_pins {
         native
             .env("CASTOR_CONTROLLER_CARRIER_REF", carrier)
             .env("CASTOR_CONTROLLER_VERIFIER_ID", verifier);
-    }
-    if let Some(digest) = layout_digest {
-        native
-            .env("CASTOR_CARRIER_OCI_LAYOUT", "/carrier-oci")
-            .env("CASTOR_CARRIER_OCI_DIGEST", digest);
     }
     let outcome = native.status();
     let _ = bridge_child.kill();
