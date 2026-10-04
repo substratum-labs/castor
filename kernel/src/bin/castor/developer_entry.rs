@@ -966,12 +966,14 @@ impl Slot {
             return Ok(Vec::new());
         };
         let mut live = Vec::new();
-        for item in self.docker.inventory()? {
+        for mut item in self.docker.inventory()? {
             let id = item
                 .get("Id")
                 .and_then(Value::as_str)
-                .ok_or_else(|| invalid("inventory without CID"))?;
-            if self.controller.as_deref() == Some(id) || self.admin.iter().any(|known| known == id)
+                .ok_or_else(|| invalid("inventory without CID"))?
+                .to_owned();
+            if self.controller.as_deref() == Some(&id)
+                || self.admin.iter().any(|known| known == &id)
             {
                 continue;
             }
@@ -988,16 +990,41 @@ impl Slot {
             if !private {
                 continue;
             }
-            if observed_child_profile(&item, scratch, &self.verifier_id).is_none()
-                && !observed_staging_profile(&item, scratch, &self.token, &self.carrier_id)
-            {
+            let recognized = |value: &Value| {
+                observed_child_profile(value, scratch, &self.verifier_id).is_some()
+                    || observed_staging_profile(value, scratch, &self.token, &self.carrier_id)
+            };
+            let possibly_transitioning = item.pointer("/State/Status").and_then(Value::as_str)
+                == Some("created")
+                || item
+                    .pointer("/Config/Labels/castor.stage.owner")
+                    .and_then(Value::as_str)
+                    == Some(&self.token);
+            if !recognized(&item) && possibly_transitioning {
+                // Docker may expose a just-created container to inventory
+                // before its final mount/config inspection is populated.
+                for _ in 0..10 {
+                    thread::sleep(Duration::from_millis(50));
+                    let Some(refreshed) = self.docker.inspect(&id)? else {
+                        break;
+                    };
+                    item = refreshed;
+                    if recognized(&item) {
+                        break;
+                    }
+                }
+            }
+            if !recognized(&item) {
+                if self.docker.inspect(&id)?.is_none() {
+                    continue;
+                }
                 return Err(invalid(
                     "unrecognized container uses private scratch; cleanup retained",
                 ));
             }
-            full_cid(id)?;
-            if !self.children.iter().any(|known| known == id) {
-                self.children.push(id.into());
+            full_cid(&id)?;
+            if !self.children.iter().any(|known| known == &id) {
+                self.children.push(id);
             }
             live.push(item);
         }
@@ -1588,6 +1615,63 @@ mod tests {
             );
         }
         outcome.unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a local Docker Engine and the t337g Pi carrier"]
+    fn engine_created_staging_container_matches_host_discovery_profile() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("stage-owner");
+        fs::create_dir(&marker).unwrap();
+        let token = random_token().unwrap();
+        let docker = Docker::default();
+        let base = docker
+            .text(
+                &[
+                    "image".into(),
+                    "inspect".into(),
+                    "--format".into(),
+                    "{{.Id}}".into(),
+                    "substratum/castor-pi-carrier:t337g".into(),
+                ],
+                Duration::from_secs(15),
+            )
+            .unwrap();
+        let cid = docker
+            .text(
+                &[
+                    "create".into(),
+                    "--network".into(),
+                    "none".into(),
+                    "--cap-drop".into(),
+                    "ALL".into(),
+                    "--security-opt".into(),
+                    "no-new-privileges".into(),
+                    "--pids-limit".into(),
+                    "64".into(),
+                    "--mount".into(),
+                    format!(
+                        "type=bind,src={},dst=/run/castor-stage-owner,readonly",
+                        marker.display()
+                    ),
+                    "--label".into(),
+                    format!("castor.stage.owner={token}"),
+                    base.clone(),
+                ],
+                Duration::from_secs(15),
+            )
+            .unwrap();
+        let item = docker.inspect(&cid).unwrap().unwrap();
+        let source = item["Mounts"][0]["Source"].as_str().unwrap();
+        let scratch = source.strip_suffix("/stage-owner").unwrap();
+        let matched = observed_staging_profile(&item, scratch, &token, &base);
+        docker
+            .call(&["rm".into(), cid], Duration::from_secs(15), true)
+            .unwrap();
+        assert!(
+            matched,
+            "actual stopped Engine staging profile was rejected"
+        );
     }
 
     #[test]
