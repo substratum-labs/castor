@@ -3,6 +3,7 @@ use castor_kernel::one_shot::image::StagedSnapshot;
 use castor_kernel::one_shot::manifest::ValidatedSnapshot;
 use std::fs;
 use std::io::{self, Read};
+use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 fn docker(args: &[&str]) -> String {
@@ -61,4 +62,32 @@ fn snapshot_image_preserves_carrier_and_readonly_agent_file() {
     assert_eq!(content, "copy-only");
     docker(&["rm", &cid]);
     docker(&["image", "rm", &derived]);
+
+    // A failed copy must not strand the never-started staging container.
+    let before = docker(&["ps", "-aq", "--no-trunc"]);
+    let original_path = std::env::var("PATH").unwrap();
+    let executable = Command::new("sh")
+        .args(["-c", "command -v docker"])
+        .output()
+        .unwrap();
+    let executable = String::from_utf8(executable.stdout)
+        .unwrap()
+        .trim()
+        .to_owned();
+    let fake_bin = root.path().join("fake-bin");
+    fs::create_dir(&fake_bin).unwrap();
+    let wrapper = fake_bin.join("docker");
+    fs::write(
+        &wrapper,
+        b"#!/bin/sh\nif [ \"$1\" = cp ]; then exit 67; fi\nexec \"$CASTOR_REAL_DOCKER\" \"$@\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+    std::env::set_var("PATH", format!("{}:{original_path}", fake_bin.display()));
+    std::env::set_var("CASTOR_REAL_DOCKER", executable);
+    let failed = staged.build(&format!("{tag}@{base_id}"));
+    std::env::set_var("PATH", original_path);
+    std::env::remove_var("CASTOR_REAL_DOCKER");
+    assert!(failed.is_err());
+    assert_eq!(docker(&["ps", "-aq", "--no-trunc"]), before);
 }
