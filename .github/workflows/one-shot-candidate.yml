@@ -54,7 +54,7 @@ jobs:
           CARRIER_TAG="substratum/castor-pi-carrier:one-shot-${VERSION}"
           CONTROLLER_TAG="castor-controller:candidate-${ARCH}"
           VERIFIER_REF='docker.io/library/python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea'
-          docker build --platform "linux/${ARCH}" -t "$CARRIER_TAG" kernel/carrier/pi
+          docker build --platform "linux/${ARCH}" --build-arg "CASTOR_SOURCE_REVISION=${GITHUB_SHA}" -t "$CARRIER_TAG" kernel/carrier/pi
           docker pull --platform "linux/${ARCH}" "$VERIFIER_REF"
           CARRIER_ID=$(docker image inspect --format '{{.Id}}' "$CARRIER_TAG")
           VERIFIER_ID=$(docker image inspect --format '{{.Id}}' "$VERIFIER_REF")
@@ -237,6 +237,7 @@ jobs:
           CONTROLLER_REF=$(python3 -c 'import json; print(json.load(open("out/native-refs.json"))["controller"])')
           docker image inspect "$CARRIER_REF" >/dev/null
           docker image inspect "$CONTROLLER_REF" >/dev/null
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$CARRIER_REF")" = "$GITHUB_SHA"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$CONTROLLER_REF")" = "$GITHUB_SHA"
           docker image rm "$CARRIER_TAG" "$CONTROLLER_TAG" "$CARRIER_CANDIDATE" "$CONTROLLER_CANDIDATE"
           docker image rm "$CARRIER_REF" "$CONTROLLER_REF" 2>/dev/null || true

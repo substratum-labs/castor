@@ -10,3 +10,5 @@ COPY --chown=10001:10001 --chmod=0444 protocol.js castor-pi-extension.js edit-ca
 
 ENV HOME=/tmp
 USER 10001:10001
+ARG CASTOR_SOURCE_REVISION=unbound
+LABEL org.opencontainers.image.revision=$CASTOR_SOURCE_REVISION
