@@ -455,7 +455,7 @@ struct Slot {
 
 impl Slot {
     fn remove_unbound_task_images(&self) -> io::Result<()> {
-        if self.carrier_id.is_empty() {
+        if !self.allocated || self.carrier_id.is_empty() {
             return Ok(());
         }
         let ids = self.docker.text(
@@ -1564,6 +1564,7 @@ mod tests {
                 String::new(),
             )?;
             slot.carrier_id = base;
+            slot.allocated = true;
             slot.remove_unbound_task_images()?;
             if docker
                 .call(
