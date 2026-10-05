@@ -28,6 +28,12 @@ class OneShotReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("export DOCKER_CONFIG=$(mktemp -d)", source)
         self.assertNotIn("gh release edit", source)
 
+    def test_native_smoke_uses_attested_same_run_archive_without_draft_lookup(self):
+        source = WORKFLOW.read_text()
+        self.assertNotIn("gh release download", source)
+        self.assertIn("name: one-shot-final-archives", source)
+        self.assertIn("sha256sum -c SHA256SUMS", source)
+
 
 if __name__ == "__main__":
     unittest.main()
