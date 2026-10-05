@@ -218,6 +218,13 @@ jobs:
               gh attestation verify "oci://$REF" "${IDENTITY[@]}"
             done
           done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: one-shot-final-archives
+          path: |
+            out/castor-one-shot-*.tar.gz
+            out/SHA256SUMS
+          if-no-files-found: error
       - name: Open draft release with attested archives
         env:
           GH_TOKEN: ${{ github.token }}
@@ -242,22 +249,33 @@ jobs:
       packages: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Download exact draft GitHub release archive and prepare from GHCR
+      - uses: actions/download-artifact@v4
+        with:
+          name: one-shot-final-archives
+          path: /tmp/castor-release-assets
+      - name: Verify same-run archive bytes and source attestation
         env:
           GH_TOKEN: ${{ github.token }}
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#one-shot-v}"
-          mkdir -p /tmp/castor-release-install
-          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --pattern "castor-one-shot-${VERSION}-linux-${ARCH}.tar.gz" --dir /tmp
-          gh attestation verify "/tmp/castor-one-shot-${VERSION}-linux-${ARCH}.tar.gz" \
+          (cd /tmp/castor-release-assets && sha256sum -c SHA256SUMS)
+          gh attestation verify "/tmp/castor-release-assets/castor-one-shot-${VERSION}-linux-${ARCH}.tar.gz" \
             --repo "$GITHUB_REPOSITORY" --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA"
-          tar -xzf "/tmp/castor-one-shot-${VERSION}-linux-${ARCH}.tar.gz" -C /tmp/castor-release-install
+      - name: Prepare and run installed archive with anonymous GHCR
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#one-shot-v}"
+          mkdir -p /tmp/castor-release-install
+          tar -xzf "/tmp/castor-release-assets/castor-one-shot-${VERSION}-linux-${ARCH}.tar.gz" -C /tmp/castor-release-install
           # A public release must work without a developer's GHCR login.
           export DOCKER_CONFIG=$(mktemp -d)
           export HOME=$(mktemp -d)

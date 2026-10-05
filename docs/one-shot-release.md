@@ -7,10 +7,15 @@ host binaries and two native Linux variants each of the controller and Pi
 carrier. The protected publication job pushes architecture-specific images to
 GHCR, records their immutable digests in four new host archives, attests all
 eight subjects, verifies the source ref/commit/workflow identity, and opens a
-**draft** GitHub Release. Native Linux amd64 and arm64 jobs then download the
-actual draft assets, anonymously prepare the GHCR images, and run the installed
-fake-provider read/edit/verifier fixture. The workflow never makes the GitHub
-Release public and never calls a real model.
+**draft** GitHub Release. Native Linux amd64 and arm64 jobs download the
+same-run archive artifacts, verify their SHA-256 checksums and attestations,
+anonymously prepare the GHCR images, and run the installed fake-provider
+read/edit/verifier fixture. The publisher uploads those same archive files to
+the draft Release. GitHub's by-tag release lookup is for published releases,
+so a read-only Actions token cannot use `gh release download` on the draft;
+the operator separately downloads and hashes the actual draft assets before
+public approval. The workflow never makes the GitHub Release public or calls
+a real model.
 
 ## Before a tag is pushed
 
