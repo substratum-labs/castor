@@ -1,0 +1,100 @@
+name: T-393 public RC2 physical follow-up
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/t393-rc2-physical.yml
+      - scripts/t393_rc2_trial.sh
+
+permissions:
+  contents: read
+
+jobs:
+  registry-offline-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Download and attest the exact public Linux archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          T393_ROOT="$RUNNER_TEMP/t393-rc2"
+          T393_ASSET=castor-one-shot-0.1.0-rc2-linux-amd64.tar.gz
+          mkdir -p "$T393_ROOT"
+          for asset in SHA256SUMS "$T393_ASSET"; do
+            curl -q -fsSL -H 'Authorization:' -H 'Cookie:' \
+              -o "$T393_ROOT/$asset" \
+              "https://github.com/substratum-labs/castor/releases/download/one-shot-v0.1.0-rc2/$asset"
+          done
+          grep -F "  $T393_ASSET" "$T393_ROOT/SHA256SUMS" | (cd "$T393_ROOT" && sha256sum -c -)
+          gh attestation verify "$T393_ROOT/$T393_ASSET" \
+            --repo substratum-labs/castor \
+            --signer-workflow substratum-labs/castor/.github/workflows/one-shot-release.yml \
+            --source-ref refs/tags/one-shot-v0.1.0-rc2 \
+            --source-digest c06e1190268df23e560acded84af968f419f550a
+      - name: Block GHCR after prepare and run one installed fake-provider task
+        run: bash scripts/t393_rc2_trial.sh offline-linux
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: t393-registry-offline-summary
+          path: |
+            ${{ runner.temp }}/t393-rc2/summary.json
+            ${{ runner.temp }}/t393-rc2/prepare.json
+          if-no-files-found: warn
+          retention-days: 1
+
+  installed-macos-intel:
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prove an Intel host and start a local Linux Docker Engine
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          brew install colima docker
+          colima start --cpu 2 --memory 6 --disk 20
+          docker info --format '{{.OSType}}/{{.Architecture}} {{.ServerVersion}}'
+      - name: Download and attest the exact public Intel archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          T393_ROOT="$RUNNER_TEMP/t393-rc2"
+          T393_ASSET=castor-one-shot-0.1.0-rc2-darwin-amd64.tar.gz
+          mkdir -p "$T393_ROOT"
+          for asset in SHA256SUMS "$T393_ASSET"; do
+            curl -q -fsSL -H 'Authorization:' -H 'Cookie:' \
+              -o "$T393_ROOT/$asset" \
+              "https://github.com/substratum-labs/castor/releases/download/one-shot-v0.1.0-rc2/$asset"
+          done
+          grep -F "  $T393_ASSET" "$T393_ROOT/SHA256SUMS" | (cd "$T393_ROOT" && shasum -a 256 -c -)
+          gh attestation verify "$T393_ROOT/$T393_ASSET" \
+            --repo substratum-labs/castor \
+            --signer-workflow substratum-labs/castor/.github/workflows/one-shot-release.yml \
+            --source-ref refs/tags/one-shot-v0.1.0-rc2 \
+            --source-digest c06e1190268df23e560acded84af968f419f550a
+      - name: Run one installed Intel fake-provider task
+        run: bash scripts/t393_rc2_trial.sh intel-mac
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: t393-macos-intel-summary
+          path: |
+            ${{ runner.temp }}/t393-rc2/summary.json
+            ${{ runner.temp }}/t393-rc2/prepare.json
+          if-no-files-found: warn
+          retention-days: 1
