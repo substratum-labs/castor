@@ -13,14 +13,15 @@ python -m pip install packages/castor-client/dist/castor_client-0.7.0a1-py3-none
 
 `castor run agent.py` remains a later product milestone. The source-checkout one-shot entry below packages a clean Git project automatically and uses the bundled Pi carrier; it does not ask for an Agent image.
 
-## Installable one-shot Castor candidate
+## Public one-shot prerelease (RC2)
 
-A release candidate contains a host-specific `castor` binary, two trusted host
-model scripts, and a release manifest. Keep the archive layout intact; the
-binary alone is not an installation. On macOS use Docker Desktop; on Linux use
-a local Linux Docker Engine. Node.js 22+ and local Ollama with `qwen3.5:9b` are
-required. The host does not need Python or Cargo, and the user does not build
-an Agent image.
+Download the host-specific archive from the public
+[one-shot-v0.1.0-rc2 release](https://github.com/substratum-labs/castor/releases/tag/one-shot-v0.1.0-rc2).
+It contains a Rust `castor` binary, two trusted host model scripts, and a
+release manifest. Keep the archive layout intact; the binary alone is not an
+installation. On macOS use Docker Desktop; on Linux use a local Linux Docker
+Engine. Node.js 22+ and local Ollama with `qwen3.5:9b` are required. The host
+does not need Python or Cargo, and the user does not build an Agent image.
 
 ```bash
 /path/to/extracted/bin/castor runtime prepare
@@ -33,10 +34,11 @@ an Agent image.
 `runtime prepare` fetches and verifies release-pinned controller, Pi carrier,
 and verifier images. A later `run` rechecks local image IDs and does not pull
 or build a controller from source. The verifier image still contains Python
-for tasks that request Python tests. See [installation and result semantics](docs/one-shot-install.md).
-This candidate workflow builds review artifacts; public GHCR/GitHub release
-publication remains separately gated. The [release operator runbook](docs/one-shot-release.md)
-describes the protected tag workflow and final artifact checks.
+for tasks that request Python tests. Follow the [public download, verification,
+installation and result guide](docs/one-shot-install.md). RC2 is a bounded
+prerelease; it does not establish arbitrary Agent compatibility or a measured
+success rate. The [release operator runbook](docs/one-shot-release.md) describes
+how future tags are published.
 
 ## One-shot developer entry (source checkout)
 
